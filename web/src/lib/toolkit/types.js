@@ -627,6 +627,30 @@ export const SSH_DECODE_KIND_CONFLICT = Object.freeze({
     'This text is a one-line public key, which decodes to a public key, but ssh.decode format=private expects an openssh-key-v1 block. Drop `format=private`.',
 });
 
+/**
+ * Does this value have halves for `:public` / `:private` to project out of it?
+ *
+ * A `keypair` tip and nothing else. Every other key-ish thing in the type
+ * lattice — a `key` tip that already *is* one half, a `pem`/`der` blob, an
+ * `openpgp-key`, a symmetric `secret-key` — has no second half inside it to
+ * select, and the `select` branch below refuses accordingly.
+ *
+ * Exported because two refusals used to offer `$x | :public | out $pub` as the
+ * fix for *any* value that must not leave the machine, including values where
+ * that pipeline cannot compile: a mnemonic share was told to publish a public
+ * half it does not have. A refusal naming a remedy that cannot be performed is
+ * worse than one naming none, so the remedy is now offered only when this says
+ * there is a half to project — and it reads the same predicate the `select`
+ * branch enforces, so the advice cannot drift away from what compiles. If
+ * `:public` ever learns a second shape, it learns it here, once.
+ *
+ * @param {RefinedType|undefined|null} t
+ * @returns {boolean}
+ */
+export function hasKeyHalves(t) {
+  return Boolean(t) && t.base === "keypair";
+}
+
 export function inferParamDrivenType(name, current, params = {}) {
   if (name === "ssh.decode") {
     // Types nothing — the overload table still does that, keyed on `format=`.
@@ -1381,7 +1405,7 @@ export function inferParamDrivenType(name, current, params = {}) {
       m === "private" ||
       m === "public"
     ) {
-      if (current.base !== "keypair") {
+      if (!hasKeyHalves(current)) {
         return {
           ok: false,
           error: `selector ":${m}" requires keypair, got ${formatType(current)}`,

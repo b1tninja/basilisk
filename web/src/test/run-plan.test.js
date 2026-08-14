@@ -369,6 +369,104 @@ in $kpM | :public | out $pubM`,
     expect(p.refusals).toEqual([]);
   });
 
+  /**
+   * **Every remedy this refusal names has to be one the compiler accepts.**
+   *
+   * The first one used to be `$x | :public | out $pub` for everything refused,
+   * and `:public` is a selector over a *keypair*. A product owner marked a
+   * mnemonic share `publish`, did exactly what the refusal told them, and got
+   * `selector ":public" requires keypair, got text/mnemonic` — the refusal had
+   * sent them to a pipeline that cannot compile, which is worse than sending
+   * them nowhere.
+   *
+   * The property pinned is that one, not either sentence: **the advice appears
+   * exactly when following it works.** `follow` writes the notebook a reader
+   * gets by doing what they were told and hands it to the compiler, so nothing
+   * here is built from the constant the rule reads — `plan.js` gets no vote on
+   * whether its own advice compiles.
+   */
+  const REFUSED = [
+    { what: "a keypair", cell: "genkey x25519 | out $x" },
+    {
+      what: "one mnemonic share",
+      cell: "random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $x",
+    },
+    {
+      what: "a whole split",
+      cell: "random 32 | sss.split threshold=2 shares=3 | out $x",
+    },
+    { what: "a projected private half", cell: "genkey ec/p256 | :private | out $x" },
+    { what: "a master", cell: '"hi" | utf8 | gpg.symencrypt mode=master | out $x' },
+  ];
+
+  /** What the compiler says about the notebook the advice would produce. */
+  const follow = (cell) =>
+    compileRecipe(`@mara\n${cell}\n\n@mara publish\nin $x | :public | out $pub`)
+      .validation.errors.map((e) => e.message);
+
+  it.each(REFUSED)("offers `:public` for $what only if that compiles", ({ cell }) => {
+    const r = refusalFor(plan(`@mara publish\n${cell}`, { me: "mara", roster: ROSTER }), "publish-secret");
+    expect(r).toBeTruthy();
+    expect(r.message.includes("$x | :public | out $pub")).toBe(follow(cell).length === 0);
+  });
+
+  it("has cases on both sides of that, or the row above asserts nothing", () => {
+    // One table where every row answered the same way would pass whatever the
+    // condition was, including no condition at all.
+    const compiles = REFUSED.map((r) => follow(r.cell).length === 0);
+    expect(compiles.filter(Boolean).length).toBe(1);
+    expect(compiles.filter((ok) => !ok).length).toBe(REFUSED.length - 1);
+    expect(follow(REFUSED[1].cell)[0]).toContain("requires keypair");
+  });
+
+  it("tells a share the true thing instead, and names its peer in full", () => {
+    // The owner's own case: a K-of-N split through `blip39`, one share out, a
+    // cell headed with a whole fingerprint. What is true about it is not
+    // "publish something else" — it is that a share has one holder and the
+    // header already named them.
+    const p = plan(
+      `@${FPR_A} publish
+random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $share`,
+      { me: FPR_A, roster: { [FPR_A]: FPR_A } }
+    );
+    const r = refusalFor(p, "publish-secret");
+    expect(r?.message).not.toContain("| :public | out");
+    expect(r?.message).toContain("one holder's piece of a K-of-N split");
+    expect(r?.message).toContain("runs on its peer's own machine");
+    // Whole fingerprint wherever it appears, never a prefix of one.
+    expect(r?.message).toContain(`@${FPR_A}`);
+    // Sentence-cased: it is the only remedy left, so it opens the list.
+    expect(r?.message).toContain("Drop `publish` from this cell.");
+  });
+
+  /** One cell, two `out`s, and a header that names both of them. */
+  const BOTH = `@mara publish=$hex,$share
+random 32 | tee
+  - encode hex | out $hex
+| sss.split threshold=2 shares=3 | blip39 | at 1 | out $share`;
+
+  it("quotes the header the cell actually carries, list and all", () => {
+    // A `publish=$a,$b` header was printed as a bare `publish`, so the opening
+    // sentence described a cell marked something its author never wrote.
+    const r = refusalFor(plan(BOTH, { me: "mara", roster: ROSTER }), "publish-secret");
+    expect(r?.message).toContain("marked `@mara publish=$hex,$share`");
+  });
+
+  it("writes out the narrower header rather than `publish=$…`", () => {
+    // The elided form asked the reader to solve the refusal before they could
+    // take its advice — and on a cell with nothing else to publish there was
+    // no header to solve for at all. Taken literally, what it names now plans.
+    const r = refusalFor(plan(BOTH, { me: "mara", roster: ROSTER }), "publish-secret");
+    const narrowed = r?.message.match(/`(@mara publish=[^`]+)`\)/)?.[1];
+    expect(narrowed).toBe("@mara publish=$hex");
+    const fixed = plan(BOTH.replace(/^@mara publish=[^\n]*/, narrowed), {
+      me: "mara",
+      roster: ROSTER,
+    });
+    expect(fixed.refusals).toEqual([]);
+    expect(fixed.cells[0].publishes).toEqual(["hex"]);
+  });
+
   it("asks rather than refuses when it cannot see what is in the slot", () => {
     // Reached through the AST rather than a compile result, which is the
     // documented second entry point: the type walk stops at the step it

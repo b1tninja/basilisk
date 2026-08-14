@@ -1054,10 +1054,18 @@ export function publishedSlots(chain) {
 
 /**
  * The header text for a chain, or "" when it has no peer to hang one on.
+ *
+ * Exported because a refusal that quotes a cell's header has to quote the one
+ * the author wrote. `plan.js` used to assemble `@peer publish` by hand at its
+ * `publish-secret` site, which told anyone using `publish=$a,$b` that their
+ * cell was marked something it is not — and the whole contract of a refusal
+ * here is that it names the state that is actually true. One spelling of a
+ * header, in the module that defines what a header is.
+ *
  * @param {RecipeChain} chain
  * @returns {string}
  */
-function chainHeaderText(chain) {
+export function chainHeaderText(chain) {
   const peer = chain?.peer == null ? "" : String(chain.peer);
   if (!peer.length) return "";
   if (!chain.publish) return `${PEER_SIGIL}${peer}`;

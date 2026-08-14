@@ -92,6 +92,7 @@
 import { cellKind } from "./manifest.js";
 import { mismatchLog } from "./receipt.js";
 import {
+  PEER_PUBLISH_SEPARATOR,
   PEER_SIGIL,
   PEER_WILDCARD,
   SLOT_SIGIL,
@@ -102,12 +103,18 @@ import {
 } from "./recipe-parse.js";
 import {
   boundAsSlotRef,
+  chainHeaderText,
   outSlotLabels,
   publishedSlots,
   recipeChains,
 } from "./recipe.js";
 import { getStep, stepEntropy } from "./registry.js";
-import { artifactMetaFromType, formatType, walkPipelineTypes } from "./types.js";
+import {
+  artifactMetaFromType,
+  formatType,
+  hasKeyHalves,
+  walkPipelineTypes,
+} from "./types.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 
 /**
@@ -512,12 +519,26 @@ function slotOrigins(chains) {
  * machine boundary — so the closed list above governs both, and a role added to
  * it is argued for once.
  *
+ * `publicHalf` rides along for the same reason. Both callers, having heard
+ * "no", immediately have to decide whether to offer `:public` as the way out,
+ * and the answer is a fact about the value rather than about the caller. Asking
+ * it here means the two refusals cannot come to different conclusions about the
+ * same slot — which is precisely what happened while each wrote its own
+ * sentence: both offered `:public` unconditionally, so a mnemonic share was
+ * told to publish a public half that does not exist and cannot be projected.
+ *
+ * Note it is *not* derivable from `role`. `key` is the role of a `pem` blob, an
+ * `openpgp-key` and a `keypair` handle alike, and `:public` compiles against
+ * exactly one of the three — so the test is the type's shape, which is what
+ * `hasKeyHalves` reads and what the `select` type rule enforces.
+ *
  * @param {import("./types.js").RefinedType|undefined} type
- * @returns {{ known: boolean, publishable: boolean, role: string }}
+ * @returns {{ known: boolean, publishable: boolean, role: string,
+ *   publicHalf: boolean }}
  */
 export function publishability(type) {
   if (!type || !type.base || type.base === "none") {
-    return { known: false, publishable: false, role: "" };
+    return { known: false, publishable: false, role: "", publicHalf: false };
   }
   const meta = artifactMetaFromType(type);
   const role = String(meta?.role || "");
@@ -526,7 +547,7 @@ export function publishability(type) {
   // `public` tag — the tag is the half, and the half is the question.
   const publishable =
     PUBLISHABLE_ROLES.has(role) || tags.includes("public") || type.which === "public";
-  return { known: true, publishable, role };
+  return { known: true, publishable, role, publicHalf: hasKeyHalves(type) };
 }
 
 /**
@@ -871,7 +892,8 @@ export function planRun(compiled, opts = {}) {
     // The list is the header's own — a cell that publishes one of the three
     // things it writes is asked about one of them.
     for (const label of publishes) {
-      const { known, publishable } = publishability(types.get(label));
+      const type = types.get(label);
+      const { known, publishable, role, publicHalf } = publishability(type);
       if (!known) {
         asks.push({
           cell: i,
@@ -887,20 +909,118 @@ export function planRun(compiled, opts = {}) {
         continue;
       }
       if (publishable) continue;
-      const header = `${PEER_SIGIL}${declaredPeer || "peer"} publish`;
+      // The header as the author wrote it. `publish` cannot be parsed without a
+      // peer in front of it, so this is never the empty string here — and a
+      // header carrying `publish=$a,$b` has to be quoted with its list, or the
+      // refusal opens by describing a cell that is marked something else.
+      const header = chainHeaderText(chain);
+      /**
+       * What can be done about it — and only what can be done about *this*
+       * value.
+       *
+       * The list used to open with `:public` for everything it refused. That is
+       * a selector over a keypair, so a mnemonic share was told to publish a
+       * public half it does not have, through a pipeline that does not compile:
+       * `selector ":public" requires keypair, got text/mnemonic`. A refusal
+       * naming an impossible remedy costs more than one naming none, because
+       * the reader spends their trust before they spend their time. So the
+       * first remedy appears only when the value has halves to project, which
+       * is the question `publishability` answers with the same predicate the
+       * `select` type rule enforces.
+       *
+       * @type {string[]}
+       */
+      const remedies = [];
+      if (publicHalf) {
+        remedies.push(
+          "publish the public half instead " +
+            `(\`${SLOT_SIGIL}${label} | :public | out ${SLOT_SIGIL}pub\`)`
+        );
+      }
+      // "Name only what may leave" was written as `publish=$…` for every cell
+      // it was said to, which is advice a reader has to solve before they can
+      // take: a cell writing one slot has nothing to put there, and a header
+      // that already names slots was being told to do the thing it did. The
+      // list the cell could truthfully carry is knowable here — it is the rest
+      // of what the cell writes, minus whatever this pass would refuse in turn
+      // — so it is written out rather than elided, and left off entirely when
+      // it would be empty.
+      const sendable = produces.filter(
+        (other) => other !== label && publishability(types.get(other)).publishable
+      );
+      if (sendable.length) {
+        remedies.push(
+          `publish only what may leave (\`${PEER_SIGIL}${declaredPeer} publish=` +
+            `${sendable.map((l) => `${SLOT_SIGIL}${l}`).join(PEER_PUBLISH_SEPARATOR)}\`)`
+        );
+      }
+      // The last one is always available, and is the reason this list is never
+      // empty: a cell can always stop publishing.
+      remedies.push("drop `publish` from this cell");
+      const joined =
+        remedies.length > 1
+          ? `${remedies.slice(0, -1).join(", ")}, or ${remedies.at(-1)}.`
+          : `${remedies[0]}.`;
+      // Sentence case, on a list whose first word is always one of a handful of
+      // ASCII verbs written above. Cheaper than keeping two spellings of every
+      // remedy in step with each other.
+      const offer = joined[0].toUpperCase() + joined.slice(1);
+
+      /**
+       * The part before the remedies: why this value in particular.
+       *
+       * A share gets its own paragraph because "send something else instead" is
+       * not merely impossible for it, it is beside the point. A share is
+       * addressed to one holder, and a cell headed with a peer has already
+       * addressed it — what the author wants is delivery, and `publish` is
+       * broadcast. Saying so is the true sentence the `:public` advice was
+       * standing in the way of.
+       */
+      let because = "";
+      if (!publicHalf && role === "share") {
+        const whole = type?.base === "shares";
+        because =
+          (whole
+            ? `\`${SLOT_SIGIL}${label}\` holds the split itself rather than one ` +
+              "holder's piece of it, and a room handed every share has been " +
+              "handed the secret they were split out of. "
+            : "A share is one holder's piece of a K-of-N split, and `publish` " +
+              "is the one thing it does not survive: it puts a copy in front of " +
+              "everyone in the room at once, and a piece the whole room holds " +
+              "has stopped being anyone's in particular. ") +
+          `Nothing needs to leave any machine for \`${PEER_SIGIL}${declaredPeer}\` ` +
+          `to have ${whole ? "them" : "it"}: the header already says whose cell ` +
+          "this is, and a cell runs on its peer's own machine — so what it " +
+          "writes is written there, and stays there. " +
+          (whole
+            ? ""
+            : "That is what handing one person one share looks like here, and " +
+              "`publish` is the other thing. ");
+      } else if (!publicHalf) {
+        // Everything else that must not travel: a projected private half, a
+        // `pem` blob, an OpenPGP secret key, a symmetric key, a master. Each is
+        // a value in its own right rather than one side of a pair, so there is
+        // nothing inside it for `:public` to select — which is what
+        // `hasKeyHalves` said, and what the compiler would have said next.
+        because =
+          "There is no public half of it to send in its place: `:public` " +
+          `selects one out of a keypair, and \`${SLOT_SIGIL}${label}\` is not a ` +
+          "keypair. ";
+      }
       refuse(
         anchor,
         "publish",
-        "a value that may leave this machine",
-        `${SLOT_SIGIL}${label} (${formatType(types.get(label))})`,
+        // "…this machine" until now, in a plan every peer in the room reads:
+        // the cell runs on `@peer`, so "this" was one machine to the author and
+        // another to everybody else. The sentence below always said "the
+        // machine that made it", and `handoff.js` says it about the same fact.
+        "a value that may leave the machine that made it",
+        `${SLOT_SIGIL}${label} (${formatType(type)})`,
         "publish-secret",
         `Cell ${i} is marked \`${header}\` ` +
           `but \`${SLOT_SIGIL}${label}\` is ` +
-          `${formatType(types.get(label))}, which is not a value that may ` +
-          "leave the machine that made it. Publish the public half instead " +
-          `(\`${SLOT_SIGIL}${label} | :public | out ${SLOT_SIGIL}pub\`), name ` +
-          `only what may leave (\`${header}=${SLOT_SIGIL}…\`), or drop ` +
-          "`publish` from this cell."
+          `${formatType(type)}, which is not a value that may ` +
+          `leave the machine that made it. ${because}${offer}`
       );
     }
 

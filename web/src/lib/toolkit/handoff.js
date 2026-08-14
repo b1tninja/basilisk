@@ -731,6 +731,51 @@ function withheldMessage(chain, cell, label) {
 }
 
 /**
+ * The last sentence of the role refusal: what to do about a value that cannot
+ * cross this wire.
+ *
+ * It used to be one sentence — "publish the public half (`$x | :public | out
+ * $pub`) and have the cell read that" — offered for every value the role list
+ * turns back. `:public` is a selector over a **keypair**, so for a mnemonic
+ * share, a master, or a private half that is already a half, it names a
+ * pipeline that does not compile: `selector ":public" requires keypair, got
+ * text/mnemonic`. The identical sentence sat in `plan.js`'s `publish-secret`
+ * refusal, which is where a user hit it; both now ask `publishability` the same
+ * question and neither writes the test itself.
+ *
+ * The *other* branches are not a weaker version of the first. Placement is the
+ * mechanism that exists for exactly this: a value that must not cross a machine
+ * boundary is served by moving the cell to the value, and a `@peer` header is
+ * how that is written. Naming it is naming something the reader can do.
+ *
+ * @param {{ label: string }} row
+ * @param {{ role: string, publicHalf: boolean }} verdict
+ * @returns {string}
+ */
+function crossingRemedy(row, verdict) {
+  if (verdict.publicHalf) {
+    return (
+      `Publish the public half (\`${SLOT_SIGIL}${row.label}` +
+      ` | :public | out ${SLOT_SIGIL}pub\`) and have the cell read that.`
+    );
+  }
+  if (verdict.role === "share") {
+    return (
+      "A share is one holder's piece of a split: it is meant for one machine, " +
+      "and it is already on one. Nothing has to travel for a cell to reach it " +
+      `— head the cell that reads ${slot(row.label)} with the peer who holds ` +
+      "it, and it runs there rather than asking for it."
+    );
+  }
+  return (
+    `There is no public half of it to send in its place — \`:public\` selects ` +
+    `one out of a keypair, and ${slot(row.label)} is not a keypair. A cell that ` +
+    "needs it has to run where it already is: head that cell with the peer who " +
+    "holds it."
+  );
+}
+
+/**
  * Both private-value guards, over one slot.
  *
  * @param {{ label: string, private: boolean, type: string }} row
@@ -781,8 +826,7 @@ function publicEnough(row, types) {
         "that may leave the machine that made it — the same closed list of roles " +
         "that stops a `publish` cell sending it into the room. Nothing *owns* it, " +
         "so the ownership analysis had no reason to object; what it is settles " +
-        `the question instead. Publish the public half (\`${SLOT_SIGIL}${row.label}` +
-        ` | :public | out ${SLOT_SIGIL}pub\`) and have the cell read that.`,
+        `the question instead. ${crossingRemedy(row, verdict)}`,
     };
   }
   return { ok: true };

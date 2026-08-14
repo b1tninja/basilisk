@@ -601,6 +601,46 @@ in $kp | export spki | encode base64 | out $pub
     expect(verdict.bindings).toEqual([]);
   });
 
+  /**
+   * The same guard, over a value with no public half to name.
+   *
+   * `$kp` above is a keypair, so "publish the public half (`$kp | :public |
+   * out $pub`) and have the cell read that" is advice that works. That
+   * sentence was printed for *everything* the role list turned back, and
+   * `:public` is a selector over a keypair — so a mnemonic share got a
+   * pipeline the compiler rejects, which is the defect `plan.js`'s twin of
+   * this refusal shipped to a user. The property is the same one pinned in
+   * `run-plan.test.js`: the advice appears only where following it compiles.
+   */
+  const DEALT = `@mara publish
+random 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $share
+
+@okafor
+in $share | out $back
+`;
+
+  it("does not send a share to `:public`, which cannot type one", async () => {
+    const built = await buildResultFor({
+      plan: planFor(DEALT, "mara"),
+      compiled: compile(DEALT),
+      manifest: await manifestFor(DEALT),
+      cell: 0,
+      readSlot: () => ({ type: "text", data: "abandon abandon abandon", meta: {} }),
+    });
+    expect(built.ok).toBe(false);
+    const r = built.refusals.find((x) => x.reason === "private-value");
+    expect(r?.message).toContain("may leave the machine that made it");
+    expect(r?.message).not.toContain("| :public | out");
+    expect(r?.message).toContain("one holder's piece of a split");
+    // …and the compiler's own word on the advice it no longer gives, so this
+    // is a claim about the product rather than about the sentence.
+    expect(
+      compile(
+        `@mara\nrandom 32 | sss.split threshold=2 shares=3 | blip39 | at 1 | out $share\n\n@mara\nin $share | :public | out $pub`
+      ).validation.errors.map((e) => e.message)[0]
+    ).toContain("requires keypair");
+  });
+
   it("refuses on ownership alone when the analysis above it says private", async () => {
     // The other guard, in isolation. A plan whose reader says `$b64` is private
     // to okafor while still placing that reader on mara cannot come out of

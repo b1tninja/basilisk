@@ -108,6 +108,29 @@ describe("a dealer publishes the commitments and keeps the shares", () => {
     expect(all.refusals.map((r) => r.reason)).toEqual(["publish-secret"]);
     expect(all.refusals[0].actual).toContain("$share");
   });
+
+  it("names the narrower header outright, and what it names is this one", () => {
+    // The refusal used to elide it — "name only what may leave
+    // (`@mara publish=$…`)" — which is a remedy the reader has to derive
+    // before they can take it, and on a cell with nothing else to publish it
+    // is not a remedy at all. This cell writes three things, two of which may
+    // leave, so the header it should carry is knowable and gets written out.
+    //
+    // The assertion takes the message at its word: the header is read back
+    // out of the sentence and planned. Nothing here spells the expected list
+    // twice — if `publishability` and this suggestion ever disagree, the plan
+    // below refuses and this fails.
+    const all = planRun(compileRecipe(`@mara publish\n${SPLIT}`), {
+      me: "mara",
+      roster: ROSTER,
+    });
+    const narrowed = all.refusals[0].message.match(/`(@mara publish=[^`]+)`\)/)?.[1];
+    expect(narrowed).toBeTruthy();
+    expect(narrowed).not.toContain("$share");
+    const fixed = `${narrowed}\n${SPLIT}`;
+    expect(errorsFor(fixed)).toEqual([]);
+    expect(planRun(compileRecipe(fixed), { me: "mara", roster: ROSTER }).refusals).toEqual([]);
+  });
 });
 
 /* ───────────────── the sentence that was not true (fix 1) ───────────────── */
