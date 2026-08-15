@@ -30,7 +30,11 @@ export function ShareIdentity({
     shareIndex?: number;
     tags?: string[];
     // The open bag, narrowed to what `shareIdentity` reads — see ShareCards.
-    traits?: Record<string, unknown> & { shareOf?: number; threshold?: number };
+    traits?: Record<string, unknown> & {
+      shareOf?: number;
+      threshold?: number;
+      setId?: string;
+    };
   };
   className?: string;
 }) {
@@ -49,6 +53,11 @@ export function ShareIdentity({
       {id.threshold ? (
         <span className="text-[10px] text-[var(--muted-foreground)]">
           {id.threshold} shares recover the secret
+        </span>
+      ) : null}
+      {id.setId ? (
+        <span className="font-mono text-[10px] text-[var(--muted-foreground)]">
+          set {id.setId}
         </span>
       ) : null}
       {id.flavour ? (

@@ -45,7 +45,7 @@
  * @module lib/toolkit/share-check
  */
 
-import { decodeMnemonic } from "../slip39/blip39.js";
+import { decodeMnemonic, formatSetId } from "../slip39/blip39.js";
 import { publicKeyOf } from "../quorum/vss.js";
 import { execVssVerify } from "./vss-ops.js";
 
@@ -131,7 +131,10 @@ export function readShareMnemonic(text) {
         index: m.index,
         total: m.shareCount,
         threshold: m.threshold,
-        setId: (m.id & 0x7fff).toString(16).toUpperCase().padStart(4, "0"),
+        // The codec's own spelling, so the `set XXXX` this panel prints is
+        // character-for-character the `set XXXX` a recovery's refusal names —
+        // the two are read against each other by a person holding cards.
+        setId: formatSetId(m.id),
         bytes: m.data,
       },
     };

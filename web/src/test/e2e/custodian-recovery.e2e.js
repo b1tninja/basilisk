@@ -61,12 +61,20 @@
  *   `three-party-ceremony.e2e.js` finding 5c says a holder cannot learn — and it
  *   then sends the reader after a commitments document that a `sss.split`
  *   ceremony never produces and never can.
- * - **3a** — the too-few-shares refusal names the true count, and then attaches a
- *   remedy about OpenPGP ciphertext and a GPG panel to a reader who has neither.
- * - **4a** — a corrupted share is caught by the checksum and the message does not
- *   say which of the pasted rows failed.
- * - **4b** — a share from another split is caught by the set id and the message
- *   does not say which share is the stranger, or what either set is called.
+ * - **3a** — *fixed.* The too-few-shares refusal named the true count and then
+ *   attached a remedy about OpenPGP ciphertext and a GPG panel to a reader who
+ *   had neither. The appendix is now conditional on armor actually sitting in
+ *   the GPG panel, and a custodian who typed words off a card is told to paste
+ *   the missing card. Step 4 asserts both directions.
+ * - **4a** — *fixed.* A corrupted share is caught by the checksum, and the
+ *   message now names the row it was pasted into and says the others decoded.
+ * - **4b** — *fixed.* A share from another split is caught by the set id, and
+ *   the message now names every row with the set it came from — in the same
+ *   four hex digits the check panel prints, which is what step 5 compares.
+ *
+ * What remains pinned unfixed is 2a and 2b: nothing points a custodian at the
+ * one surface written for them, and that surface then asks for commitments an
+ * `sss.split` ceremony cannot produce.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -220,6 +228,17 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
   /** @type {string[]} */ let cards = [];
   /** A share of an unrelated 2-of-3, for the wrong-set case. */
   let strangerCard = "";
+  /**
+   * The set id the cold check panel printed for `cards[1]`, as `XXXX`.
+   *
+   * Carried from step 3 to step 5 so the two surfaces are compared against each
+   * other rather than each against a regex: the panel says `set 465E` about one
+   * card, and the refusal has to name that same string for the row that card
+   * was pasted into. Two spellings of fifteen bits would make a custodian's
+   * whole diagnosis — hold this card up against that message — silently
+   * meaningless, and only a cross-surface assertion can catch it.
+   */
+  let panelSetId = "";
   /** SHA-256 of the master, off the ceremony's screen. Never the master. */
   let expectedDigest = "";
 
@@ -288,7 +307,7 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
     // as far as it goes helpful — it says a step that reads *shares* would open
     // one — but the gap it leaves is the whole of what this reader is missing:
     // which step, in what order, with what after it. The room ceremony teaches
-    // `shares with=$share-1`, which names a slot this browser has never had;
+    // `shares with=$share-2`, which names a slot this browser has never had;
     // `shareCheckRecipe()` teaches `vss.verify`, which belongs to the other
     // ceremony and cannot recombine anything. So the affordance is downstream of
     // the knowledge it exists to supply, and the two documents that would close
@@ -369,6 +388,7 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
     expect(facts, `the panel's facts: ${facts}`).toMatch(/share 2 of 3/);
     expect(facts, `the panel's facts: ${facts}`).toMatch(/any 2 recombine/);
     expect(facts, `the panel's facts: ${facts}`).toMatch(/set [0-9A-F]{4}/);
+    panelSetId = /set ([0-9A-F]{4})/.exec(facts)?.[1] || "";
 
     // **FINDING (2b) — and then it sends them after a document that cannot
     // exist.** The verdict is honest about what it has *not* checked, which is
@@ -399,7 +419,7 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
 
   /* ── 4. one share of a 2-of-3 ────────────────────────────────────────────── */
 
-  it("refuses one share of two and says how many of each", async () => {
+  it("refuses one share of two, says how many of each, and asks for a card", async () => {
     // The recipe a custodian has to arrive at unaided. Once it is typed the tray
     // appears — which is the shape of finding 2a: the affordance is downstream of
     // the knowledge it exists to supply.
@@ -430,18 +450,34 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
     // a reader whether to look at their paste or at their pipeline.
     expect(said, `the refusal: ${said}`).toContain("sss.combine");
 
-    // **FINDING (3a) — and then it answers a question this reader did not ask.**
-    // `engine.js` appends a sentence to every `Need at least …` about shares
-    // "decrypted outside the browser (Kleopatra/gpg/YubiKey)" and about keeping
-    // "remaining OpenPGP ciphertext in the GPG panel". This custodian has no
-    // ciphertext, no GPG panel open, and no share that has been anywhere near a
-    // smartcard: they typed words off a card. Half the remedy is performable —
-    // paste more mnemonics in the share rows — and it is buried inside a
-    // conditional about a workflow they are not in, which is exactly the shape
-    // `47e7ffa` rules out. The sentence a person needs here is "add the second
-    // card", and it is not in the box.
-    expect(said, `the refusal: ${said}`).toContain("Kleopatra");
-    expect(said, `the refusal: ${said}`).toContain("OpenPGP ciphertext");
+    // **FINDING (3a), fixed — and pinned in both directions.**
+    //
+    // `engine.js` used to append the same sentence to *every* `Need at least …`
+    // — about shares "decrypted outside the browser (Kleopatra/gpg/YubiKey)"
+    // and about keeping "remaining OpenPGP ciphertext in the GPG panel". This
+    // custodian has no ciphertext, no GPG panel open and no share that has been
+    // near a smartcard: they typed words off a card. So half that remedy named
+    // an act nobody could perform, and the half they could was buried inside a
+    // conditional about a workflow they were not in — the shape `47e7ffa` rules
+    // out. `missingSharesRemedy` now branches on states the run can see are
+    // true, and the state here is "share rows are filled in, the GPG panel is
+    // empty".
+    expect(said, `the refusal: ${said}`).toContain(
+      "Paste one more card's mnemonic into the share rows"
+    );
+    // And why any card will do, which is the fact that turns "get another one"
+    // into something a person can act on without ringing the dealer to ask
+    // which.
+    expect(said, `the refusal: ${said}`).toContain(
+      "Any 2 shares of this split rebuild it"
+    );
+    // The direction that regresses silently: a reader with nothing in the GPG
+    // panel must not be sent to it. If this line ever goes red the appendix has
+    // become unconditional again.
+    expect(
+      said,
+      `a reader with no ciphertext was sent to the GPG panel — ${said}`
+    ).not.toMatch(/Kleopatra|GPG panel|OpenPGP/i);
     // Nothing was written: a partial recovery must not leave a slot behind that a
     // later cell could read as the secret.
     await trayTab(custodian, "Slots");
@@ -452,7 +488,7 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
 
   /* ── 5. a word changed, and a share from somewhere else ──────────────────── */
 
-  it("catches a corrupted word by checksum, without saying which row it was", async () => {
+  it("catches a corrupted word by checksum and names the row it went into", async () => {
     // One word swapped for another word from the same wordlist, so the mnemonic
     // is still made of legal words and only the RS1024 checksum can tell. A
     // nonsense word would be caught by the wordlist lookup instead and would be
@@ -479,21 +515,37 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
     expect(said, `the refusal: ${said}`).toContain("Invalid share checksum");
     expect(said, `the refusal: ${said}`).toContain("blip39");
 
-    // **FINDING (4a) — it does not say which row.** `decodeShareSet` maps
-    // `decodeMnemonic` over the set and rethrows the first failure, and the
-    // failure carries no index, so a custodian who has typed two cards in is told
-    // one of them is wrong and left to work out which. The panel that *can* tell
-    // them — "Check a share…", which reads one mnemonic at a time — is behind a
-    // menu nobody has pointed them at, and the error does not point at it either.
+    // **FINDING (4a), fixed — it says which row.** `decodeShareSet` used to map
+    // `decodeMnemonic` over the set and rethrow the first failure, which
+    // carries no index, so a custodian who had typed two cards in was told one
+    // of them was wrong and left to work out which. It now decodes every row
+    // before it throws — the only way the row number is knowable, since the
+    // rows after the first failure would otherwise never be read — and names
+    // the ones that failed.
     //
-    // Pinned in both directions: the message must not name a row, and must not
-    // name the good card, because either would mean this has been fixed.
-    expect(said, `the refusal: ${said}`).not.toMatch(/share (1|2) of the .* is/i);
-    expect(said, `the refusal: ${said}`).not.toMatch(/\brow\b/i);
-    expect(said, `the refusal: ${said}`).not.toMatch(/second|first/i);
+    // The corrupted card went into row 2, and it is asserted as row 2 rather
+    // than as "a row": the whole value of the fix is that the number is the
+    // right one.
+    expect(said, `the refusal: ${said}`).toMatch(
+      /Row 2 of the 2 pasted shares is not readable/
+    );
+    // And that the other one is fine, which is what stops a custodian re-typing
+    // both cards.
+    expect(said, `the refusal: ${said}`).toContain("The other row decoded cleanly");
+
+    // **What a refusal about a share must never contain: the share.** Four
+    // consecutive words is well past coincidence for English prose and is a
+    // sequence that only the mnemonic has. An error box is copied into chats
+    // and screenshots, so a message that quoted the card to show where it went
+    // wrong would be the leak.
+    const firstWords = (m) => m.split(/\s+/).slice(0, 4).join(" ");
+    expect(said, "the refusal quoted the good card").not.toContain(firstWords(cards[1]));
+    expect(said, "the refusal quoted the corrupted card").not.toContain(
+      firstWords(corrupted)
+    );
   }, 180_000);
 
-  it("catches a share from another split by set id, without naming either set", async () => {
+  it("catches a share from another split and names both sets, by row", async () => {
     await pasteShares(custodian, [cards[1], strangerCard]);
     await custodian.getByRole("button", { name: "Run all" }).click();
     await runSettled(custodian);
@@ -512,15 +564,40 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
     // between a custodian and that, and it holds.
     expect(said, `the refusal: ${said}`).toContain("Share set ID mismatch");
 
-    // **FINDING (4b) — and it says nothing else.** Four words, no set ids, no
-    // indication which of the two pasted shares is the stranger, and no mention
-    // of the fact a person can act on: every one of these mnemonics knows its own
-    // set id, "Check a share…" prints it as `set XXXX`, and comparing two of those
-    // is the whole diagnosis. The refusal has all of it in hand at the moment it
-    // throws — `decodeShareSet` is holding both decoded headers — and passes none
-    // of it on.
-    expect(said, `the refusal: ${said}`).not.toMatch(/set [0-9A-F]{4}/);
-    expect(said, `the refusal: ${said}`).not.toMatch(/\bcheck a share\b/i);
+    // **FINDING (4b), fixed — and this is the highest-value line in the file.**
+    //
+    // It used to be four words and nothing else: no set ids, no indication
+    // which of the two pasted shares was the stranger. `decodeShareSet` is
+    // holding both decoded headers at the moment it throws, and passed none of
+    // it on. It now names every row with the set it came from.
+    expect(said, `the refusal: ${said}`).toMatch(/row 1 is from set [0-9A-F]{4}/);
+    expect(said, `the refusal: ${said}`).toMatch(/row 2 is from set [0-9A-F]{4}/);
+    // Two different sets, which is the thing being reported. A message that
+    // printed one id twice would satisfy both lines above and say nothing.
+    const named = [...said.matchAll(/from set ([0-9A-F]{4})/g)].map((m) => m[1]);
+    expect(new Set(named).size, `the sets named: ${JSON.stringify(named)}`).toBe(2);
+
+    // **And it is the same four hex digits the check panel printed.** Step 3
+    // read `set XXXX` off "Check a share…" for this exact card; row 1 is where
+    // that card was pasted. This is the assertion that keeps the codec's
+    // `formatSetId` the only speller of a set id — a refusal naming the raw
+    // fifteen bits would still pass every line above and leave a custodian
+    // comparing `set 465E` against `set 17998`.
+    expect(panelSetId, "step 3 never read a set id off the panel").toMatch(/^[0-9A-F]{4}$/);
+    expect(said, `the refusal: ${said}`).toContain(`row 1 is from set ${panelSetId}`);
+
+    // Why it is caught here rather than downstream, said to the person: two
+    // internally valid mnemonics from two ceremonies do not fail to combine,
+    // they combine into a different secret. Observed directly — dropping the
+    // guard and interpolating share 2 of one set with share 3 of another
+    // returns thirty-two bytes and no error at all.
+    expect(said, `the refusal: ${said}`).toContain("returns a different secret");
+
+    // Never the words themselves, on the refusal that is most tempting to
+    // illustrate: the set ids and the row numbers are the whole diagnosis.
+    const firstWords = (m) => m.split(/\s+/).slice(0, 4).join(" ");
+    expect(said, "the refusal quoted the good card").not.toContain(firstWords(cards[1]));
+    expect(said, "the refusal quoted the stranger").not.toContain(firstWords(strangerCard));
   }, 180_000);
 
   /* ── 6. two good cards ───────────────────────────────────────────────────── */

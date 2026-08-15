@@ -410,6 +410,28 @@ describe("shareIdentity — what a masked share may still say", () => {
     ).toBe("encrypted share");
   });
 
+  it("reads a share that arrived as plain text off its own header", async () => {
+    // The holder's case, and the one the widget could not serve. A share dealt
+    // across a room reaches `out` as `quorum.recv`'s `{ type: "text" }` with no
+    // `shareIndex`, no threshold and no tags on it — a literal is the same
+    // shape — so the tile said "sensitive, value not shown" and nothing else.
+    // Everything it needs is in the words: `encodeMnemonic` writes the index,
+    // the threshold and the set id into the header before a word of data.
+    const dealt = await run("random 32 | sss.split threshold=2 shares=3 | blip39 | out $set");
+    const third = dealt.find((a) => a.shareIndex === 3);
+    const arrived = await run(`"${String(third.content)}" | out $share-3`);
+    const tile = arrived.find((a) => a.role === "share");
+    expect(tile, "a mnemonic reached an output tile as something other than a share").toBeTruthy();
+    const id = shareIdentity(tile);
+    expect(id.index).toBe(3);
+    expect(id.threshold).toBe(2);
+    expect(id.flavour).toBe("BLIP39 mnemonic");
+    // And the same set id the dealer's own tile carries, which is what makes
+    // two cards comparable across two machines that never spoke.
+    expect(id.setId).toMatch(/^[0-9A-F]{4}$/);
+    expect(id.setId).toBe(shareIdentity(third).setId);
+  }, 60_000);
+
   it("returns null when there is nothing public to say", () => {
     expect(shareIdentity({})).toBeNull();
     expect(shareIdentity(null)).toBeNull();

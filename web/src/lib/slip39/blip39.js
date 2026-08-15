@@ -175,6 +175,138 @@ export function encodeShareSet(shareSet) {
 }
 
 /**
+ * A set id as every surface writes it: four upper-case hex digits.
+ *
+ * One function rather than the same masking-and-padding expression in the
+ * check panel and in the refusals below, because those two are read *against*
+ * each other — a custodian compares the `set XXXX` a panel prints for one card
+ * with the `set XXXX` a refusal names for a row, and two spellings of fifteen
+ * bits would make that comparison silently meaningless.
+ *
+ * @param {number} id
+ * @returns {string}
+ */
+export function formatSetId(id) {
+  return ((Number(id) || 0) & 0x7fff).toString(16).toUpperCase().padStart(4, "0");
+}
+
+/**
+ * What a mnemonic says about itself, or `null` for anything that is not one.
+ *
+ * The header is written before a word of data (`encodeMnemonic`), so which
+ * share this is, how many recombine and which split it belongs to are all
+ * carried *by the share* — a holder handed one over a wire has every one of
+ * those facts in their hand. This is the non-throwing read for surfaces that
+ * are labelling a value rather than recovering from it; anything that needs
+ * the octets or the failure reason calls `decodeMnemonic` directly.
+ *
+ * @param {string} mnemonic
+ * @returns {{ index: number, total: number, threshold: number, setId: string }|null}
+ */
+export function readShareHeader(mnemonic) {
+  const text = String(mnemonic || "");
+  // A cheap bound before the split, because this is called speculatively on
+  // every piece of text that reaches an output tile and most of them are not
+  // shares. The largest share this codec can encode is 1023 octets, which is
+  // some 830 words; anything past this is text that happens to begin with
+  // words, and lower-casing and splitting a megabyte of it to find that out
+  // would be paid on every run.
+  if (!text.trim() || text.length > 8192) return null;
+  try {
+    const m = decodeMnemonic(text);
+    return {
+      index: m.index,
+      total: m.shareCount,
+      threshold: m.threshold,
+      setId: formatSetId(m.id),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+/** `[1]` → "row 1"; `[1,2]` → "rows 1 and 2"; `[1,2,4]` → "rows 1, 2 and 4". */
+function rowList(rows) {
+  if (rows.length === 1) return `row ${rows[0]}`;
+  return `rows ${rows.slice(0, -1).join(", ")} and ${rows[rows.length - 1]}`;
+}
+
+/**
+ * Which pasted rows would not decode, said with the row numbers in it.
+ *
+ * The old message was `decodeMnemonic`'s own four words and nothing else, so a
+ * custodian with two cards in front of them was told one of the two was wrong
+ * and left to work out which — the one question the failure could have
+ * answered and the only one they had. Row numbers, never words: a refusal that
+ * quoted the mnemonic to show where it went wrong would put the share itself
+ * in an error box, a log line and a screenshot.
+ *
+ * @param {{ row: number, why: string }[]} bad
+ * @param {number} total  how many rows were pasted
+ * @returns {string}
+ */
+function unreadableSharesMessage(bad, total) {
+  const parts = [];
+  if (bad.length === 1) {
+    parts.push(`${cap(rowList([bad[0].row]))} of the ${total} pasted shares is not readable: ${bad[0].why}.`);
+  } else {
+    parts.push(
+      `${bad.length} of the ${total} pasted shares are not readable — ` +
+        `${bad.map((b) => `row ${b.row}: ${b.why}`).join("; ")}.`
+    );
+  }
+  const good = total - bad.length;
+  if (good > 0) {
+    parts.push(`The other ${good === 1 ? "row decoded" : `${good} rows decoded`} cleanly.`);
+  }
+  parts.push(
+    "A BLIP39 mnemonic carries a checksum so that one wrong or missing word is refused " +
+      "here rather than becoming a different secret three steps later — re-read that card, " +
+      "and mind that the words are ordinary English ones autocorrect likes to change."
+  );
+  return parts.join(" ");
+}
+
+/**
+ * Which rows came from which split, when they did not all come from one.
+ *
+ * This is the only thing standing between a custodian and a wrong answer that
+ * looks like a right one. Two mnemonics from two ceremonies each pass their own
+ * checksum, so nothing before this objects, and `combineSecret` will happily
+ * interpolate two points off two different polynomials and return thirty-two
+ * bytes that are nobody's secret — observed, with no error anywhere, whenever
+ * the two shares happen to carry different indices. So the refusal names the
+ * rows and the sets rather than the fact of disagreement: comparing set ids is
+ * the whole diagnosis, and every card is carrying its own.
+ *
+ * @param {Blip39ShareMeta[]} decoded  one per pasted row, in row order
+ * @returns {string}
+ */
+function setMismatchMessage(decoded) {
+  /** @type {Map<string, number[]>} */
+  const bySet = new Map();
+  decoded.forEach((d, i) => {
+    const key = formatSetId(d.id);
+    if (!bySet.has(key)) bySet.set(key, []);
+    (bySet.get(key) || []).push(i + 1);
+  });
+  const listed = [...bySet.entries()]
+    .map(([setId, rows]) => `${rowList(rows)} ${rows.length === 1 ? "is" : "are"} from set ${setId}`)
+    .join(", ");
+  return (
+    `Share set ID mismatch: ${listed}. Shares recombine only with the others from their own ` +
+    "split, so one of these cards was dealt at a different ceremony — take it out and put the " +
+    "missing card from the set you are recovering in its place. This is caught here because it " +
+    "is not caught later: combining across two sets returns a different secret rather than an error."
+  );
+}
+
+/** @param {string} s */
+function cap(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
  * Decode BLIP39 mnemonics into a raw SSS share set.
  * @param {string[]} mnemonics
  * @returns {{
@@ -190,14 +322,31 @@ export function encodeShareSet(shareSet) {
  */
 export function decodeShareSet(mnemonics) {
   if (!mnemonics?.length) throw new Error("No mnemonics provided");
-  const decoded = mnemonics.map(decodeMnemonic);
+  // Every row is read before anything is thrown, where `.map` used to give up
+  // on the first bad one. Which rows are wrong is only knowable if the rows
+  // after the first failure are decoded too, and that is exactly what the
+  // message below has to say.
+  /** @type {Blip39ShareMeta[]} */
+  const decoded = [];
+  /** @type {{ row: number, why: string }[]} */
+  const unreadable = [];
+  mnemonics.forEach((m, i) => {
+    try {
+      decoded.push(decodeMnemonic(m));
+    } catch (err) {
+      unreadable.push({ row: i + 1, why: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  if (unreadable.length) {
+    throw new Error(unreadableSharesMessage(unreadable, mnemonics.length));
+  }
   const threshold = decoded[0].threshold;
   const flags = decoded[0].flags;
   const id = decoded[0].id;
   const shareCount = decoded[0].shareCount;
 
+  if (decoded.some((d) => d.id !== id)) throw new Error(setMismatchMessage(decoded));
   for (const d of decoded) {
-    if (d.id !== id) throw new Error("Share set ID mismatch");
     if (d.threshold !== threshold) throw new Error("Threshold mismatch across shares");
     if (d.flags !== flags) throw new Error("Flag mismatch across shares");
   }

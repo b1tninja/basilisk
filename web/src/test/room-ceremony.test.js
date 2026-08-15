@@ -48,6 +48,7 @@ import {
   DEALER_BASED,
   MAX_ROOM,
   NO_REDUNDANCY_AT_TWO,
+  RECOVERY_WAIT_MS,
   canonicalCeremonyText,
   ceremonyQuorum,
   roomCeremony,
@@ -194,6 +195,62 @@ describe("every notebook the product can generate", () => {
     );
   });
 
+  it("names each holder's slot for the share in it, not for their seat", () => {
+    // **The finding this fixes.** Receive cells were numbered by holder —
+    // `$share-${i + 1}` for the holder at position `i` — while the send beside
+    // them selected `at ${i + 2}`. So the machine dealt share 3 kept it in
+    // `$share-2`, and a person comparing a slot against a printed card that
+    // says "share 3 of 3" could not tell whether they had been dealt the wrong
+    // one. Asserted as a pairing between the two cells rather than as a
+    // spelling of either, because the defect was that the two disagreed.
+    for (const n of SIZES) {
+      const c = ceremonyFor(n);
+      // Dealing sends only: the dealer's *recovery* cell is `$set | at 1 |
+      // quorum.send` too, and share 1 is the one share that is deliberately in
+      // no slot at all.
+      const sent = c.cells
+        .filter(
+          (cell) =>
+            cell.phase === "deal" && /^\$set \| at \d+ \| quorum\.send/.test(cell.recipe)
+        )
+        .map((cell) => Number(/at (\d+)/.exec(cell.recipe)[1]));
+      const received = c.cells
+        .filter((cell) => cell.recipe.startsWith("quorum.recv from="))
+        .map((cell) => Number(/out \$share-(\d+)/.exec(cell.recipe)[1]));
+      expect(received, `sent ${JSON.stringify(sent)}`).toEqual(sent);
+      // The dealer keeps share 1 inside `$set`, so no slot is named for it —
+      // and that is now the honest reading of the gap rather than an
+      // off-by-one hiding in it.
+      // Word-bounded: a room of eleven has a `$share-10`, and a substring test
+      // would read it as the slot that must not exist.
+      expect(c.text, "a slot was named for the share the dealer keeps").not.toMatch(
+        /\$share-1\b/
+      );
+    }
+  });
+
+  it("gives the recovery gather a wait a person could actually meet", () => {
+    // **The finding this fixes.** The gather carried no `wait=`, so it took
+    // `quorum.recv`'s registry default of 120000 ms — and it is the one cell in
+    // the notebook pressed at a different time from every other, the one the
+    // picker describes as "run when the secret is wanted back". Two minutes
+    // later it failed with a message telling the reader to "give it a longer
+    // wait=", which means editing a generated recipe in a notebook whose other
+    // copies then no longer match it.
+    for (const n of SIZES) {
+      const c = ceremonyFor(n);
+      const gather = c.cells.at(-1);
+      expect(gather.recipe).toContain(`wait=${RECOVERY_WAIT_MS}`);
+      // And the number is on the panel before anybody presses anything, which
+      // is this module's rule about every other number it writes.
+      expect(gather.why).toContain(String(RECOVERY_WAIT_MS / 60000));
+    }
+    // Long enough to be a different kind of thing from a network timeout: what
+    // happens between the press and the message arriving is a telephone call
+    // and a walk to another machine.
+    expect(RECOVERY_WAIT_MS).toBeGreaterThan(10 * 60_000);
+  });
+
   it("never names a selected share, because a named selected share is not a slot", () => {
     // The finding that cost a two-browser run. `at` stamps `meta.shareIndex`,
     // and `register` diverts on it — so `out $mine` after a selection writes a
@@ -314,7 +371,14 @@ describe("recovery is part of the template", () => {
       // `shares` is the collector, reading the pipe and the slot `with=` names.
       // Without it the holder is sent to a paste tray for values they are
       // already holding, which is what `dc5d7cb` fixed.
-      expect(gather.recipe).toContain("shares with=$share-1");
+      //
+      // `$share-2`, not `$share-1`: slots are now named for the share they
+      // hold rather than for the holder's position, so the recoverer — the
+      // first holder, dealt share 2 — keeps it in `$share-2`. There is no
+      // `$share-1` in the notebook at all, because share 1 is the dealer's and
+      // stays inside `$set`. Read off the ceremony rather than written as a
+      // literal, so the two ends of the rename cannot drift.
+      expect(gather.recipe).toContain("shares with=$share-2");
       expect(gather.recipe).toContain("out $secret");
       // And a digest of what came back, so the recovery can be checked against
       // the dealer's `$expected` without either machine showing the secret.

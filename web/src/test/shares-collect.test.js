@@ -22,7 +22,7 @@ import { compileRecipe, registryIssues, serializeRecipe } from "../lib/toolkit/r
 import { getStep } from "../lib/toolkit/registry.js";
 import { stepInputNeeds } from "../lib/toolkit/input-needs.js";
 import { typeOf } from "../lib/toolkit/types.js";
-import { decodeMnemonic } from "../lib/slip39/blip39.js";
+import { decodeMnemonic, formatSetId } from "../lib/slip39/blip39.js";
 import { combineShares } from "../lib/slip39/slip39.js";
 
 /** Three mnemonics of one 2-of-3 split, as a run of the language produces them. */
@@ -239,8 +239,13 @@ describe("two collected shares that are the same share", () => {
       ].join("\n\n")
     );
     expect(validation.errors.map((e) => e.message)).toEqual([]);
+    // The set id as `formatSetId` spells it — four upper-case hex digits —
+    // rather than the raw fifteen bits. "set 969" was a number that appeared on
+    // no other surface in the product, so a reader given it could not compare
+    // it with the `set XXXX` the check panel prints or the one
+    // `decodeShareSet`'s own refusal names.
     await expect(runRecipe(ast)).rejects.toThrow(
-      new RegExp(`same share — number ${header.index} of set ${header.id}`)
+      new RegExp(`same share — number ${header.index} of set ${formatSetId(header.id)}`)
     );
     // Where each of them came from, because that is the only thing the reader
     // can act on: two slots, and one of them holds the wrong value.

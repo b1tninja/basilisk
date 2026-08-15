@@ -142,7 +142,7 @@ async function ceremonySlots(page) {
   const rows = tray(page).locator("li code");
   const out = [];
   for (const text of await rows.allInnerTexts()) {
-    const m = /^@(expected|set|share-1|recovered|secret)$/.exec(text.trim());
+    const m = /^@(expected|set|share-\d+|recovered|secret)$/.exec(text.trim());
     if (m) out.push(m[1]);
   }
   return out.sort();
@@ -501,7 +501,13 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
       .toBe("ok");
 
     const held = await ceremonySlots(holder);
-    expect(held, "the share did not arrive").toContain("share-1");
+    // `share-2`, not `share-1`. The generator names a holder's slot for the
+    // share in it rather than for their seat: in a room of two the dealer keeps
+    // share 1 inside `$set` and the holder is dealt share 2, so `$share-1` is
+    // now a slot that correctly exists nowhere. `three-party-ceremony.e2e.js`
+    // finding 5b is the same rename seen where it mattered most — a machine
+    // dealt share 3 used to keep it in `$share-2`.
+    expect(held, "the share did not arrive").toContain("share-2");
     // And nothing the dealer holds. This browser has never run `random`, has no
     // `$set`, and could not have produced a share of this split by itself.
     expect(held).not.toContain("set");

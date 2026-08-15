@@ -714,15 +714,25 @@ export function qrDataUri(svg) {
  * not shown" and nothing else, so the one question a custodian actually has
  * ("is this share 2 or share 3?") could only be answered by revealing it.
  *
+ * The set id joins them for the reason the other two are here: it is the fact
+ * that decides whether two cards belong together, `decodeShareSet` names it in
+ * the refusal a custodian meets when they do not, and "Check a share…" prints
+ * it as `set XXXX`. A tile that shows it lets those three be compared without
+ * anybody revealing a share to do it. It is public by construction — the
+ * fifteen bits are drawn at encode time and carried in the clear in every one
+ * of the set's mnemonics, so it distinguishes splits and discloses nothing
+ * about the secret.
+ *
  * @param {{ shareIndex?: number, tags?: string[],
- *   traits?: { shareOf?: number, threshold?: number } }} artifact
- * @returns {{ index: number, threshold: number, flavour: string } | null}
+ *   traits?: { shareOf?: number, threshold?: number, setId?: string } }} artifact
+ * @returns {{ index: number, threshold: number, setId: string, flavour: string } | null}
  */
 export function shareIdentity(artifact) {
   const traits = artifact?.traits || {};
   const index = Number(traits.shareOf ?? artifact?.shareIndex ?? 0) || 0;
   const threshold = Number(traits.threshold ?? 0) || 0;
-  if (!index && !threshold) return null;
+  const setId = String(traits.setId ?? "").toUpperCase();
+  if (!index && !threshold && !setId) return null;
   const tags = (artifact?.tags || []).map(String);
   // `encrypted` is checked first because a GPG-encrypted share carries
   // `blip39` too — it is armor *around* a mnemonic, and calling it a mnemonic
@@ -734,7 +744,7 @@ export function shareIdentity(artifact) {
       : tags.includes("raw")
         ? "raw share"
         : "";
-  return { index, threshold, flavour };
+  return { index, threshold, setId, flavour };
 }
 /* ══════════════════════════════════════════════════════════════════════════
  *  WebRTC read-outs — the three panels a user lands on when a call fails

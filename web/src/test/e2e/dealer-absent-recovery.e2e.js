@@ -72,8 +72,10 @@
  * - **1a** — the two phases are one run, and on the dealer that costs the
  *   property rather than a press: the cell that returns the dealer's share is
  *   below the split and fires with it.
- * - **1b** — the gather the ceremony writes gives the other custodian 120
- *   seconds, and says so only after they have run out.
+ * - **1b** — *fixed.* The gather the ceremony wrote gave the other custodian
+ *   120 seconds and said so only after they had run out. It now carries an
+ *   explicit `wait=`, half an hour long, and the picker prints the number
+ *   before anybody presses anything.
  * - **7a** — nothing on the recovering machine says whose shares rebuilt the
  *   secret. The sender writes an Activity entry; the receiver writes none.
  * - **8a** — the destroyed browser's row reads "verified" beside "failed",
@@ -86,6 +88,10 @@ import { chromiumAvailability } from "../helpers/browser-peers.js";
 import { openMesh } from "../helpers/browser-mesh.js";
 import { createQuorumRoom } from "../helpers/quorum-room.js";
 import { readNotebookSource, seedVaultKeyExpr } from "../helpers/toolkit-ui.js";
+// The generator's own number for how long a recovery gather waits. Imported so
+// finding 1b is pinned to the constant the recipe and the picker both read,
+// rather than to a literal this file would have to be edited to keep true.
+import { RECOVERY_WAIT_MS } from "../../lib/toolkit/room-ceremony.js";
 
 const availability = await chromiumAvailability();
 
@@ -437,29 +443,39 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
       "a cell still selects the dealer's own share out of the set"
     ).not.toMatch(/\$set\s*\|\s*(\[1\]|at\s+1)\b/);
 
-    // **FINDING (1b) — the recovery gather gives the other custodian two
-    // minutes.** The generated cell is `quorum.recv count=1 | …` with no `wait=`
-    // on it, and `quorum.recv`'s registry default is 120000 ms. So the cell the
-    // picker describes as "run when the secret is wanted back" fails two minutes
-    // after it is pressed unless the second holder happens to be sitting at their
-    // machine, and the refusal it fails with is about the room ("Nobody having
-    // sent yet is an ordinary state of a healthy room… give it a longer wait=
-    // than 120s") — a remedy that requires editing a generated recipe, in a
-    // notebook whose other copies would then no longer match this one.
+    // **FINDING (1b), fixed — the recovery gather no longer gives the other
+    // custodian two minutes.**
     //
-    // Observed rather than argued: driving the recoverer's gather before the
-    // other holder had pressed anything produced exactly that sentence, twice.
-    // It is pinned here on the recipe instead of on a two-minute wait, because a
-    // test that spends 120 s proving a default is 120 s buys nothing the text
-    // does not already say.
+    // The generated cell was `quorum.recv count=1 | …` with no `wait=` on it,
+    // and `quorum.recv`'s registry default is 120000 ms. So the cell the picker
+    // describes as "run when the secret is wanted back" failed two minutes
+    // after it was pressed unless the second holder happened to be sitting at
+    // their machine, and the refusal it failed with was about the room
+    // ("Nobody having sent yet is an ordinary state of a healthy room… give it
+    // a longer wait= than 120s") — a remedy that requires editing a generated
+    // recipe, in a notebook whose other copies would then no longer match this
+    // one, performed by the one person who cannot fix the problem from their
+    // own screen.
+    //
+    // `RECOVERY_WAIT_MS` is now written into the cell. Still pinned on the
+    // recipe rather than on a wait, because a test that spends half an hour
+    // proving a timeout is half an hour buys nothing the text does not say —
+    // and imported rather than spelled, so the number in the recipe and the
+    // number in the picker's prose cannot drift apart into two facts.
     expect(
       cells[CELLS - 1],
       `the gather cell: ${cells[CELLS - 1]}`
     ).toMatch(/quorum\.recv\b/);
     expect(
       cells[CELLS - 1],
-      "the gather grew a wait= — finding 1b is fixed and this line should say so"
-    ).not.toMatch(/\bwait\s*=/);
+      `the gather lost its wait= — finding 1b would be back: ${cells[CELLS - 1]}`
+    ).toContain(`wait=${RECOVERY_WAIT_MS}`);
+    // And it is long enough to be a different kind of thing from a network
+    // timeout, which is the whole argument: what happens between the press and
+    // the message arriving is a telephone call and a walk to another machine.
+    expect(RECOVERY_WAIT_MS, "the recovery wait fell back to a network timeout").toBeGreaterThan(
+      10 * 60_000
+    );
 
     // It still compiles, for the person: read off the control rather than out of
     // the compiler, because "the recipe parses" and "Run all can be pressed" are
@@ -697,7 +713,9 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
     // open channel — and the only such channel this browser has left is the one
     // to the other holder.
     const held = await ceremonySlots(bystander);
-    expect(held, `the bystander's slots: ${JSON.stringify(held)}`).toEqual(["share-2"]);
+    // `share-3`, for the share this machine was dealt — the sibling suite's
+    // finding 5b, fixed in the generator: slots are named for shares now.
+    expect(held, `the bystander's slots: ${JSON.stringify(held)}`).toEqual(["share-3"]);
     expect(held, "the bystander somehow holds the dealer's set").not.toContain("set");
   }, 200_000);
 
@@ -721,7 +739,8 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
 
     const held = await ceremonySlots(recoverer);
     const whyR = `the recoverer's slots: ${JSON.stringify(held)}`;
-    expect(held, whyR).toContain("share-1");
+    // `share-2` — the share this holder was dealt, in the slot now named for it.
+    expect(held, whyR).toContain("share-2");
     expect(held, whyR).toContain("secret");
     expect(held, whyR).toContain("recovered");
     expect(held, whyR).not.toContain("set");

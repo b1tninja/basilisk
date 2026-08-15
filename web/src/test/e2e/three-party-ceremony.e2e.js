@@ -82,10 +82,18 @@
  * and change a line rather than quietly improving past a green test. They are
  * numbered in the steps that hold them: 4a (the dealer keeps every share, in a
  * slot, with nothing saying to delete it), 5a (the two phases the picker names
- * are one press), 5b (the slot name is one below the share it holds), 5c (the
- * widget that says *which* share this is cannot fire on a share that crossed a
- * room), and 6a (a majority recovered and the spare share's press did nothing
- * that anything reports).
+ * are one press), and 6a (a majority recovered and the spare share's press did
+ * nothing that anything reports).
+ *
+ * Two of them are now fixed and their assertions were turned over rather than
+ * deleted. **5b** — the slot name was one below the share it held, so the
+ * machine dealt share 3 kept it in `$share-2`; the generator names slots for
+ * shares now and step 5 asserts `$share-3`. **5c** — the widget that says which
+ * share this is could not fire on a share that crossed a room, because
+ * `execQuorumSend` sends `data` and nothing else; the tile now reads the
+ * BLIP39 header out of the mnemonic it is already holding, so the holder is
+ * told what the dealer was told, and step 5 asserts the labels on the masked
+ * tile.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -617,43 +625,45 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     expect(seen[4], why).toBe("ok"); // received
     expect(seen[6], `the bystander could not hand its share back — ${why}`).toBe("ok");
 
-    // **FINDING (5b) — the slot is numbered off by one from the share.** This
-    // machine was dealt share **3** and the slot it lands in is `$share-2`. The
-    // generator numbers receive cells by holder rather than by share index —
-    // `$share-${i + 1}` for the holder at position `i`, fed by `at ${i + 2}` —
-    // so every holder's slot name is one below the share it holds, and the
-    // dealer's own share 1 is in no slot at all. A person comparing `$share-2`
-    // against a printed card that says "share 3 of 3" has no way to tell whether
-    // they were dealt the wrong one.
+    // **FINDING (5b), fixed — the slot is named for the share it holds.** This
+    // machine was dealt share **3**, and until the generator was changed the
+    // slot it landed in was `$share-2`: receive cells were numbered by holder
+    // rather than by share index — `$share-${i + 1}` for the holder at position
+    // `i`, fed by `at ${i + 2}` — so every holder's slot name was one below the
+    // share in it, and a person comparing a slot against a printed card that
+    // says "share 3 of 3" could not tell whether they had been dealt the wrong
+    // one. There is still no `$share-1` anywhere, and that is now the honest
+    // reading rather than the off-by-one: share 1 is the dealer's and never
+    // leaves `$set`.
     const held = await ceremonySlots(bystander);
-    expect(held, `the bystander's slots: ${JSON.stringify(held)}`).toEqual(["share-2"]);
+    expect(held, `the bystander's slots: ${JSON.stringify(held)}`).toEqual(["share-3"]);
     // And nothing the dealer holds: this browser has never run `random`, has no
     // `$set`, and could not have produced a share of this split by itself.
     expect(held).not.toContain("set");
     expect(held).not.toContain("expected");
 
-    // What a holder is actually looking at. Behaviour, not text: a mnemonic in a
-    // tile they can open, with no other tile beside it.
-    const mnemonic = await reveal(bystander, 4, "share-2");
-    expect(mnemonic.split(/\s+/).length, `share arrived as: ${mnemonic}`).toBeGreaterThan(3);
-
-    // **FINDING (5c) — the tile that answers a custodian's one question cannot
-    // fire on the only path a custodian receives a share by.**
+    // **FINDING (5c), fixed — and read before the reveal, which is the point.**
     //
     // `ShareIdentity` exists for exactly this reader. Its own note says so: "the
     // one question a custodian holding three tiles actually has — *which* share
     // is this, and how many of them recover the secret — could only be answered
-    // by revealing a secret in order to read a number that is not one." It draws
-    // `Share 3` and `2 shares recover the secret` from `artifact.shareIndex` and
-    // `traits.threshold`.
+    // by revealing a secret in order to read a number that is not one."
     //
-    // Neither survives the room. `execQuorumSend` takes the value's `data` and
+    // It could not fire here. `execQuorumSend` takes the value's `data` and
     // nothing else, and `execQuorumRecv` rebuilds it as
     // `{ type: "text", meta: { sensitive, from, ts } }` — no index, no
-    // threshold, no tags. So `shareIdentity` returns null and the widget renders
-    // nothing. The dealer, who already knows everything, gets the labels; the
-    // holder, who knows nothing, gets a slot name that is off by one and a wall
-    // of words. This is the whole finding in two numbers.
+    // threshold, no tags — so `shareIdentity` returned null and the widget drew
+    // nothing. The dealer, who already knew everything, got three labels; the
+    // holder, who knew nothing, got a slot name and a wall of words. Nothing
+    // was added to the wire to fix it: `encodeMnemonic` writes the index, the
+    // threshold and the set id into the header before a word of data, so the
+    // facts were in the value the holder was already holding and nothing read
+    // them out.
+    //
+    // Asserted **while the tile is still masked**, because `ShareIdentity` is a
+    // `publicView` — it is what a share tile may say with its body covered, and
+    // a revealed tile renders its own words instead. Reading it after the
+    // reveal below would report zero for a widget that is working.
     const identity = {
       dealer: await cell(dealer, 0).locator("[data-share-identity]").count(),
       holder: await cell(bystander, 4).locator("[data-share-identity]").count(),
@@ -661,7 +671,34 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     expect(
       identity.holder,
       `share-identity labels drawn — ${JSON.stringify(identity)}`
-    ).toBe(0);
+    ).toBeGreaterThan(0);
+    const labels = (
+      await cell(bystander, 4).locator("[data-share-identity]").first().innerText()
+    ).replace(/\s+/g, " ");
+    // The three facts, and the number that makes this finding rather than a
+    // styling note: **3**, off a machine that was told nothing but the words.
+    expect(labels, `the holder's share labels: ${labels}`).toContain("Share 3");
+    expect(labels, `the holder's share labels: ${labels}`).toContain(
+      "2 shares recover the secret"
+    );
+    expect(labels, `the holder's share labels: ${labels}`).toMatch(/set [0-9A-F]{4}/);
+    // The mask is still on while all of that is on screen — which is §34b's
+    // rule and the whole reason these facts may be drawn at all: they describe
+    // the split, not the secret.
+    expect(
+      await cell(bystander, 4)
+        .locator("[data-artifact-kind]")
+        .filter({ hasText: "share-3" })
+        .first()
+        .getByRole("button", { name: "Reveal" })
+        .count(),
+      "the share tile was already open when its public labels were read"
+    ).toBe(1);
+
+    // What a holder is actually looking at once they do open it. Behaviour, not
+    // text: a mnemonic in a tile they can open, with no other tile beside it.
+    const mnemonic = await reveal(bystander, 4, "share-3");
+    expect(mnemonic.split(/\s+/).length, `share arrived as: ${mnemonic}`).toBeGreaterThan(3);
   });
 
   /* ── 6. the recoverer: two shares from two machines, one secret ──────────── */
@@ -682,7 +719,9 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     await runSettled(recoverer);
 
     const held = await ceremonySlots(recoverer);
-    expect(held, `the recoverer's slots: ${JSON.stringify(held)}`).toContain("share-1");
+    // `share-2`, because this holder was dealt share 2 — finding 5b's rename,
+    // seen from the other machine.
+    expect(held, `the recoverer's slots: ${JSON.stringify(held)}`).toContain("share-2");
     expect(held).toContain("secret");
     expect(held).toContain("recovered");
     // Nothing the dealer holds, on the machine that recombined.

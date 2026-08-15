@@ -36,6 +36,8 @@ import {
   decodeMnemonic,
   decodeShareSet,
   encodeShareSet,
+  formatSetId,
+  readShareHeader,
   validateShareMnemonic,
 } from "../slip39/blip39.js";
 import { combineRawShares, splitRawShares } from "../slip39/slip39.js";
@@ -565,6 +567,8 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
                 traits: {
                   shareOf: idx,
                   threshold: threshold || undefined,
+                  // Off the words, as everywhere else a share is labelled.
+                  setId: readShareHeader(String(itemVal.data))?.setId,
                 },
               });
             } else {
@@ -852,13 +856,72 @@ function assertDistinctShares(collected) {
     const first = seen.get(key);
     if (first) {
       throw new Error(
+        // `formatSetId`, not the raw fifteen bits: "set 14213" is a number no
+        // surface in this product prints, so a reader told it could not compare
+        // it against the `set XXXX` on the check panel or in `decodeShareSet`'s
+        // own refusal.
         `shares: ${first} and ${where} are the same share — number ${header.index} of ` +
-          `set ${header.id}. Shamir needs distinct shares, and two copies of one point ` +
+          `set ${formatSetId(header.id)}. Shamir needs distinct shares, and two copies of one point ` +
           `recover nothing. Collect ${header.threshold} different shares of this split.`
       );
     }
     seen.set(key, where);
   }
+}
+
+/**
+ * What to do about a recombination that is short of shares.
+ *
+ * The count in front of this sentence is right and is read out of the shares'
+ * own header. What used to follow it was not: *every* `Need at least …` got the
+ * same appendix about shares "decrypted outside the browser
+ * (Kleopatra/gpg/YubiKey)" and about keeping "remaining OpenPGP ciphertext in
+ * the GPG panel", and a custodian who typed words off a card has no ciphertext
+ * — so half that remedy named an act they could not perform, and the half they
+ * could was buried inside a conditional about a workflow they were not in.
+ *
+ * Each branch below is entered only on a state this run can see is true: armor
+ * actually sitting in the GPG panel, or share rows actually filled in, or
+ * neither — in which case the shares came down the recipe and the tray is not
+ * where the missing one goes.
+ *
+ * @param {PipelineValue} value  the decoded set `sss.combine` was handed
+ * @param {RuntimeBindings} bindings
+ * @returns {string}
+ */
+function missingSharesRemedy(value, bindings) {
+  const threshold = Number(value?.data?.threshold) || 0;
+  const got = (value?.data?.raw || []).length;
+  const need = Math.max(1, threshold - got);
+  const more = need === 1 ? "one more card's mnemonic" : `${need} more cards' mnemonics`;
+  const any = threshold
+    ? ` Any ${threshold} shares of this split rebuild it, and it does not matter which.`
+    : "";
+
+  const pgp = (bindings?.inputs?.gpg?.armoredMessages || []).filter((t) =>
+    looksLikePgpMessage(String(t || ""))
+  ).length;
+  if (pgp) {
+    return (
+      `The GPG panel holds ${pgp} OpenPGP message${pgp === 1 ? "" : "s"}; ` +
+      `${pgp === 1 ? "if it is" : "if any of them are"} a share this browser could not open ` +
+      "— smartcard and YubiKey OpenPGP keys are not available to it — decrypt " +
+      `${pgp === 1 ? "it" : "them"} in Kleopatra/gpg and paste the mnemonic${
+        pgp === 1 ? "" : "s"
+      } into the share rows beside the others. Otherwise paste ${more} there.${any}`
+    );
+  }
+  const rows = (bindings?.inputs?.shares?.mnemonics || []).filter((m) =>
+    String(m || "").trim()
+  ).length;
+  if (rows) {
+    return `Paste ${more} into the share rows and run again.${any}`;
+  }
+  return (
+    "The shares reached this step from the recipe rather than from the Inputs tray, so the " +
+    `missing ${need === 1 ? "one" : need} has to arrive from whichever cell supplies them, or ` +
+    `be pasted into Inputs → shares beside them.${any}`
+  );
 }
 
 /**
@@ -1971,9 +2034,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (/Need at least \d+ shares/i.test(msg)) {
-          throw new Error(
-            `${msg}. If some shares were decrypted outside the browser (Kleopatra/gpg/YubiKey), paste those mnemonics in the share rows and keep remaining OpenPGP ciphertext in the GPG panel.`
-          );
+          throw new Error(`${msg}. ${missingSharesRemedy(value, bindings)}`);
         }
         throw err;
       }
@@ -5384,6 +5445,30 @@ async function materializeOutArtifacts(value, params) {
      * than a second copy of the body, so it cannot disagree with the hex.
      */
     const isInspect = !!value.meta?.inspect;
+    /**
+     * Which share this is — from the pipe if a split put it there, otherwise
+     * out of the mnemonic's own header.
+     *
+     * The second half is what a holder was missing. A dealer's share carries
+     * `meta.shareIndex` all the way from `sss.split`, so its tile drew `Share 2
+     * · 2 shares recover the secret`; a share that crossed a room arrives as
+     * `quorum.recv`'s `{ type: "text", meta: { sensitive, from, ts } }` and
+     * carried none of it, so the one person who could not otherwise learn which
+     * share they are holding got a slot name and a wall of words. Nothing had
+     * to be added to the wire for this: `encodeMnemonic` writes the index, the
+     * threshold and the set id into the header before a word of data, so the
+     * facts were already in the value the holder was holding and nothing read
+     * them out. `readShareHeader` is checksum-gated, so no ordinary text is
+     * mistaken for a share.
+     */
+    const header = readShareHeader(String(value.data));
+    const share = value.meta?.shareIndex
+      ? {
+          index: Number(value.meta.shareIndex),
+          threshold: Number(value.meta.threshold) || header?.threshold || 0,
+          setId: header?.setId || "",
+        }
+      : header;
     return [
       attachPipeMeta(
         {
@@ -5395,24 +5480,24 @@ async function materializeOutArtifacts(value, params) {
           sensitive: !!value.meta?.sensitive,
           mime,
           encoding: encodingUsed,
-          shareIndex: value.meta?.shareIndex,
+          shareIndex: share?.index,
           // A share still wins: `sss.split | inspect | out` is not a thing, and
           // if it ever were, which share this is would be the more useful of
           // the two identities by a wide margin.
-          role: value.meta?.shareIndex
+          role: share
             ? "share"
             : isInspect
               ? "inspect"
               : value.meta?.sensitive
                 ? "secret"
                 : "text",
-          tags: value.meta?.shareIndex
-            ? ["mnemonic", "blip39"]
-            : isInspect
-              ? ["inspect"]
-              : [],
-          traits: value.meta?.shareIndex
-            ? { shareOf: value.meta.shareIndex, threshold: value.meta.threshold }
+          tags: share ? ["mnemonic", "blip39"] : isInspect ? ["inspect"] : [],
+          traits: share
+            ? {
+                shareOf: share.index,
+                threshold: share.threshold || undefined,
+                setId: share.setId || undefined,
+              }
             : undefined,
           // Omitted by the op for a sensitive value, on purpose — a snapshot
           // retains raw private JWK fields the masked text dump does not — so
@@ -5559,6 +5644,10 @@ async function materializeOutArtifacts(value, params) {
         );
       });
     }
+    // The set id comes off each mnemonic rather than off `value.data.id`, so a
+    // dealer's tile and a holder's tile are labelled from the same place — the
+    // words themselves — and cannot drift apart when a set is assembled from
+    // shares that arrived by different roads.
     return (value.data.mnemonics || []).map((m, i) =>
       attachPipeMeta(
         {
@@ -5574,6 +5663,7 @@ async function materializeOutArtifacts(value, params) {
           traits: {
             shareOf: i + 1,
             threshold: value.data.threshold,
+            setId: readShareHeader(String(m))?.setId,
           },
         },
         value

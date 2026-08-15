@@ -70,6 +70,15 @@ export const MAX_ROOM = 16;
 export const MIN_ROOM = 2;
 
 /**
+ * How long the recovery gather waits, in milliseconds.
+ *
+ * Exported so the picker's prose and the recipe's `wait=` are one number, and
+ * so a test can pin it without reading it out of a generated string. Thirty
+ * minutes: see the gather cell below for the argument.
+ */
+export const RECOVERY_WAIT_MS = 1_800_000;
+
+/**
  * The sentence that corrects the assumption a reader arrives with.
  *
  * Exported rather than inlined in the widget because it is a claim about what
@@ -260,6 +269,11 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
   // reader put them in. `holders[0]` is the one who will recombine.
   const holders = members.filter((m) => m !== me);
   const recoverer = holders[0];
+  // Which share the recoverer is holding, by the same arithmetic that deals
+  // them: the dealer keeps share 1, so the holder at position `i` gets `i + 2`.
+  // Derived rather than written as `2` so that a change to which holder
+  // recombines moves the gather's `with=` with it.
+  const recovererShare = holders.indexOf(recoverer) + 2;
 
   /** @type {CeremonyCell[]} */
   const cells = [];
@@ -312,12 +326,21 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
   // be `Duplicate out slot $share`, because the compiler reads the whole
   // notebook rather than the part that runs here — the two holders' cells are
   // in one document even though they never run on one machine.
+  //
+  // **The slot is numbered by the share, not by the holder.** It used to be
+  // `$share-${i + 1}`, one below the `at ${i + 2}` that selected the share
+  // being sent — so the machine dealt share 3 kept it in `$share-2`, and a
+  // person comparing a slot against a printed card that says "share 3 of 3"
+  // had no way to tell whether they had been dealt the wrong one. There is
+  // deliberately no `$share-1` anywhere in the notebook, and that is now
+  // honest rather than an off-by-one: share 1 is the dealer's and stays inside
+  // `$set`, for the `slotsByIndex` reason written above.
   holders.forEach((h, i) => {
     cells.push({
       peer: h,
       phase: "deal",
-      why: "Receives one share, on the holder's own machine.",
-      recipe: `quorum.recv from=${me} | out $share-${i + 1}`,
+      why: `Receives share ${i + 2}, on the holder's own machine, into a slot named for it.`,
+      recipe: `quorum.recv from=${me} | out $share-${i + 2}`,
     });
   });
 
@@ -337,8 +360,8 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
     cells.push({
       peer: h,
       phase: "recover",
-      why: "Returns this holder's share when a recovery is called for.",
-      recipe: `$share-${i + 2} | quorum.send to=${recoverer}`,
+      why: `Returns share ${i + 3} when a recovery is called for.`,
+      recipe: `$share-${i + 3} | quorum.send to=${recoverer}`,
     });
   });
 
@@ -349,12 +372,24 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
   // added for exactly this — it reads the pipe and the slot `with=` names, so a
   // holder recombines what reached them without being sent to a paste tray for
   // values they are already holding.
+  //
+  // **`wait=` is written out, and it is written long.** `quorum.recv`'s
+  // registry default is 120000 ms, which is the right default for a step
+  // somebody is watching — and this is the one cell in the notebook that is
+  // pressed at a different time from every other. The picker says so itself:
+  // "Recovering — run when the secret is wanted back". Two minutes is a
+  // network timeout; what happens here is that a person telephones another
+  // custodian, who walks to a machine, opens a notebook and finds a cell. The
+  // failure that follows a 120 s wait tells the reader to "give it a longer
+  // `wait=`" — an edit to a generated recipe, in a notebook whose other
+  // copies then no longer match it, made by the one person who cannot fix the
+  // problem from their own screen. Half an hour is the length of the act.
   cells.push({
     peer: recoverer,
     phase: "recover",
-    why: `Recombines ${threshold} shares back into the secret, and digests it so it can be checked against the dealer's.`,
+    why: `Recombines ${threshold} shares back into the secret, and digests it so it can be checked against the dealer's. Waits up to ${RECOVERY_WAIT_MS / 60000} minutes for the ${threshold - 1 === 1 ? "other custodian" : "other custodians"} to run their cell.`,
     recipe: [
-      `quorum.recv count=${threshold - 1} | shares with=$share-1 | blip39 -d | sss.combine | tee`,
+      `quorum.recv count=${threshold - 1} wait=${RECOVERY_WAIT_MS} | shares with=$share-${recovererShare} | blip39 -d | sss.combine | tee`,
       "  - digest | encode hex | out $recovered",
       "| encode hex | out $secret",
     ].join("\n"),
