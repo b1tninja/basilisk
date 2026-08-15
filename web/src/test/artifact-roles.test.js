@@ -240,10 +240,69 @@ describe("the cellOutputs projection does not silently drop fields (§32/1.4)", 
       "disposition",
       "revealable",
       "sensitive",
+      // A decrypt's signature verdict. Added here the moment it was added to
+      // the projection, because deleting the line reaching the tile changed
+      // nothing any test could see — the trap this block exists for, caught by
+      // mutation rather than by review.
+      "signature",
     ]) {
       expect(block[0], field).toMatch(
         new RegExp(`\\b${field}: (?:!!)?a\\.${field}`)
       );
     }
+  });
+});
+
+/**
+ * The other two projections, and the tile at the end of all three.
+ *
+ * `useNotebook` feeds the notebook; the shell has two more mappings of its own,
+ * and a field listed in one and missed in the others reaches a reader from some
+ * panes and not others — which is worse than reaching none, because it looks
+ * like the value's fault. The OTP tile shipped three named fields through one
+ * of the three and rendered nowhere; the comment above records `pipeType`
+ * costing a third debugging round for the same reason.
+ *
+ * Source-text assertions rather than rendering, which the vitest config keeps
+ * out of scope. They are weaker than a render and far stronger than nothing:
+ * each one fails if the line that carries the field is deleted, which is
+ * exactly the mutation that survived everything else.
+ */
+describe("a decrypt's verdict survives every projection between engine and tile", () => {
+  const read = (rel) =>
+    readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+  it("is carried by both of the shell's artifact mappings", () => {
+    const shell = read("../toolkit/ToolkitShell.tsx");
+    const carried = shell.match(/\bsignature: a\.signature\b/g) || [];
+    expect(carried.length, "both shell mappings must carry it").toBe(2);
+  });
+
+  it("is drawn by the tile, in `JwtArtifact`'s attribute pattern", () => {
+    const tile = read("../toolkit/widgets/ArtifactTile.tsx");
+    // The state is an attribute so the styling is an enumerated CSS rule and
+    // not a colour chosen in the widget — `style-src 'self'` refuses an inline
+    // style, and the *verified* appearance must not be reachable by accident.
+    expect(tile).toMatch(/data-signature-verified=\{a\.signature\.state\}/);
+    expect(tile).toMatch(/\{a\.signature\.sentence\}/);
+    // Never `data-cast`, and never a `CastDot`: that attribute and that dot are
+    // the crypto suite's self-test, and a signature verdict wearing either
+    // would put one fact where a reader has learned to find another.
+    // `cast-indicator.test.js` pins the same boundary from the other side, on
+    // `OpsTile`. The `=` matters — the prose above explains the choice and
+    // naming it there is not using it.
+    expect(tile).not.toMatch(/data-cast=/);
+    expect(tile).not.toMatch(/<CastDot/);
+  });
+
+  it("has a CSS rule for every state the verdict can hold, and only those", () => {
+    const css = read("../css/toolkit.css");
+    for (const state of ["verified", "unverified", "unsigned"]) {
+      expect(css, state).toContain(`.artifact-signature[data-signature-verified="${state}"]`);
+    }
+    // A verified signature addressed to a different key outruns its own tone:
+    // green on surreptitious forwarding would be the widget agreeing with the
+    // forwarder.
+    expect(css).toContain('.artifact-signature[data-signature-intended="mismatch"]');
   });
 });

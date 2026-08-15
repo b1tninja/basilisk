@@ -31,6 +31,11 @@ import {
   formatAnalysisSummary,
 } from "../pgp/inspect.js";
 import { signOpenPgp, verifyOpenPgp } from "../pgp/sign.js";
+import {
+  decryptSignatureVerdict,
+  signatureVerificationDate,
+} from "../pgp/decrypt-verify.js";
+import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
 import {
   decodeMnemonic,
@@ -163,6 +168,11 @@ import {
  *   timing?: { exp: number|null, nbf: number|null, iat: number|null, expired: boolean, notYetValid: boolean },
  * }} [jose]  JOSE body for the JWT reader — `verified` is the op's verdict,
  *   not something re-derivable from the token text
+ * @property {import("../pgp/decrypt-verify.js").DecryptVerdict} [signature]
+ *   What a decrypt found out about who signed the ciphertext, for the same
+ *   reason and by the same route as `jose`: the plaintext carries no trace of
+ *   the signature that was on the message, so a tile re-reading the value
+ *   could only ever report unverified
  */
 
 /**
@@ -3399,7 +3409,17 @@ async function execStepBody(step, value, bindings, artifacts) {
         return agent.execAgentSign(value, step.params || {}, bindings);
       }
       if (step.name === "agent.decrypt") {
-        return agent.execAgentDecrypt(value, step.params || {}, bindings);
+        // The verification set is resolved *here* rather than in `agent-ops`,
+        // because the tier ladder is one decision and this file is where it
+        // lives — `resolveSignersParam` reaches slot resolution that only the
+        // engine holds, and a second copy behind the approval gate is how the
+        // two decrypts would come to disagree about what `signers=` means.
+        const set = await resolveDecryptVerificationSet(
+          bindings,
+          step.params?.signers,
+          "agent.decrypt"
+        );
+        return agent.execAgentDecrypt(value, step.params || {}, bindings, set);
       }
       if (step.name === "agent.pub") return agent.execAgentPub(step.params || {});
       if (step.name === "agent.list") return agent.execAgentList();
@@ -4501,6 +4521,134 @@ async function resolveGpgVerificationKeys(bindings, keyRef, what = "gpg.verify")
 }
 
 /**
+ * The three tiers a decrypt verifies a signature against, in order.
+ *
+ * The order is the decision, and the third tier is the one worth defending:
+ * with nothing written and no session, this returns an **empty set** and the
+ * verdict says so. It does not fall through to `bindings.recipients` the way
+ * `resolveGpgVerificationKeys` does, and the difference is not an oversight —
+ * who a recipe encrypts *to* is not who wrote what it received. Verifying an
+ * incoming message against the Keys tray would produce a confident sentence
+ * naming a person who has not been shown to have written anything, which is
+ * worse than the sentence that admits nobody was checked.
+ *
+ * 1. `signers=` written — verify against exactly those keys, whatever else is
+ *    in scope. An author who names a key means that key.
+ * 2. No `signers=`, a live session — the room's audience. It is symmetric,
+ *    both ends already authenticated it to open the session at all, and
+ *    "signed by a room member" is the claim a ceremony actually needs.
+ * 3. Neither — explicitly unverified.
+ *
+ * @param {RuntimeBindings} bindings
+ * @param {string|undefined|null} signersRef
+ * @param {string} what  the step asking
+ * @returns {Promise<{ keyByFpr: Map<string, import("openpgp").Key>,
+ *   against: import("../pgp/decrypt-verify.js").VerificationSource }>}
+ */
+async function resolveDecryptVerificationSet(bindings, signersRef, what) {
+  const ref = String(signersRef || "").trim();
+  if (ref) {
+    return { keyByFpr: await resolveSignersParam(bindings, ref, what), against: "signers" };
+  }
+  const { getLiveSession } = await import("./quorum-ops.js");
+  const session = getLiveSession();
+  /** @type {Map<string, import("openpgp").Key>|null} */
+  const audience = session?.audienceKeys instanceof Map ? session.audienceKeys : null;
+  if (audience?.size) {
+    // A copy, keyed the way the verdict expects. The session's own map is live
+    // — `rotateRoom` deletes from it — and a set that changed underneath a
+    // verification would make the verdict describe a room that no longer
+    // exists at the moment it was written.
+    /** @type {Map<string, import("openpgp").Key>} */
+    const keyByFpr = new Map();
+    for (const [fpr, key] of audience) {
+      const norm = normalizeFingerprintInput(String(fpr || ""));
+      if (norm && key) keyByFpr.set(norm, key);
+    }
+    if (keyByFpr.size) return { keyByFpr, against: "room" };
+  }
+  return { keyByFpr: new Map(), against: "" };
+}
+
+/**
+ * `signers=` — a `$slot` or a whole fingerprint, resolved to public keys.
+ *
+ * The slot half is `gpg.verify key=`'s own resolution, reached through the
+ * same helper rather than reimplemented, so a slot that verifies a cleartext
+ * signature verifies an encrypted one identically. The fingerprint half is the
+ * spelling this param adds, and it resolves only against keys already in hand
+ * — the room's audience, then the recipients the run is bound to. Naming a
+ * fingerprint nothing holds is refused rather than quietly narrowed to an
+ * empty set, because an empty set reads as tier 3 and would report "no key to
+ * verify against" about a key the author did name.
+ *
+ * @param {RuntimeBindings} bindings
+ * @param {string} ref
+ * @param {string} what
+ * @returns {Promise<Map<string, import("openpgp").Key>>}
+ */
+async function resolveSignersParam(bindings, ref, what) {
+  /** @type {Map<string, import("openpgp").Key>} */
+  const keyByFpr = new Map();
+  /** @param {import("openpgp").Key} key */
+  const add = (key) => {
+    const fpr = normalizeFingerprintInput(String(key?.getFingerprint?.() || ""));
+    if (fpr) keyByFpr.set(fpr, key);
+  };
+
+  if (ref.startsWith(SLOT_SIGIL)) {
+    for (const key of await resolveGpgVerificationKeys(bindings, ref, what)) add(key);
+    if (!keyByFpr.size) {
+      throw new Error(`${what} signers=${ref}: that slot holds no OpenPGP public key.`);
+    }
+    return keyByFpr;
+  }
+
+  const wanted = normalizeFingerprintInput(ref);
+  if (!wanted || wanted.length < 40) {
+    throw new Error(
+      `${what} signers=${ref}: a signer is named by a \`$slot\` holding a public ` +
+        "key, or by one whole OpenPGP fingerprint. A key id is not enough to say " +
+        "which key you mean."
+    );
+  }
+
+  const { getLiveSession } = await import("./quorum-ops.js");
+  const audience = getLiveSession()?.audienceKeys;
+  if (audience instanceof Map) {
+    for (const [fpr, key] of audience) {
+      if (normalizeFingerprintInput(String(fpr || "")) === wanted && key) {
+        add(key);
+        return keyByFpr;
+      }
+    }
+  }
+  for (const key of bindings.recipients || []) {
+    if (normalizeFingerprintInput(String(key?.getFingerprint?.() || "")) === wanted) {
+      add(key);
+      return keyByFpr;
+    }
+  }
+  for (const armor of bindings.recipientKeysArmored || []) {
+    try {
+      const key = await readKey({ armoredKey: String(armor) });
+      if (normalizeFingerprintInput(String(key.getFingerprint())) === wanted) {
+        add(key);
+        return keyByFpr;
+      }
+    } catch (_) {
+      /* a tray entry that will not read is not the key being named */
+    }
+  }
+  throw new Error(
+    `${what} signers=${formatFingerprint(wanted)}: no public key for that ` +
+      "fingerprint is in hand — it is not in this room's audience and not among " +
+      "the keys this run is bound to. Bind the key (Keys tray, or a `$slot`) " +
+      "before naming it as a signer."
+  );
+}
+
+/**
  * @param {RuntimeBindings} bindings
  * @param {string|undefined|null} refOrText
  * @returns {Promise<string>}
@@ -4657,7 +4805,23 @@ async function decryptGpgSource(bindings, step, _artifacts) {
       );
     }
 
-    /** @type {string[]} */
+    /**
+     * Who this run will believe wrote these messages, decided once before any
+     * of them is opened.
+     *
+     * Once, because the set is a property of the run and not of a message: a
+     * `count=all` read of four messages is four verdicts against one set, and
+     * resolving per message would let the room rotate between parts and give
+     * two plaintexts of one bundle incomparable verdicts.
+     */
+    const { keyByFpr, against } = await resolveDecryptVerificationSet(
+      bindings,
+      step?.params?.signers,
+      "gpg.decrypt"
+    );
+    const soft = !!step?.params?.soft;
+
+    /** @type {{ text: string, verdict: import("../pgp/decrypt-verify.js").DecryptVerdict }[]} */
     const plaintexts = [];
     for (const armored of ciphertexts) {
       // A message that will not decrypt refuses the run. The old code pushed
@@ -4667,13 +4831,24 @@ async function decryptGpgSource(bindings, step, _artifacts) {
       // the number of parts is part of the type the compiler already showed
       // the reader, and a quietly dropped message would falsify it.
       let result;
+      const message = await readMessage({ armoredMessage: armored });
       try {
         result = await openpgpDecrypt({
-          message: await readMessage({ armoredMessage: armored }),
+          message,
           // openpgp picks the key whose id matches the message; handing it
           // every unlocked key is how "which of my keys is this for" gets
           // answered without asking the person to say.
           decryptionKeys: privateKeys,
+          // Handing openpgp the set does not decide anything on its own —
+          // `decryptSignatureVerdict` names the signer before it awaits a
+          // verdict, for the reason its header gives — but it is what makes
+          // `result.signatures` carry a `verified` promise at all. With no
+          // keys the signatures come back unverifiable, which is exactly tier
+          // 3's state and is reported as that rather than as a failure.
+          ...(keyByFpr.size ? { verificationKeys: [...keyByFpr.values()] } : {}),
+          // Not "now": the peer that signed this is a different machine with a
+          // different clock. `lib/pgp/clock.js` argues the tolerance.
+          date: signatureVerificationDate(),
           config: { allowInsecureDecryptionWithSigningKeys: true },
         });
       } catch (err) {
@@ -4683,26 +4858,62 @@ async function decryptGpgSource(bindings, step, _artifacts) {
             `did not decrypt — ${msg}`
         );
       }
-      plaintexts.push(
-        typeof result.data === "string"
-          ? result.data
-          : new TextDecoder().decode(result.data)
-      );
+      /**
+       * Which of the unlocked keys opened *this* message — the other half of
+       * the §13.12 comparison, and the reason it is computed per message
+       * rather than once: `count=all` may hand one panel of messages addressed
+       * to several of this browser's keys, and comparing every intended
+       * recipient against one arbitrary key would report forwarding on
+       * messages that were addressed exactly right.
+       */
+      const decryptFpr = openingKeyFingerprint(message, privateKeys);
+      const verdict = await decryptSignatureVerdict({
+        signatures: result.signatures,
+        keyByFpr,
+        against,
+        decryptFpr,
+        soft,
+        what:
+          ciphertexts.length === 1
+            ? "gpg.decrypt"
+            : `gpg.decrypt: message ${plaintexts.length + 1} of ${ciphertexts.length}`,
+      });
+      plaintexts.push({
+        text:
+          typeof result.data === "string"
+            ? result.data
+            : new TextDecoder().decode(result.data),
+        verdict,
+      });
     }
 
     // Sensitive either way: what was encrypted was worth encrypting, and this
     // step has no way to know whether the plaintext is a letter or a share —
     // which is the whole reason it stopped claiming to know.
     if (want === 1) {
-      return { type: "text", data: plaintexts[0], meta: { sensitive: true } };
+      return {
+        type: "text",
+        data: plaintexts[0].text,
+        meta: { sensitive: true, signature: plaintexts[0].verdict },
+      };
     }
-    // `count=all` stays a bundle even when one message arrived: the tip's type
-    // was settled at compile time by the text, and a shape that collapsed on a
-    // count only the run knows would be the same defect in a new place.
-    const parts = plaintexts.map((text) => ({
+    /**
+     * `count=all` stays a bundle even when one message arrived: the tip's type
+     * was settled at compile time by the text, and a shape that collapsed on a
+     * count only the run knows would be the same defect in a new place.
+     *
+     * **The verdict is per part, and there is none on the bundle.** A bundle of
+     * plaintexts is a bundle of messages each with its own signer, so a single
+     * verdict over the set could only be the weakest of them wearing the
+     * others' name. Per-part is also the only spelling that reaches a reader:
+     * a bundle emits no tile of its own, and the parts become tiles exactly
+     * when something projects them — `foreach … | out`, or `shares` — at which
+     * point `attachPipeMeta` copies each part's own verdict onto its own tile.
+     */
+    const parts = plaintexts.map(({ text, verdict }) => ({
       type: "text",
       data: text,
-      meta: { sensitive: true },
+      meta: { sensitive: true, signature: verdict },
     }));
     return {
       type: "bundle",
@@ -4716,6 +4927,50 @@ async function decryptGpgSource(bindings, step, _artifacts) {
     // `src/lib/memory-safety.js`.
     for (const key of privateKeys) zeroKeyMaterial(key);
   }
+}
+
+/**
+ * The fingerprint of the key a message was addressed to, among the ones open.
+ *
+ * Read off the message's PKESK key ids rather than asked of the decrypt
+ * result, because openpgp does not report which key it used. That is fine
+ * here: the ids in the packet headers are unauthenticated, but this fingerprint
+ * is only ever compared against the *signer's* Intended Recipient subpacket,
+ * and getting it wrong can only produce a §13.12 mismatch on a message that
+ * was addressed correctly — a louder verdict, never a quieter one.
+ *
+ * A hidden-recipient message (`hideRecipients`, wildcard key id) names no key
+ * id to match and yields "". That is the honest answer — the message
+ * deliberately does not say who it is for — and `decryptSignatureVerdict`
+ * refuses to make the §13.12 comparison without it rather than reading the
+ * absence as a mismatch. See the guard there: it is the difference between
+ * "no claim this run can check" and a forwarding warning on a message whose
+ * only unusual property is that it was addressed privately.
+ *
+ * @param {import("openpgp").Message<*>} message
+ * @param {import("openpgp").PrivateKey[]} privateKeys
+ * @returns {string} whole uppercase fingerprint, or ""
+ */
+function openingKeyFingerprint(message, privateKeys) {
+  /** @type {*[]} */
+  let wanted = [];
+  try {
+    wanted = message.getEncryptionKeyIDs?.() || [];
+  } catch (_) {
+    return "";
+  }
+  for (const key of privateKeys) {
+    try {
+      for (const id of key.getKeyIDs?.() || []) {
+        if (wanted.some((w) => w?.equals?.(id))) {
+          return normalizeFingerprintInput(String(key.getFingerprint?.() || ""));
+        }
+      }
+    } catch (_) {
+      /* a key that will not enumerate its ids did not open this */
+    }
+  }
+  return "";
 }
 
 /**
@@ -5732,6 +5987,34 @@ function attachPipeMeta(artifact, value, refine) {
   // only ever report "unverified".
   if (value?.meta?.jose) {
     artifact.jose = value.meta.jose;
+  }
+  /**
+   * The decrypt verdict, copied field by field rather than by reference.
+   *
+   * Field by field for `OTP_META_TRAITS`' reason — an op cannot widen what
+   * reaches a tile by adding a key to `meta.signature` — and by *copy* because
+   * a bundle's parts and the tiles projected from them would otherwise share
+   * one object, so a later part's verdict could rewrite an earlier tile's.
+   *
+   * **No re-checking of the verdict's own consistency here**, and the absence
+   * is deliberate. "A fingerprint travels only beside `verified`" is an
+   * invariant of `lib/pgp/decrypt-verify.js`, held at every construction site
+   * in it, and the two decrypt ops are the only things that put a `signature`
+   * on a value. A second gate here would be a defence with nothing able to
+   * trigger it — untestable except by reaching past both ops to call this
+   * projection by hand, which is the shape of protection this codebase has
+   * been bitten by before: one that reads as enforcement, cannot fire, and
+   * makes a reader stop looking for where the rule actually lives.
+   */
+  if (value?.meta?.signature) {
+    const v = value.meta.signature;
+    artifact.signature = {
+      state: v.state,
+      signer: v.signer,
+      against: v.against,
+      intended: v.intended,
+      sentence: v.sentence,
+    };
   }
   // The OTP facts, for the same reason and by the same route (see
   // OTP_META_TRAITS). Copied field by field rather than spreading `meta`, so

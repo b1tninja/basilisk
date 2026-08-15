@@ -864,9 +864,15 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     // claim `notebook-share.js` makes and the reason the wire kind that used to
     // deliver one was removed. Asserted below, on two `manifestDigest` calls in
     // two realms that have shared nothing but a room.
-    out.manifestDigestA = (await A.page.evaluate(() => window.__manifest())).digest;
+    const manifestA = await A.page.evaluate(() => window.__manifest());
+    out.manifestDigestA = manifestA.digest;
     out.manifestDigestB = (await B.page.evaluate(() => window.__manifest())).digest;
     out.manifestDigest = out.manifestDigestA;
+    // The build's own language fingerprint, taken from the manifest the page
+    // just derived rather than from this process: the offer's v3 `registry`
+    // field has to equal what *that realm* computes, and a value read out of
+    // node would be a different build's answer whenever the two differ.
+    out.opsRegistry = manifestA.manifest.toolchain.ops;
 
     // What *cannot* be derived is mara's signature over that digest, so that is
     // what crosses. okafor learns it the way the product does: off his own peer
@@ -1269,7 +1275,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
   it("builds an offer carrying the public value and nothing else", () => {
     expect(out.offer.ok, out.offer.summary).toBe(true);
     expect(out.offer.offer).toMatchObject({
-      v: 2,
+      v: 3,
       kind: "basilisk.cell-handoff",
       manifest: out.manifestDigest,
       cell: 1,
@@ -1277,6 +1283,13 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
     expect(out.offer.offer.needs).toEqual([
       { label: "seed", type: "text", data: "deadbeef" },
     ]);
+    // v3's field, checked in the browser rather than in node: `registry` is
+    // written by the page's own build and is what turns the receiver's
+    // `unknown-manifest` refusal from a two-state sentence into a branch. Both
+    // realms are the same build here, so the two agree — which is the case that
+    // proves the value is a real one and not a constant.
+    expect(out.offer.offer.registry).toBeTruthy();
+    expect(out.offer.offer.registry).toBe(out.opsRegistry);
     expect(Object.keys(out.offer.offer).sort()).toEqual([
       "cell",
       "cellDigest",
@@ -1284,6 +1297,7 @@ describe.runIf(ready)("two browsers run a placed cell for each other", () => {
       "manifest",
       "needs",
       "offeredAt",
+      "registry",
       "v",
     ]);
     expect(out.offer.summary).toContain("nothing runs until somebody says so");

@@ -3592,6 +3592,10 @@ export function ToolkitShell() {
                                 // JOSE artifacts render as the JWT reader —
                                 // verdict, claims, and a live expiry clock.
                                 jose: a.jose,
+                                // A decrypt's signature verdict, which the tile
+                                // cannot re-derive: the plaintext carries no
+                                // trace of the signature that was on the wire.
+                                signature: a.signature,
                                 onConfigureTurn: openRtcIceTurnParam,
                                 onCopy: () => void copyText(a.content),
                                 publishedAs: a.publishedAs,
@@ -4224,6 +4228,7 @@ export function ToolkitShell() {
                               netType: a.netType,
                               inspectSnapshot: a.inspectSnapshot,
                               jose: a.jose,
+                              signature: a.signature,
                               netKind: a.netKind,
                               netData: a.netData,
                               preview: a.sensitive ? undefined : oneLinePreview(a.content),

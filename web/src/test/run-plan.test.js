@@ -730,3 +730,93 @@ describe("the binding session.js deliberately does not make", () => {
     expect(result.missing).toEqual(["okafor"]);
   });
 });
+
+/**
+ * Sealing to a key the room does not name.
+ *
+ * Nothing refused it and nothing asked about it: a cell could seal every share
+ * of a ceremony to a constant fingerprint no participant holds, and the plan
+ * came back clean. It is not a *refusal* — an offline archive key or a hardware
+ * key not present at the table is exactly the legitimate reason a ceremony has
+ * an escrow, and refusing would make that inexpressible. It is the one fact a
+ * reader should confirm before shares are dealt, which is `publish-untyped`'s
+ * shape, so it joins the asks.
+ *
+ * The two spellings are one question. `seal to=<fpr>` inside a scatter body and
+ * `gpg.encrypt to=fpr:<fpr>` in an ordinary pipeline both address a constant
+ * key by fingerprint, and a reader who wrote one meant what the other means.
+ */
+describe("ask · a constant recipient the room does not name", () => {
+  const OUTSIDE = "AAAABBBBCCCCDDDDEEEEFFFF0000111122223333";
+  const SEALS = `@mara
+random 32 | sss.split 2/2 | blip39 | scatter to=room
+  - seal to=${OUTSIDE} | out $sealed
+`;
+
+  it("asks, naming the key whole and the room it is not in", () => {
+    const p = plan(SEALS, { me: "mara", roster: ROSTER });
+    expect(p.refusals).toEqual([]);
+    const ask = p.asks.find((a) => a.reason === "seal-outside-room");
+    expect(ask?.cell).toBe(0);
+    // Whole, grouped, never truncated — the record of which key a ceremony was
+    // asked about is no place for half a fingerprint.
+    expect(ask.question).toContain("AAAA BBBB CCCC DDDD EEEE FFFF 0000 1111 2222 3333");
+    expect(ask.question.replace(/[^0-9A-F]/g, "")).toContain(OUTSIDE);
+    // The room, by the labels the roster binds.
+    expect(ask.question).toContain("`@mara` and `@okafor`");
+    expect(ask.question).toContain(
+      "Confirm this is intended — this key is not in the room and will not be " +
+        "at the table when shares are dealt."
+    );
+    // An ask, not a refusal: the plan still runs.
+    expect(p.ok).toBe(true);
+  });
+
+  it("asks the same of the `gpg.encrypt to=fpr:` spelling", () => {
+    const p = plan(`@mara\ninput | gpg.encrypt to=fpr:${OUTSIDE} mode=combined | out $c`, {
+      me: "mara",
+      roster: ROSTER,
+    });
+    expect(p.refusals).toEqual([]);
+    expect(p.asks.filter((a) => a.reason === "seal-outside-room")).toHaveLength(1);
+  });
+
+  it("says nothing when the key is in the room", () => {
+    const inside = SEALS.replace(OUTSIDE, FPR_B);
+    const p = plan(inside, { me: "mara", roster: ROSTER });
+    expect(p.asks.filter((a) => a.reason === "seal-outside-room")).toEqual([]);
+  });
+
+  /**
+   * Solo use is the normal case and has no audience to compare against. An ask
+   * here would fire on every recipe anybody writes alone, which is how an ask
+   * stops being read at all.
+   */
+  it("says nothing with no roster, because there is no room to be outside of", () => {
+    const p = plan(SEALS, { me: "mara" });
+    expect(p.asks.filter((a) => a.reason === "seal-outside-room")).toEqual([]);
+  });
+
+  /**
+   * `to=each` is a derivation the room supplies — `scatter` already constrains
+   * a body that names anybody else, and a member the audience does not name
+   * cannot appear in one. Asking about it would be asking about the room.
+   */
+  it("says nothing about `to=each`, which names no constant at all", () => {
+    const p = plan(SEALS.replace(OUTSIDE, "each"), { me: "mara", roster: ROSTER });
+    expect(p.asks.filter((a) => a.reason === "seal-outside-room")).toEqual([]);
+  });
+
+  /**
+   * A `$slot` resolves at run time from a tray or a keyserver, so this pass
+   * cannot say which key it lands on. Guessing at one and printing it would put
+   * a fingerprint in front of a reader that the run may never use.
+   */
+  it("says nothing about a `$slot`, whose key this pass cannot know", () => {
+    const p = plan(
+      "@mara\ngpg.genkey email=\"k@example.com\" | out $k\n\n@mara\ninput | gpg.encrypt to=$k mode=combined | out $c",
+      { me: "mara", roster: ROSTER }
+    );
+    expect(p.asks.filter((a) => a.reason === "seal-outside-room")).toEqual([]);
+  });
+});

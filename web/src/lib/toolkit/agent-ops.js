@@ -6,6 +6,10 @@
 import { decryptKey, decrypt as openpgpDecrypt, readMessage, readPrivateKey } from "openpgp";
 import { signOpenPgp } from "../pgp/sign.js";
 import {
+  decryptSignatureVerdict,
+  signatureVerificationDate,
+} from "../pgp/decrypt-verify.js";
+import {
   digestForApproval,
   requireApproval,
   keyIdText,
@@ -664,11 +668,23 @@ export async function execAgentSign(value, params = {}, bindings = {}) {
  * vault. PGP-kind keys only: an SSH signing key cannot decrypt, and saying
  * so plainly beats a confusing crypto error three layers down.
  *
+ * The signature verdict rides out with the plaintext exactly as it does from
+ * `gpg.decrypt`, through the same module, and the verification set arrives
+ * already resolved: the tier ladder is the engine's decision and this op's
+ * only difference from the other one is where the private key came from.
+ *
  * @param {import("./engine.js").PipelineValue} value
  * @param {Record<string, *>} params
  * @param {import("./engine.js").RuntimeBindings} [bindings]
+ * @param {{ keyByFpr: Map<string, import("openpgp").Key>,
+ *   against: import("../pgp/decrypt-verify.js").VerificationSource }} [verification]
  */
-export async function execAgentDecrypt(value, params = {}, bindings = {}) {
+export async function execAgentDecrypt(
+  value,
+  params = {},
+  bindings = {},
+  verification = { keyByFpr: new Map(), against: "" }
+) {
   const payload = approvalPayloadBytes(value, "agent.decrypt");
   const { kind, result } = await approveAndUnlock(
     "decrypt",
@@ -684,10 +700,27 @@ export async function execAgentDecrypt(value, params = {}, bindings = {}) {
   }
   const privateKey = await readOpenPgpPrivate(result, bindings);
   const message = await readMessage({ armoredMessage: new TextDecoder().decode(payload) });
+  const { keyByFpr, against } = verification;
   const out = await openpgpDecrypt({
     message,
     decryptionKeys: privateKey,
+    // Present only when there is a set, so that with none the signatures come
+    // back unverifiable — tier 3's state, reported as that rather than as a
+    // failure. See `lib/pgp/decrypt-verify.js`.
+    ...(keyByFpr.size ? { verificationKeys: [...keyByFpr.values()] } : {}),
+    // Not "now" — the signer is a different machine with a different clock.
+    date: signatureVerificationDate(),
     config: { allowInsecureDecryptionWithSigningKeys: true },
+  });
+  const verdict = await decryptSignatureVerdict({
+    signatures: out.signatures,
+    keyByFpr,
+    against,
+    // The key that opened it is the one the vault just unlocked — no matching
+    // needed, unlike `gpg.decrypt`, which may hold several open at once.
+    decryptFpr: String(result.fingerprint || ""),
+    soft: !!params.soft,
+    what: "agent.decrypt",
   });
   const plaintext =
     typeof out.data === "string" ? out.data : new TextDecoder().decode(out.data);
@@ -696,7 +729,12 @@ export async function execAgentDecrypt(value, params = {}, bindings = {}) {
     data: plaintext,
     // The plaintext is the answer the user asked for, not key material —
     // masking it would be theater (§26c: mark the leak, not the safe path).
-    meta: { sensitive: false, agentDecrypted: true, fingerprint: result.fingerprint },
+    meta: {
+      sensitive: false,
+      agentDecrypted: true,
+      fingerprint: result.fingerprint,
+      signature: verdict,
+    },
   };
 }
 

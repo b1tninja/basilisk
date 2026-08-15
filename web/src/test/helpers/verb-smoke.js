@@ -1147,6 +1147,50 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out $priv2`,
       timeoutMs: 60_000,
     },
     {
+      /**
+       * The third tier, with a signature actually on the wire: no `signers=`
+       * and no live session, so there is nothing to verify against and the
+       * verdict says exactly that rather than borrowing the bound recipients.
+       * `-q` is along for the ride and changes nothing here, which is the
+       * point — soft mode only ever suppresses a refusal, and this state is
+       * not one.
+       */
+      id: "gpg.decrypt.soft-unverified",
+      recipe: "gpg.decrypt -q | out $plain",
+      mode: "run",
+      bindings: async () => {
+        const b = await gpgBindings("signed-and-sealed");
+        // No `utf8` here, unlike the case above: that step turns the text into
+        // bytes and the ciphertext then holds its base64 spelling, which is
+        // fine when nothing checks the plaintext and useless when something
+        // does. This case checks it, because a verdict riding on the wrong
+        // value would be the defect that matters.
+        const enc = compileRecipe("input | gpg.encrypt policy=one -s");
+        const arts = await runRecipe(enc.ast, b);
+        return {
+          ...b,
+          inputs: {
+            gpg: { ...b.inputs.gpg, armoredMessages: [String(arts[0]?.content || "")] },
+          },
+        };
+      },
+      assert: (arts) => {
+        const plain = arts.find((a) => /plain/.test(String(a.label || "")));
+        if (String(plain?.content) !== "signed-and-sealed") {
+          throw new Error(`gpg.decrypt -q lost the payload: ${plain?.content}`);
+        }
+        if (plain?.signature?.state !== "unverified") {
+          throw new Error(
+            `a signed message with no verification set should read unverified, got ${JSON.stringify(plain?.signature)}`
+          );
+        }
+        if (plain.signature.signer) {
+          throw new Error("an unverified verdict must name no signer");
+        }
+      },
+      timeoutMs: 60_000,
+    },
+    {
       id: "gpg.sign.verify.cleartext",
       recipe: `input | gpg.sign format=cleartext | out $signed
 
@@ -2831,6 +2875,33 @@ export async function agentUnlockCases() {
         const plain = arts.find((a) => /plain/.test(String(a.label || "")));
         if (String(plain?.content) !== "round trip") {
           throw new Error(`agent.decrypt lost the payload: ${plain?.content}`);
+        }
+      },
+    },
+    {
+      /**
+       * The same verdict machinery behind the approval gate. The message is
+       * unsigned, so the honest verdict is `unsigned` and not `unverified` —
+       * the two are different states and the distinction is the reason
+       * "unsigned" is not treated as a failure.
+       */
+      id: "agent.decrypt.soft",
+      recipe: `input | agent.decrypt ${fpr} -q | out $plain`,
+      mode: "run",
+      timeoutMs: 60_000,
+      setup: () => setApprovalGate(async () => "once"),
+      bindings: async () => ({
+        inputs: { text: { value: await encryptToVerbSmokeKey("soft round trip") } },
+      }),
+      assert: (arts) => {
+        const plain = arts.find((a) => /plain/.test(String(a.label || "")));
+        if (String(plain?.content) !== "soft round trip") {
+          throw new Error(`agent.decrypt -q lost the payload: ${plain?.content}`);
+        }
+        if (plain?.signature?.state !== "unsigned") {
+          throw new Error(
+            `an unsigned message should read unsigned, got ${JSON.stringify(plain?.signature)}`
+          );
         }
       },
     },

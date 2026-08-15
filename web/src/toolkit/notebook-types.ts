@@ -87,6 +87,25 @@ export type ResolvedRecipient = {
   modernCapable?: boolean;
 };
 
+/**
+ * A decrypt's signature verdict as the view layer receives it.
+ *
+ * Structurally typed rather than imported from the engine's JSDoc so the shell
+ * does not depend on a `.js` type for a five-field record — but the field
+ * names are the engine's exactly, because the projection copies them one by
+ * one and a rename on either side has to fail the build rather than silently
+ * drop the verdict. `signer` is non-empty only when `state` is `"verified"`;
+ * `lib/pgp/decrypt-verify.js` is where that rule is argued and the engine's
+ * `attachPipeMeta` is where it is enforced a second time.
+ */
+export type DecryptVerdictView = {
+  state: "verified" | "unverified" | "unsigned";
+  signer: string;
+  against: "" | "room" | "signers";
+  intended: "ok" | "mismatch" | "absent";
+  sentence: string;
+};
+
 export type ArtifactTile = {
   label?: string;
   filename?: string;
@@ -123,6 +142,13 @@ export type ArtifactTile = {
    * artifact rather than being inferred from the token text.
    */
   jose?: unknown;
+  /**
+   * What a decrypt found out about who signed the ciphertext, for `jose`'s
+   * reason: the plaintext keeps no trace of the signature that was on the
+   * message, so nothing downstream can re-derive this and anything that tried
+   * could only report unverified.
+   */
+  signature?: DecryptVerdictView;
   /**
    * The refined pipeline type at emit time, and the tags/metadata the artifact
    * kind registry (§32) matches on. `pipeType` has ridden on every artifact

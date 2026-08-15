@@ -986,6 +986,11 @@ export function useNotebook() {
         // masked text dump does not), so its absence is meaningful, not a gap.
         inspectSnapshot: a.inspectSnapshot,
         jose: a.jose,
+        // The decrypt verdict, for `jose`'s reason. Named here as well as in
+        // the shell's two projections because that is what it takes to reach a
+        // tile — the OTP fields shipped through one of the three and rendered
+        // nowhere.
+        signature: a.signature,
         // §32/1.4: the fields the kind registry matches and renders on. The
         // refined type has ridden on every artifact as `pipeType` since the
         // type system landed, and this projection dropped it — which is why

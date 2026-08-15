@@ -125,6 +125,7 @@ import {
   walkPipelineTypes,
 } from "./types.js";
 import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
+import { formatFingerprint } from "../utils.js";
 
 /**
  * Why a cell is where it is. Every cell carries one, and it is the field that
@@ -209,7 +210,8 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
  * of which is a dataflow fact.
  * @typedef {object} PlanAsk
  * @property {number} cell
- * @property {"vault-locality"|"keying-unplaced"|"publish-untyped"|"who-am-i"} reason
+ * @property {"vault-locality"|"keying-unplaced"|"publish-untyped"|"who-am-i"
+ *   |"seal-outside-room"} reason
  * @property {string} question
  * @property {string[]} choices  peer labels that would answer it, when known
  * @property {number} [start]
@@ -594,6 +596,43 @@ function keyingOp(steps) {
   return "";
 }
 
+/**
+ * Every constant recipient fingerprint this cell seals to, with where it is
+ * written so the ask can point at it.
+ *
+ * Only the *constant* spelling. `to=each` and `to=room` are derivations the
+ * room supplies — `scatter` already refuses a body that names anybody else,
+ * and a member the audience does not name cannot appear in one. `to=$slot` and
+ * `to=<email>` are not constants either: what they resolve to is decided at
+ * run time by a tray or a keyserver, and a pass that reads only the text
+ * cannot say which key they will land on. Guessing at one and asking about it
+ * would put a fingerprint in front of a reader that the run may never use.
+ *
+ * `fpr:`/`0x` prefixes are accepted alongside the bare form because
+ * `gpg.encrypt to=` documents all three, and a reader who wrote the prefix
+ * meant the same key as one who did not.
+ *
+ * @param {import("./recipe.js").RecipeStep[]} steps
+ * @param {{ fpr: string, step: import("./recipe.js").RecipeStep }[]} [out]
+ * @returns {{ fpr: string, step: import("./recipe.js").RecipeStep }[]}
+ */
+function sealedToConstants(steps, out = []) {
+  for (const step of steps || []) {
+    if (step?.name === "seal" || step?.name === "gpg.encrypt") {
+      const raw = String(step.params?.to ?? "").trim();
+      // A bare `$slot` and the two reserved words are handled above; anything
+      // that normalises to a whole fingerprint is the constant spelling.
+      if (raw && !raw.startsWith(SLOT_SIGIL)) {
+        const fpr = normalizeFingerprintInput(raw.replace(/^(?:fpr:|0x)/i, ""));
+        if (fpr.length >= 40) out.push({ fpr, step });
+      }
+    }
+    sealedToConstants(step?.body || [], out);
+    for (const br of step?.branches || []) sealedToConstants(br?.body || [], out);
+  }
+  return out;
+}
+
 /** @param {string[]} list */
 function andList(list) {
   const l = [...list];
@@ -920,6 +959,51 @@ export function planRun(compiled, opts = {}) {
             `independently: change the split so N is ${roomSize}, or change ` +
             `who is in the room, before this can deal.`
         );
+      }
+    }
+
+    /**
+     * Sealing to a key the room does not name — an ask, never a refusal.
+     *
+     * It is legitimate, and that is exactly why it is asked about: an offline
+     * archive key, a hardware key not present at the table, a colleague who is
+     * meant to be able to open this later. None of those is a mistake, and
+     * refusing them would make the product unable to express the ordinary
+     * reason a ceremony has an escrow. What a reader is owed is the chance to
+     * confirm it, before shares are dealt and while the answer still matters —
+     * which is `publish-untyped`'s shape and why this joins it rather than the
+     * refusal list.
+     *
+     * **Bound only.** With no roster there is no audience to compare against,
+     * and solo use is the normal case rather than a suspicious one — asking
+     * there would fire on every recipe anybody writes alone, which is how an
+     * ask stops being read.
+     *
+     * `to=each` and `to=room` never reach here: those are derivations from the
+     * audience and are already constrained where they are written. This covers
+     * the constant-fingerprint spelling, which is the one a person types.
+     */
+    if (bound) {
+      /** Every fingerprint the room names, whatever label it wears. */
+      const inRoom = new Set(byLabel.values());
+      for (const { fpr } of sealedToConstants(steps)) {
+        if (inRoom.has(fpr)) continue;
+        asks.push({
+          cell: i,
+          reason: "seal-outside-room",
+          question:
+            `Cell ${i} seals to ${formatFingerprint(fpr)}, and this key is not ` +
+            `in the room — the roster names ${andList(
+              [...byLabel.keys()].map((p) => `\`${PEER_SIGIL}${p}\``)
+            )}. Confirm this is intended — this key is not in the room and will ` +
+            "not be at the table when shares are dealt.",
+          // Nobody can answer this by being a different peer: the question is
+          // about a key outside the roster, so the roster holds no answer to
+          // offer. `publish-untyped` leaves this empty for the same reason.
+          choices: [],
+          start: anchor.start,
+          end: anchor.end,
+        });
       }
     }
 

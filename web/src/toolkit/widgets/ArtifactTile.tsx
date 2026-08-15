@@ -18,6 +18,7 @@ import {
   type ToolkitArtifactKind,
 } from "../artifact-kinds/registry";
 import { badgeNameFor, resolveArtifactKind } from "../artifact-kinds/resolve";
+import type { DecryptVerdictView } from "../notebook-types";
 import {
   bytesToBase32,
   bytesToBase64,
@@ -98,6 +99,14 @@ export type OutputArtifact = {
    * cannot re-derive from the token text.
    */
   jose?: unknown;
+  /**
+   * A decrypt's verdict on who signed the ciphertext this plaintext came out
+   * of. Renders as a banner in `JwtArtifact`'s pattern — the state is an
+   * attribute so the styling is enumerated in CSS rather than chosen here, and
+   * an absent verdict draws nothing at all, because most artifacts were never
+   * a message and "unsigned" is not true of them.
+   */
+  signature?: DecryptVerdictView;
   /**
    * The artifact's text — required, because every row resolves a kind.
    *
@@ -486,6 +495,32 @@ export function ArtifactTile({
           {fmtSize(a.sizeBytes)}
         </span>
       </div>
+
+      {/* The decrypt verdict, in `JwtArtifact`'s pattern rather than a new one.
+          `data-signature-verified` is the same three-state attribute
+          `data-jwt-verified` is, and for the same reason: the styling is an
+          enumerated rule in toolkit.css keyed off the state, so no colour is
+          chosen here and none can be chosen by a caller.
+
+          Deliberately **not** `data-cast` — that attribute belongs to the
+          crypto suite's self-test, and a decrypt verdict borrowing it would put
+          a signature state where a reader has learned to find a suite's. A test
+          pins that `OpsTile` carries no `CastDot`; this is the same boundary
+          from the other side.
+
+          The whole sentence is printed, never a fingerprint on its own: a
+          fingerprint with no clause around it says "this key" without saying
+          what is true of it, and the four sentences are exactly what
+          distinguishes the states. */}
+      {a.signature ? (
+        <p
+          className="artifact-signature text-[10px]"
+          data-signature-verified={a.signature.state}
+          data-signature-intended={a.signature.intended}
+        >
+          {a.signature.sentence}
+        </p>
+      ) : null}
 
       {/* §36a — actions on their own line. The identity line above answers
           "what is this"; this one answers "what can I do to it". Eight

@@ -223,8 +223,37 @@ import { outSlotLabels, publishedSlots, serializeRecipe } from "./recipe.js";
  * offer would have been read against the new numbering and refused as a digest
  * mismatch, which tells the reader that a cell's text is wrong when what is
  * wrong is which cell was meant.
+ *
+ * **v3 adds `registry`**, and it is the first bump that adds a field rather
+ * than re-pointing one. `fa8d020` gave the in-hand-manifest refusals the fact
+ * that tells "two notebooks" from "two Basilisks" — the manifest's own
+ * `toolchain.ops` — and could not give it to `unknown-manifest`, because an
+ * offer had nowhere to carry a fingerprint and this list is closed on purpose.
+ * So that one refusal named *both* states and left the reader to work out
+ * which they were in. With the field present it branches, and the sentence
+ * becomes definitive in the case that was previously unbranchable.
+ *
+ * What makes the bump payable is what an old build already does with it: a v2
+ * reader hands back *"unsupported version 3 (this build writes and reads
+ * v2)"*, which is a true statement that the two ends are running different
+ * builds — the very thing the new field exists to establish. The bump
+ * announces itself correctly on the builds that cannot read it, so nothing is
+ * silently misread; only the remedy is less specific there, and it is the same
+ * remedy.
  */
-export const HANDOFF_VERSION = 2;
+export const HANDOFF_VERSION = 3;
+
+/**
+ * Every version this build will *read*, as against the one it writes.
+ *
+ * v2 stays readable because dropping it would refuse offers that are entirely
+ * well-formed for a field they do not have. `registry` is a fact an offer may
+ * now carry, not one it must: absent, the reader is exactly where `fa8d020`
+ * left it — a two-state sentence — which is worse than a branch and better
+ * than a refusal.
+ * @type {readonly number[]}
+ */
+export const HANDOFF_READ_VERSIONS = Object.freeze([2, 3]);
 
 /** The `kind` discriminator, so no other document can be read as an offer. */
 export const HANDOFF_KIND = "basilisk.cell-handoff";
@@ -245,6 +274,19 @@ export const HANDOFF_FIELDS = Object.freeze([
   "cellDigest",
   "needs",
   "offeredAt",
+  /**
+   * The offerer's build, as `opsRegistryVersion()` — the language's own
+   * fingerprint, a function of the build and never of the run.
+   *
+   * It survives the closed-list argument above because it makes no claim about
+   * a *person*. "Carries no fingerprint" in that paragraph means no key
+   * fingerprint and no assignee: the things that would let one peer put a claim
+   * about another inside a document neither of them signed. This says only
+   * which spelling of the language wrote the offer, it is checkable against a
+   * value the reader computes locally, and a peer that lies about it makes its
+   * own offer refuse.
+   */
+  "registry",
 ]);
 
 /**
@@ -323,6 +365,8 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
  * @property {string} cellDigest  digest of that cell's recipe text
  * @property {CarriedValue[]} needs  sorted by label
  * @property {string} offeredAt   ISO — the offerer's own word, witnessed by nothing
+ * @property {string} [registry]  `opsRegistryVersion()` of the build that wrote
+ *   it. Optional in the type because a v2 offer has none and is still read.
  */
 
 /**
@@ -498,16 +542,37 @@ export function parseHandoffOffer(text) {
   if (parsed.kind !== HANDOFF_KIND) {
     throw new Error("handoff: not a Basilisk cell handoff offer");
   }
-  if (Number(parsed.v) !== HANDOFF_VERSION) {
+  if (!HANDOFF_READ_VERSIONS.includes(Number(parsed.v))) {
     throw new Error(
-      `handoff: unsupported version ${parsed.v} (this build writes and reads ` +
-        `v${HANDOFF_VERSION})` +
+      `handoff: unsupported version ${parsed.v} (this build writes ` +
+        `v${HANDOFF_VERSION} and reads ` +
+        `v${HANDOFF_READ_VERSIONS.join(", v")})` +
         (Number(parsed.v) === 1
           ? " — v1 numbered a notebook's cells by skipping the empty ones and v2 " +
             "numbers every cell the way the notebook does, so `cell` names a " +
             "different cell in each. Nothing is accepted against the old " +
             "numbering: build the offer again from the run that is happening now."
           : "")
+    );
+  }
+  if (parsed.registry !== undefined && typeof parsed.registry !== "string") {
+    // Typed rather than coerced. `acceptHandoffOffer` compares it against a
+    // locally computed string to decide whether to blame the *build* for a
+    // digest mismatch, and a number that stringified into agreement would let
+    // an offer talk this reader out of the one refusal that names the real
+    // cause.
+    throw new Error(
+      "handoff: registry must be a build's ops-registry fingerprint as a string"
+    );
+  }
+  if (Number(parsed.v) === 2 && parsed.registry !== undefined) {
+    // The field is v3's. A v2 document carrying it is not an old offer with a
+    // bonus fact — it is a document whose version does not describe its own
+    // shape, and reading it either way would make `v` stop meaning anything.
+    throw new Error(
+      "handoff: a v2 offer cannot carry `registry` — that field is v3's, and a " +
+        "version that does not describe the document's own shape is not a " +
+        "version. Write the offer again on the build that is running now."
     );
   }
   const extra = Object.keys(parsed).filter((k) => !HANDOFF_FIELDS.includes(k));
@@ -1018,6 +1083,10 @@ export async function buildOfferFor(spec) {
       // The offerer's claim, not a fact — `attest.js`'s `claimedAt` under
       // another name, and no more evidence than that one is.
       offeredAt: isoTimestamp(spec.offeredAt),
+      // This build's language fingerprint. Written unconditionally, because an
+      // offer that carried it only sometimes would leave the reader unable to
+      // tell "same build" from "a build that does not say".
+      registry: opsRegistryVersion(),
     },
   };
 }
@@ -1207,18 +1276,54 @@ export async function acceptHandoffOffer(offer, ctx) {
   const manifest = ctx.manifest || null;
   const held = manifest ? await manifestDigest(manifest) : "";
   if (!manifest || held !== String(offer.manifest || "")) {
+    /**
+     * Which build wrote this offer — the fact `HANDOFF_VERSION` 3 exists to
+     * carry, and the one that turns the sentence below from a description of
+     * two possible worlds into a statement about this one.
+     *
+     * A v2 offer has none, and that is the only case still left with the
+     * two-state sentence. It is not a gap being tolerated: a document that does
+     * not carry the fact cannot be made to have carried it, and inventing a
+     * default — treating "absent" as "same build" — would produce a definite
+     * refusal that is wrong exactly when a peer is on the old build, which is
+     * the case where being wrong costs the most.
+     */
+    const theirs = typeof offer.registry === "string" ? offer.registry : "";
+    const ours = opsRegistryVersion();
+    if (theirs && theirs !== ours) {
+      refuse(
+        at,
+        "registry",
+        ours,
+        theirs,
+        "different-build",
+        "This offer is against a run manifest this peer has not seen — and it " +
+          "says which build wrote it: its ops-registry fingerprint is " +
+          `${theirs} and this build's is ${ours}. That is the whole ` +
+          "explanation, so nothing needs to be done to the notebook: a " +
+          "manifest is derived partly from the registry fingerprint, and when " +
+          "the language's canonical spelling changes between builds the same " +
+          "source re-canonicalises into different text — so the two ends " +
+          "digest apart while holding the same notebook, and a re-share would " +
+          "be re-spelt straight back into this refusal. Reload whichever tab " +
+          "is on the older build, and the two ends derive the same manifest " +
+          "again."
+      );
+      return stop();
+    }
     refuse(
       at,
       "manifest",
       String(offer.manifest || ""),
       held,
       "unknown-manifest",
-      // An offer carries no registry fingerprint, so unlike the in-hand
-      // manifest refusals above this one cannot tell "two notebooks" from
-      // "two builds" — it can only name both states and give each the remedy
-      // that actually ends it. Asserting the first as fact, as this sentence
-      // once did, told a peer on a stale build to re-share a notebook the
-      // receiving build would re-spell right back into refusal.
+      // Reached now only when the offer carries no registry at all (a v2
+      // offer) or carries one that agrees. Agreement rules the build out, and
+      // this sentence's second half is written for the case that cannot say —
+      // it names both states and gives each the remedy that actually ends it,
+      // rather than asserting the first as fact and telling a peer on a stale
+      // build to re-share a notebook the receiving build would re-spell right
+      // back into refusal.
       `This offer is against a run manifest this peer has not seen` +
         `${held ? " — the one this notebook produces digests to something else" : ""}. ` +
         "A manifest is derived from the notebook on this machine — its text, its " +
@@ -1226,11 +1331,15 @@ export async function acceptHandoffOffer(offer, ctx) {
         "registry fingerprint, so the two ends differ in one of those. Most " +
         "often nothing has been shared into this notebook yet: have whoever is " +
         "driving share theirs — Connections, under \"The notebook itself\" — and " +
-        "the same offer is then checked against the same text. If the notebook " +
-        "has been shared and this refusal is still here, the two ends are " +
-        "running different builds of Basilisk — a tab left open across a deploy " +
-        "— and no re-share can end that: reload the older tab, and the two ends " +
-        "derive the same manifest again."
+        "the same offer is then checked against the same text." +
+        (theirs
+          ? " Both ends are on the same build, so a stale tab is ruled out: " +
+            "what differs is the notebook, and sharing it is what ends this."
+          : " If the notebook " +
+            "has been shared and this refusal is still here, the two ends are " +
+            "running different builds of Basilisk — a tab left open across a deploy " +
+            "— and no re-share can end that: reload the older tab, and the two ends " +
+            "derive the same manifest again.")
     );
     return stop();
   }

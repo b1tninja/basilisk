@@ -46,6 +46,7 @@ import {
 } from "../lib/toolkit/recipe.js";
 import { parseRecipeSource } from "../lib/toolkit/recipe-parse.js";
 import { createSlotRegistry } from "../lib/toolkit/slot-registry.js";
+import { opsRegistryVersion } from "../lib/toolkit/receipt.js";
 
 const FPR_M = "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9";
 const FPR_O = "91C7E6D5C4B3A29180716253443526170819AABB";
@@ -674,5 +675,121 @@ describe("an offer carries seven fields and has nowhere to put an eighth", () =>
     // No `meta` travels: the annotations an op left on a value are things it
     // said about the value, and a peer does not get to choose them here.
     expect(verdict.bindings[0].value.meta).toEqual({});
+  });
+});
+
+/**
+ * `HANDOFF_VERSION` 3 — the offer carries which build wrote it.
+ *
+ * `fa8d020` gave every refusal that has a manifest *in hand* the fact that
+ * separates "two notebooks" from "two Basilisks": the manifest's own
+ * `toolchain.ops`. It could not give it to `unknown-manifest`, the case where
+ * the receiver derives their manifest locally and has nothing to compare — an
+ * offer had nowhere to put a fingerprint, because `HANDOFF_FIELDS` is closed on
+ * purpose. So that refusal named both states and let the reader work out which
+ * they were in. v3 adds the field and the branch, and the cases that pin it
+ * live in `handoff-cross-build.test.js`; what is pinned here is the format.
+ *
+ * The closed-list argument survives the addition. "Carries no fingerprint" in
+ * that paragraph means no *key* fingerprint and no assignee — the things that
+ * would let one peer put a claim about another inside a document neither of
+ * them signed. `registry` says only which spelling of the language wrote the
+ * offer, the reader computes the value it is compared against locally, and a
+ * peer that lies about it makes its own offer refuse.
+ */
+describe("v3 carries the build that wrote it", () => {
+  it("stamps this build's registry fingerprint on every offer it builds", async () => {
+    const { built } = await offerFrom();
+    expect(built.ok, summarizeHandoff(built)).toBe(true);
+    expect(built.offer.v).toBe(3);
+    expect(built.offer.registry).toBe(opsRegistryVersion());
+    // Unconditionally: an offer that carried it only sometimes would leave a
+    // reader unable to tell "same build" from "a build that does not say".
+    expect(built.offer.registry).toBeTruthy();
+  });
+
+  it("round-trips through the wire format unchanged", async () => {
+    const { built } = await offerFrom();
+    const back = parseHandoffOffer(offerToJson(built.offer));
+    expect(back).toEqual(built.offer);
+    expect(back.registry).toBe(opsRegistryVersion());
+  });
+
+  /**
+   * The other direction is what makes the bump payable, and it is not asserted
+   * here because it cannot honestly be: the build that only reads v2 is not in
+   * this process, and a test restating its version predicate would be checking
+   * a copy of the rule rather than the rule. What is true and checkable is that
+   * this build's own refusal names both numbers, which the case below does —
+   * the old build's sentence has the same shape with `v2` in place of `v2, v3`,
+   * and it is already a truthful statement that the two ends differ.
+   */
+  it("still reads a v2 offer, whose registry is simply absent", async () => {
+    const { built } = await offerFrom();
+    const { registry: _dropped, ...rest } = built.offer;
+    const v2 = parseHandoffOffer(JSON.stringify({ ...rest, v: 2 }));
+    expect(v2.v).toBe(2);
+    expect(v2.registry).toBeUndefined();
+    // And it is still an offer in every other respect — the field is a fact an
+    // offer may carry, never one it must.
+    expect(v2.needs).toEqual(built.offer.needs);
+  });
+
+  it("refuses a v2 document that carries the v3 field", async () => {
+    // A version that does not describe its own document's shape is not a
+    // version. Reading it either way would make `v` stop meaning anything.
+    const { built } = await offerFrom();
+    expect(() =>
+      parseHandoffOffer(JSON.stringify({ ...built.offer, v: 2 }))
+    ).toThrow(/a v2 offer cannot carry `registry`/);
+  });
+
+  it("refuses a registry that is not a string, rather than coercing it", async () => {
+    // It is compared against a locally computed string to decide whether to
+    // blame the *build*. A number that stringified into agreement would let an
+    // offer talk this reader out of the one refusal naming the real cause.
+    const { built } = await offerFrom();
+    expect(() =>
+      parseHandoffOffer(JSON.stringify({ ...built.offer, registry: 3 }))
+    ).toThrow(/registry must be a build's ops-registry fingerprint as a string/);
+  });
+
+  it("keeps the list closed around the new field", async () => {
+    const { built } = await offerFrom();
+    expect(() =>
+      parseHandoffOffer(JSON.stringify({ ...built.offer, assignee: "mara" }))
+    ).toThrow(/unexpected field assignee/);
+  });
+
+  it("names both the version it writes and the ones it reads when refusing", () => {
+    expect(() =>
+      parseHandoffOffer(
+        JSON.stringify({
+          v: 9,
+          kind: HANDOFF_KIND,
+          manifest: "a".repeat(64),
+          cell: 0,
+          cellDigest: "b".repeat(64),
+          needs: [],
+          offeredAt: new Date(0).toISOString(),
+        })
+      )
+    ).toThrow(/this build writes v3 and reads v2, v3/);
+  });
+
+  it("still tells a v1 offer why its cell numbering cannot be honoured", () => {
+    expect(() =>
+      parseHandoffOffer(
+        JSON.stringify({
+          v: 1,
+          kind: HANDOFF_KIND,
+          manifest: "a".repeat(64),
+          cell: 0,
+          cellDigest: "b".repeat(64),
+          needs: [],
+          offeredAt: new Date(0).toISOString(),
+        })
+      )
+    ).toThrow(/v1 numbered a notebook's cells by skipping the empty ones/);
   });
 });

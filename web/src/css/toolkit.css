@@ -1376,6 +1376,37 @@ input[type="file"][data-basilisk-file-picker] {
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
 
+/*
+ * A decrypt's signature verdict on an artifact row (ArtifactTile).
+ *
+ * Three states, one closed set, enumerated here for the reason above it: with
+ * `style-src 'self'` an inline style is refused outright, and the *verified*
+ * appearance must not be reachable except through the one state that means it.
+ * `unsigned` is deliberately the quietest of the three — most messages are not
+ * signed, and colouring the common case teaches people to ignore the rare one,
+ * which is the same argument `intended-recipient.js` makes about the absent
+ * §13.12 subpacket.
+ */
+.artifact-signature[data-signature-verified="verified"] {
+  color: var(--success);
+}
+.artifact-signature[data-signature-verified="unverified"] {
+  color: var(--warn);
+}
+.artifact-signature[data-signature-verified="unsigned"] {
+  color: var(--muted-foreground);
+}
+/*
+ * A verified signature addressed to a *different* key outruns its own tone.
+ * The signature is cryptographically good, so the state stays `verified` and
+ * the sentence still names the signer; what is wrong is who the signer meant
+ * it for, and that is what surreptitious forwarding looks like from the
+ * inside. Green on it would be the widget agreeing with the forwarder.
+ */
+.artifact-signature[data-signature-intended="mismatch"] {
+  color: var(--error);
+}
+
 .jwt-chip[data-jwt-tone="ok"] {
   color: var(--success);
   background: color-mix(in srgb, var(--success) 15%, transparent);

@@ -872,7 +872,7 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "pubkey",
     conjugateOf: "gpg.encrypt",
-    doc: "Decrypt OpenPGP ciphertext at run time and emit the plaintext. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | out $plain`. A plaintext that happens to be BLIP39 mnemonics is read by the steps that read mnemonics: `gpg.decrypt count=all | shares | blip39 -d | sss.combine | …`.",
+    doc: "Decrypt OpenPGP ciphertext at run time and emit the plaintext. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | out $plain`. Signatures are verified against `signers=` when written, else against the room's audience when a session is live, else reported unverified. A signer the room does not name is *reported*, never refused — the room is ambient, not a claim you wrote. A signer `signers=` does not name refuses (`-q` reports instead), and a bad signature always refuses. A plaintext that happens to be BLIP39 mnemonics is read by the steps that read mnemonics: `gpg.decrypt count=all | shares | blip39 -d | sss.combine | …`.",
     input: "none",
     output: "text",
     entropy: "none",
@@ -888,6 +888,35 @@ export const STEPS = [
         type: "string",
         default: "1",
         doc: "How many messages the panel holds: 1 (text), a number, or `all` (bundle, for `foreach` / `shares`)",
+      },
+      /**
+       * Who this decrypt will believe wrote the message.
+       *
+       * Declared `slot: true` rather than `gpg.verify key=`'s `slot:
+       * "required"` because this param accepts one spelling that one does not:
+       * a whole fingerprint, resolved against keys already in hand. `slotOf`
+       * is `gpg.verify key=`'s list unchanged, since a slot that names a
+       * verification key for a cleartext signature names the same thing here.
+       *
+       * `emptyMeans` is the tier ladder in one line, and it says *unverified*
+       * out loud rather than describing a fallback: leaving this empty with no
+       * session is a state, not an omission.
+       */
+      {
+        name: "signers",
+        type: "string",
+        slot: true,
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
+        default: "",
+        emptyMeans: "the room's audience, or unverified with no live session",
+        doc: "`$slot` holding a public key, or one whole fingerprint already in hand — verify the signature against exactly that key",
+      },
+      {
+        name: "soft",
+        type: "bool",
+        flag: "-q",
+        default: false,
+        doc: "Soft mode: a signature `signers=` does not match leaves the verdict unverified instead of refusing (the plaintext is returned either way). A bad signature still refuses; a signer outside the *room* is already a report and needs no flag",
       },
     ],
     effectiveIo(params) {
@@ -3383,7 +3412,7 @@ export const STEPS = [
     toolbox: "agent",
     shelf: "boundary",
     glyph: "agent-decrypt",
-    doc: "Decrypt an OpenPGP message with a My Keys key — ciphertext in, plaintext out; the private key never enters the pipeline (per-use approval). PGP-kind keys only: SSH signing keys cannot decrypt. Example: `input | agent.decrypt AABB… | out $plain`.",
+    doc: "Decrypt an OpenPGP message with a My Keys key — ciphertext in, plaintext out; the private key never enters the pipeline (per-use approval). PGP-kind keys only: SSH signing keys cannot decrypt. Signatures are verified on the same three-tier rule `gpg.decrypt` uses — `signers=`, else the room's audience when a session is live, else reported unverified; only a violated `signers=` or a bad signature refuses. Example: `input | agent.decrypt AABB… | out $plain`.",
     input: "text",
     output: "text",
     entropy: "none",
@@ -3394,6 +3423,25 @@ export const STEPS = [
         positional: true,
         default: "",
         doc: "Vault key id (PGP hex fingerprint); the key's kind must be pgp",
+      },
+      // Spelled exactly as on `gpg.decrypt`, because it is the same param
+      // answering the same question: two decrypt verbs differing only in where
+      // the private key lives must not differ in how a signer is named.
+      {
+        name: "signers",
+        type: "string",
+        slot: true,
+        slotOf: ["key", "keypair", "bytes", "text", "openpgp-key"],
+        default: "",
+        emptyMeans: "the room's audience, or unverified with no live session",
+        doc: "`$slot` holding a public key, or one whole fingerprint already in hand — verify the signature against exactly that key",
+      },
+      {
+        name: "soft",
+        type: "bool",
+        flag: "-q",
+        default: false,
+        doc: "Soft mode: a signature `signers=` does not match leaves the verdict unverified instead of refusing (the plaintext is returned either way). A bad signature still refuses; a signer outside the *room* is already a report and needs no flag",
       },
     ],
     overloads: [

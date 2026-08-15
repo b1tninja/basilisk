@@ -230,18 +230,65 @@ describe("a digest difference is attributed to the build when the manifest can p
 });
 
 describe("when no manifest is in hand, the refusal claims no more than it can know", () => {
-  it("names both states and both remedies in `unknown-manifest`", async () => {
-    // The live-session case: the receiver *derives* their manifest, so a
-    // cross-build offer digests to something they have never seen and there is
-    // no fingerprint in hand to compare — the offer format carries none. The
-    // sentence therefore stops asserting "different notebooks" as fact and
-    // names the two states that produce this digest, each with the remedy
-    // that actually ends it.
+  /**
+   * The case this file was written for, now that the offer format can carry the
+   * fact: **the two-state sentence is gone from it, because the state is
+   * knowable.**
+   *
+   * `HANDOFF_VERSION` 3 added `registry`, so an offer written by another build
+   * says so, and the `unknown-manifest` branch — the one that could only ever
+   * name both worlds — becomes the `different-build` refusal with the remedy
+   * that ends it. The offer is stamped `FOREIGN_REGISTRY` rather than built and
+   * bent, because that is what `buildOfferFor` running over there would write,
+   * and an offer stamped with *this* build's fingerprint would be describing a
+   * peer that does not exist in this scenario.
+   */
+  it("branches to `different-build` when a v3 offer says which build wrote it", async () => {
     const foreign = await manifestFor(HANDED, { registry: FOREIGN_REGISTRY });
     const built = await offerAgainst(foreign);
     expect(built.ok, summarizeHandoff(built)).toBe(true);
+    const theirs = { ...built.offer, registry: FOREIGN_REGISTRY };
 
-    const verdict = await acceptHandoffOffer(built.offer, {
+    const verdict = await acceptHandoffOffer(theirs, {
+      plan: planFor(HANDED, "okafor"),
+      compiled: compile(HANDED),
+      manifest: await manifestFor(HANDED),
+    });
+    expect(verdict.ok).toBe(false);
+    // Definitive, where it used to be two-state.
+    expect(verdict.refusals[0].reason).toBe("different-build");
+    const message = verdict.refusals[0].message;
+    expect(message).toContain("This offer is against a run manifest this peer has not seen");
+    // Both fingerprints, so the reader can check the claim rather than take it.
+    expect(message).toContain(FOREIGN_REGISTRY);
+    expect(message).toContain(opsRegistryVersion());
+    expect(message).toContain("Reload whichever tab is on the older build");
+    // The remedy that cannot work must not be offered: re-sharing the notebook
+    // is what this build would re-spell straight back into the same refusal,
+    // and naming it is `47e7ffa`'s defect.
+    expect(message).not.toContain("The notebook itself");
+    // And the structural fields say which fact disagreed, not which digest.
+    expect(verdict.refusals[0].field).toBe("registry");
+    expect(verdict.refusals[0].expected).toBe(opsRegistryVersion());
+    expect(verdict.refusals[0].actual).toBe(FOREIGN_REGISTRY);
+  });
+
+  /**
+   * The case that stays two-state, and the reason it is still right to be.
+   *
+   * A v2 offer carries no `registry`, and nothing can make it have carried one.
+   * Defaulting "absent" to "same build" would turn this into a definite refusal
+   * that is wrong exactly when the peer is on the old build — the case where
+   * being wrong costs the most — so the sentence keeps naming both states.
+   */
+  it("still names both states for a v2 offer, which carries no registry", async () => {
+    const foreign = await manifestFor(HANDED, { registry: FOREIGN_REGISTRY });
+    const built = await offerAgainst(foreign);
+    expect(built.ok, summarizeHandoff(built)).toBe(true);
+    const { registry: _dropped, ...v2 } = built.offer;
+    const theirs = { ...v2, v: 2 };
+
+    const verdict = await acceptHandoffOffer(theirs, {
       plan: planFor(HANDED, "okafor"),
       compiled: compile(HANDED),
       manifest: await manifestFor(HANDED),
@@ -253,9 +300,32 @@ describe("when no manifest is in hand, the refusal claims no more than it can kn
     expect(message).toContain("This offer is against a run manifest this peer has not seen");
     expect(message).toContain("A manifest is derived from the notebook on this machine");
     expect(message).toContain("The notebook itself");
-    // The new half: the cross-build state, and the remedy that works for it.
+    // Both states, each with the remedy that ends it.
     expect(message).toContain("different builds of Basilisk");
     expect(message).toContain("reload the older tab");
+  });
+
+  /**
+   * A v3 offer whose registry *agrees* rules the build out, so the sentence
+   * says so instead of leaving a reader to wonder. Same refusal reason as the
+   * v2 case — the notebook really is what differs — and a different second
+   * half, because here that is a fact rather than a guess.
+   */
+  it("rules the build out when a v3 offer's registry agrees", async () => {
+    const built = await offerAgainst(await manifestFor(HANDED, { registry: FOREIGN_REGISTRY }));
+    expect(built.offer.registry).toBe(opsRegistryVersion());
+
+    const verdict = await acceptHandoffOffer(built.offer, {
+      plan: planFor(HANDED, "okafor"),
+      compiled: compile(HANDED),
+      manifest: await manifestFor(HANDED),
+    });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.refusals[0].reason).toBe("unknown-manifest");
+    const message = verdict.refusals[0].message;
+    expect(message).toContain("Both ends are on the same build");
+    // The unreachable remedy is not offered on a build that is not stale.
+    expect(message).not.toContain("reload the older tab");
   });
 
   it("says the same of a result that arrives after a reload", async () => {

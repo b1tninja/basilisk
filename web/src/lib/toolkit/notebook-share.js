@@ -120,6 +120,33 @@ export const NOTEBOOK_PROPOSAL_FIELDS = Object.freeze([
 ]);
 
 /**
+ * ## Why there is no `registry` here, though an offer grew one
+ *
+ * `HANDOFF_VERSION` 3 added the offerer's `opsRegistryVersion()` to a cell
+ * handoff, because that document had a refusal it could not decide:
+ * `unknown-manifest` fires where the receiver derived their manifest locally
+ * and holds nothing to compare, so it could only name both "two notebooks" and
+ * "two builds" and give each a remedy. The field made that branch.
+ *
+ * A proposal has no such sentence. It carries the text, `decideProposal`
+ * answers `same` / `adopt` / `ask` from the title and the source alone, and
+ * none of those three is a state that a build fingerprint would resolve —
+ * there is nothing here reading as two possible worlds. What a field *would*
+ * buy is a warning one step earlier: "adopting this will not make handoffs
+ * work, because the two ends are on different builds." That is a real
+ * improvement and it is not a small one. It needs a fourth outcome or a change
+ * to what `why` may claim, a `NOTEBOOK_PROPOSAL_VERSION` bump with its own
+ * compatibility story, and a build fingerprint reaching a function that is pure
+ * over its three arguments on purpose.
+ *
+ * And the case it would improve is now covered where it lands: after adoption
+ * the two ends still digest apart, the offer that follows carries the
+ * fingerprint, and *that* refusal names the build definitively. Adding an inert
+ * field here to mirror a neighbour would be a declaration with no consumer,
+ * which is the failure mode this codebase keeps paying for.
+ */
+
+/**
  * The longest recipe text a proposal will carry.
  *
  * Well under `MAX_DOCUMENT_BYTES` (32 KiB), which is the ceiling on the whole
