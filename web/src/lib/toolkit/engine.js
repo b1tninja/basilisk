@@ -179,6 +179,11 @@ import {
  *   this was never declared.
  * @property {Record<string, string[]>} [recipientResolutions]  email/query → chosen fingerprints
  * @property {(ref: string) => PipelineValue|null|undefined} [resolveSlot]
+ * @property {{ received?: (origins: { from?: string, link?: string }[],
+ *   stepName: string) => void }} [trace]
+ *   The run's observer, when a kernel is keeping a record. `execStep` calls
+ *   `received` when a step's result carries a sender the incoming value did
+ *   not — see `noteArrivals` for why that is the one honest reading.
  * @property {{
  *   shares?: {
  *     mnemonics: string[],
@@ -1154,6 +1159,70 @@ function missingSharesRemedy(value, bindings) {
 }
 
 /**
+ * Every distinct origin a pipeline value carries — its own `meta.from`, and
+ * each bundle part's, since `quorum.recv count=N` stamps the sender per part
+ * ("in a mesh the sender differs per message"). A `meta.link` beside the
+ * `from` marks a hand-carried `peer.*` link, whose "from" is the link's local
+ * name rather than anybody's fingerprint: the origin is exported as `{ link }`
+ * and never as `{ from }`, because a link id printed where a fingerprint goes
+ * would be an unverified sender dressed as a verified one. Exported for the
+ * node suite — the wiring's other end is a live exchange only a browser has.
+ *
+ * @param {PipelineValue|null|undefined} value
+ * @returns {{ from?: string, link?: string }[]}
+ */
+export function originStamps(value) {
+  /** @type {{ from?: string, link?: string }[]} */
+  const out = [];
+  const seen = new Set();
+  /** @param {*} meta @param {string} [parentLink] */
+  const note = (meta, parentLink) => {
+    if (!meta?.from) return;
+    const link = meta.link || parentLink;
+    const origin = link
+      ? { link: String(link) }
+      : { from: String(meta.from) };
+    const key = JSON.stringify(origin);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(origin);
+  };
+  if (!value) return out;
+  note(value.meta);
+  if (value.type === "bundle" && Array.isArray(value.data?.parts)) {
+    for (const p of value.data.parts) note(p?.meta, value.meta?.link);
+  }
+  return out;
+}
+
+/**
+ * Tell the run's record when a step took delivery of something.
+ *
+ * Only the engine ever sees an in-pipeline value, which is why this lives
+ * here and not in the kernel: `quorum.recv count=1 | shares | sss.combine`
+ * consumes the received message before any slot holds it, so a record built
+ * from slot traffic alone would say a recovery used nobody's shares — the
+ * exact silence dealer-absent finding 7a pins. The rule is *arrival*, not
+ * possession: an origin is reported when a step's result carries a sender its
+ * input did not, so a received value carried down the pipe — or selected back
+ * out of a bundle by `at` — is recorded once, at the step that delivered it.
+ * (`in` never reaches `execStep`; a slot read's origin is the registry
+ * wrapper's to record, so the two seams cannot double-count one value.)
+ *
+ * @param {RuntimeBindings} bindings
+ * @param {import("./recipe.js").RecipeStep} step
+ * @param {PipelineValue|null} before
+ * @param {PipelineValue|null} after
+ */
+function noteArrivals(bindings, step, before, after) {
+  const received = bindings?.trace?.received;
+  if (typeof received !== "function") return;
+  const had = new Set(originStamps(before).map((o) => JSON.stringify(o)));
+  const fresh = originStamps(after).filter((o) => !had.has(JSON.stringify(o)));
+  if (fresh.length) received(fresh, step.name);
+}
+
+/**
  * @param {import("./recipe.js").RecipeStep} step
  * @param {PipelineValue|null} value
  * @param {RuntimeBindings} bindings
@@ -1185,6 +1254,7 @@ async function execStep(step, value, bindings, artifacts, _shareIndex0) {
       result.meta = { ...result.meta, type: resolved.output };
     }
   }
+  noteArrivals(bindings, step, value, result);
   return result;
 }
 

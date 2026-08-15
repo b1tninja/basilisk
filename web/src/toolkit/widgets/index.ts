@@ -68,6 +68,7 @@ export {
 } from "./NotebookShare";
 export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
 export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";
+export { CellProvenance, provenanceRows, type CellProvenanceData } from "./CellProvenance";
 export { GpgKeyBinder } from "./GpgKeyBinder";
 export {
   KeyVault,

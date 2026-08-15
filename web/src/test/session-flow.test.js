@@ -1018,9 +1018,9 @@ describe("the handoff arc finally has a surface", () => {
     // If sending ever consumed the skipped entry, the recovery it promises
     // would stop existing and the copy would have to change with it.
     expect(HOOK).toMatch(
-      /const skipped = skippedRef\.current\.find\(\(sk\) => sk\.cell === cell\);/
+      /const skipped = runRef\.current\?\.record\.declined\.find\(\(sk\) => sk\.cell === cell\);/
     );
-    expect(HOOK).not.toMatch(/skippedRef\.current\s*=\s*skippedRef\.current\.filter/);
+    expect(HOOK).not.toMatch(/record\.declined\s*=\s*[^;\n]*\.filter/);
   });
 });
 

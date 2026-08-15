@@ -2,7 +2,7 @@
  * Notebook session kernel — live $slots + per-cell outputs across Runs.
  */
 
-import { runRecipe } from "./engine.js";
+import { originStamps, runRecipe } from "./engine.js";
 import { createSlotRegistry } from "./slot-registry.js";
 import { recipeChains, serializeRecipe } from "./recipe.js";
 import { digestArtifact, digestInputs } from "./receipt.js";
@@ -79,6 +79,54 @@ function wipeArtifacts(list) {
  */
 
 /**
+ * What one cell's last performance here read, wrote and took delivery of —
+ * the per-cell half of a run's record (`lib/toolkit/run.js`).
+ *
+ * `reads`/`writes` are slot traffic, observed at the registry so no op has to
+ * be taught to report; each row carries the value's origin where it has one —
+ * `from` is the key-confirmed sender's whole fingerprint (`quorum.recv` stamps
+ * it on delivery), `link` names a hand-carried `peer.*` link whose sender no
+ * key identifies. `received` is what arrived *inside* the pipeline, before any
+ * slot held it — the engine's `noteArrivals` reports those, because a
+ * `quorum.recv | … | sss.combine` consumes its message where no registry can
+ * see it, and that silence is exactly dealer-absent finding 7a.
+ *
+ * @typedef {object} CellProvenance
+ * @property {{ slot: string, from?: string, link?: string }[]} reads
+ * @property {{ slot: string, from?: string, link?: string }[]} writes
+ * @property {{ from?: string, link?: string, step: string }[]} received
+ */
+
+/**
+ * Record one slot resolve/register as provenance rows.
+ *
+ * One row per origin the value carries — a bundle a `foreach` bound can hold
+ * parts from several senders — and a single plain row when it carries none,
+ * so the receipt still says *what* was read even when nothing says where
+ * from. Deduplicated within the list: a cell that resolves `$me` for three
+ * params still read one slot.
+ *
+ * @param {{ slot: string, from?: string, link?: string }[]} list
+ * @param {Set<string>} seen
+ * @param {string} ref
+ * @param {import("./engine.js").PipelineValue|null|undefined} value
+ */
+function noteSlotTraffic(list, seen, ref, value) {
+  const slot = String(ref || "").replace(/^\$/, "");
+  if (!slot) return;
+  const origins = originStamps(value);
+  const rows = origins.length
+    ? origins.map((o) => ({ slot, ...o }))
+    : [{ slot }];
+  for (const row of rows) {
+    const key = JSON.stringify(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push(row);
+  }
+}
+
+/**
  * Read a throw as the row a cell can render (§33c, runtime half).
  *
  * `runCell` used to keep only the *fact* of a failure — `setCellStatus("error")`
@@ -128,11 +176,12 @@ export function cellRunErrorFrom(err) {
  * @property {(i: number) => CellStatus} getCellStatus
  * @property {(i: number) => { ranAt: number, durationMs: number }|null} getCellTiming
  * @property {(i: number) => CellRunError|null} getCellRunError
+ * @property {(i: number) => CellProvenance|null} getCellProvenance
  * @property {(i: number, status: CellStatus) => void} setCellStatus
  * @property {(i: number) => void} clearCellOutputs
  * @property {(fromIndex: number) => void} invalidateFrom
  * @property {() => number[]} staleCellIndices
- * @property {(cellIndex: number, chain: import("./recipe.js").RecipeChain|import("./recipe.js").RecipeStep[], bindings?: import("./engine.js").RuntimeBindings, placement?: { plan: import("./plan.js").RunPlan, onSkip: (s: import("./placement.js").SkippedCell) => void }) => Promise<import("./engine.js").ToolkitArtifact[]>} runCell
+ * @property {(cellIndex: number, chain: import("./recipe.js").RecipeChain|import("./recipe.js").RecipeStep[], bindings?: import("./engine.js").RuntimeBindings, placement?: { plan: import("./plan.js").RunPlan, onSkip: (s: import("./placement.js").SkippedCell) => void }, run?: import("./run.js").Run) => Promise<import("./engine.js").ToolkitArtifact[]>} runCell
  * @property {(chains: import("./recipe.js").RecipeChain[], bindings?: import("./engine.js").RuntimeBindings, opts?: { from?: number }) => Promise<import("./engine.js").ToolkitArtifact[][]>} runAll
  * @property {() => void} clearSensitive
  * @property {() => void} lockSensitive
@@ -164,6 +213,20 @@ export function createKernel() {
    * @type {Map<number, CellRunError>}
    */
   const cellRunErrors = new Map();
+  /**
+   * What each cell's last performance here read, wrote and received — the
+   * per-cell view of the run records, for the provenance line the cell draws.
+   *
+   * A per-cell bucket beside `cellTimings` rather than a lookup into past run
+   * objects, because the question the cell answers is "what did *your* last
+   * run use" and cells run under different runs: the gather ran under one
+   * press and the receive under an earlier one, and both must go on answering
+   * after either run's object is replaced. Written once per performed cell,
+   * by the same recorder that feeds the run's record and the run log — one
+   * write path, three readers, so the three cannot disagree.
+   * @type {Map<number, CellProvenance>}
+   */
+  const cellProvenance = new Map();
   /**
    * Digested log of the cells run this session, in execution order — the prior
    * half of what `run.receipt` reports.
@@ -203,6 +266,12 @@ export function createKernel() {
 
   /**
    * @param {number} i
+   * @returns {CellProvenance | null}
+   */
+  const getCellProvenance = (i) => cellProvenance.get(i) || null;
+
+  /**
+   * @param {number} i
    * @param {CellStatus} status
    */
   const setCellStatus = (i, status) => {
@@ -216,8 +285,12 @@ export function createKernel() {
     wipeArtifacts(cellOutputs.get(i) || []);
     cellOutputs.delete(i);
     cellTimings.delete(i);
-    // A cell reset to `idle` has no last run, so it has no reason for one.
+    // A cell reset to `idle` has no last run, so it has no reason for one —
+    // and no record of what one read. The provenance goes with the timing it
+    // belongs to: a declined or adopted-over cell must not go on naming the
+    // senders of a run it no longer claims to have made.
     cellRunErrors.delete(i);
+    cellProvenance.delete(i);
     if (getCellStatus(i) !== "idle") setCellStatus(i, "idle");
   };
 
@@ -262,14 +335,19 @@ export function createKernel() {
    * @param {number} startedAt
    * @param {import("./engine.js").RuntimeBindings} bindings
    * @param {import("./engine.js").ToolkitArtifact[]} artifacts
+   * @param {CellProvenance} [prov]  what the cell read/wrote/received — see
+   *   the row's own note in `receipt.js` for why the receipt is its home
+   * @param {import("./run.js").Run} [run]  the run this cell performed under
    */
-  const appendRunLog = async (cellIndex, cellRecipe, startedAt, bindings, artifacts) => {
+  const appendRunLog = async (cellIndex, cellRecipe, startedAt, bindings, artifacts, prov, run) => {
     try {
       const outputs = [];
       for (const a of artifacts) {
         if (a?.role === "receipt") continue;
         outputs.push(await digestArtifact(a));
       }
+      const traffic =
+        prov && (prov.reads.length || prov.writes.length || prov.received.length);
       runLog.push({
         index: cellIndex,
         recipe: cellRecipe,
@@ -277,6 +355,12 @@ export function createKernel() {
         durationMs: Date.now() - startedAt,
         inputs: await digestInputs(bindings?.inputs),
         outputs,
+        // Only when there is something to say — a cell that touched no slot
+        // and received nothing gets no empty scaffolding in its receipt row.
+        ...(traffic ? { provenance: prov } : {}),
+        // Why this cell ran, when the caller reified the run at all. The id
+        // and the cause, never the record — the record is this log.
+        ...(run ? { run: { id: run.id, cause: run.cause } } : {}),
       });
     } catch (_) {
       // Receipt bookkeeping must never turn a successful run into a failure.
@@ -297,8 +381,13 @@ export function createKernel() {
    *   `firstCell` is the cell's index *in the plan*: this runs one chain at a
    *   time against a one-chain AST, so the chain's own index is always 0 and
    *   the gate has to be told which cell that actually is.
+   * @param {import("./run.js").Run} [run]
+   *   The run this cell performs under, when the caller reified one. The
+   *   kernel appends this cell's provenance to its record and stamps the run
+   *   log row with `{ id, cause }`; absent, the per-cell record is still kept
+   *   — what a cell read is a fact about the cell however it came to run.
    */
-  const runCell = async (cellIndex, chainOrSteps, bindings = {}, placement = undefined) => {
+  const runCell = async (cellIndex, chainOrSteps, bindings = {}, placement = undefined, run = undefined) => {
     const chain = Array.isArray(chainOrSteps)
       ? { steps: chainOrSteps }
       : chainOrSteps;
@@ -341,6 +430,61 @@ export function createKernel() {
           },
         }
       : undefined;
+    /**
+     * This cell's record, written while it runs.
+     *
+     * Two seams feed it and together they see everything a cell takes in.
+     * The registry wrapper below observes every `resolve` and `register` —
+     * `in $x`, `key=$x`, `with=$x` and `out $x` all cross it, so no op has
+     * to be taught to report. The engine's `noteArrivals` reports what no
+     * registry can see: a value taken off a channel and consumed inside the
+     * pipeline, which is how a recovery's gather uses a share no slot ever
+     * held. The rows carry `meta.from` where the value came over the room —
+     * whole fingerprints, key-confirmed by the exchange that delivered them
+     * — which is the fact finding 7a says never reached anything a person
+     * can read.
+     * @type {CellProvenance}
+     */
+    const prov = { reads: [], writes: [], received: [] };
+    const seenReads = new Set();
+    const seenWrites = new Set();
+    const seenReceived = new Set();
+    /**
+     * The registry, observed. A spread of the real one with two methods
+     * wrapped, handed to this `runRecipe` call alone — the registry itself
+     * is untouched, so nothing about how slots behave changes and every
+     * other consumer keeps the unobserved object.
+     */
+    const observedSlots = {
+      ...slots,
+      /** @param {string} ref */
+      resolve: (ref) => {
+        const v = slots.resolve(ref);
+        noteSlotTraffic(prov.reads, seenReads, ref, v);
+        return v;
+      },
+      /**
+       * @param {string} nameRef
+       * @param {import("./engine.js").PipelineValue} value
+       * @param {{ allowReplace?: boolean, preexisting?: Set<string> }} [opts]
+       */
+      register: (nameRef, value, opts) => {
+        slots.register(nameRef, value, opts);
+        noteSlotTraffic(prov.writes, seenWrites, nameRef, value);
+      },
+    };
+    /** @type {import("./engine.js").RuntimeBindings["trace"]} */
+    const trace = {
+      received: (origins, stepName) => {
+        for (const o of origins) {
+          const row = { ...o, step: String(stepName || "") };
+          const key = JSON.stringify(row);
+          if (seenReceived.has(key)) continue;
+          seenReceived.add(key);
+          prov.received.push(row);
+        }
+      },
+    };
     const receiptCtx = {
       runLog: [...runLog],
       cellIndex,
@@ -355,9 +499,9 @@ export function createKernel() {
     try {
       const artifacts = await runRecipe(
         { chains: [chain], steps: chain.steps, source: "" },
-        { ...bindings, receipt: receiptCtx },
+        { ...bindings, receipt: receiptCtx, trace },
         {
-          slotRegistry: slots,
+          slotRegistry: observedSlots,
           allowReplaceSlots: true,
           ...(gated ? { placement: { ...gated, firstCell: cellIndex } } : {}),
         }
@@ -384,7 +528,13 @@ export function createKernel() {
       cellOutputs.set(cellIndex, artifacts);
       setCellStatus(cellIndex, "ok");
       cellTimings.set(cellIndex, { ranAt: Date.now(), durationMs: Date.now() - startedAt });
-      await appendRunLog(cellIndex, cellRecipe, startedAt, bindings, artifacts);
+      // One recorder, three readers: the cell's own bucket (the provenance
+      // line), the run's record, and the run log the receipt is built from
+      // all hold what the same seams observed, so they cannot disagree about
+      // what this cell used.
+      cellProvenance.set(cellIndex, prov);
+      run?.record.cells.push({ cell: cellIndex, ...prov });
+      await appendRunLog(cellIndex, cellRecipe, startedAt, bindings, artifacts, prov, run);
       invalidateFrom(cellIndex + 1);
       return artifacts;
     } catch (err) {
@@ -426,8 +576,11 @@ export function createKernel() {
     cellStatus.clear();
     cellTimings.clear();
     // A failure message names ops, slots and sometimes a key id — it goes with
-    // the statuses it belongs to, not after them.
+    // the statuses it belongs to, not after them. The provenance rows name
+    // peers' fingerprints, which is exactly the shape of thing this button
+    // exists to remove, so they go in the same breath.
     cellRunErrors.clear();
+    cellProvenance.clear();
     runLog = [];
     slots.clear();
     // A live quorum exchange is session state too — tear it down and zeroize
@@ -448,6 +601,7 @@ export function createKernel() {
     cellStatus.clear();
     cellTimings.clear();
     cellRunErrors.clear();
+    cellProvenance.clear();
     runLog = [];
     slots.evictSensitive();
   };
@@ -470,6 +624,8 @@ export function createKernel() {
     const nextTimings = new Map();
     /** @type {Map<number, CellRunError>} */
     const nextRunErrors = new Map();
+    /** @type {Map<number, CellProvenance>} */
+    const nextProvenance = new Map();
     for (const [i, arts] of cellOutputs) {
       const ni = mapFn(i);
       if (ni == null || ni < 0) continue;
@@ -493,14 +649,24 @@ export function createKernel() {
       if (ni == null || ni < 0) continue;
       nextRunErrors.set(ni, e);
     }
+    // Moved with the timing it describes, for the run-error's reason: a
+    // provenance line left behind would name senders to a cell whose last
+    // run consumed something else entirely.
+    for (const [i, p] of cellProvenance) {
+      const ni = mapFn(i);
+      if (ni == null || ni < 0) continue;
+      nextProvenance.set(ni, p);
+    }
     cellOutputs.clear();
     cellStatus.clear();
     cellTimings.clear();
     cellRunErrors.clear();
+    cellProvenance.clear();
     for (const [i, arts] of nextOut) cellOutputs.set(i, arts);
     for (const [i, st] of nextStatus) cellStatus.set(i, st);
     for (const [i, t] of nextTimings) cellTimings.set(i, t);
     for (const [i, e] of nextRunErrors) cellRunErrors.set(i, e);
+    for (const [i, p] of nextProvenance) cellProvenance.set(i, p);
   };
 
   /** After reorder, keep tiles but mark every cell that has outputs as stale. */
@@ -516,6 +682,7 @@ export function createKernel() {
     getCellStatus,
     getCellTiming,
     getCellRunError,
+    getCellProvenance,
     setCellStatus,
     clearCellOutputs,
     invalidateFrom,

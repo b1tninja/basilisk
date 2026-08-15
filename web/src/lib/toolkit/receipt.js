@@ -38,6 +38,12 @@ import { listSteps } from "./registry.js";
  * Without the bump, `run.verify` would report a digest mismatch on a receipt
  * that is in fact perfectly good, which is the worst possible failure for a
  * tool whose job is telling you whether to trust a run.
+ *
+ * Still 2 after cells gained optional `provenance`/`run` rows: those are
+ * additive, `compareReceipts` deliberately never reads them (see its note),
+ * and a receipt without them is a receipt from a run that recorded less —
+ * not one this build describes differently. The bump is owed when an honest
+ * old receipt would fail an honest comparison, and here it cannot.
  */
 export const RECEIPT_VERSION = 2;
 
@@ -225,6 +231,19 @@ export async function digestInputs(inputs) {
  * @property {number} [durationMs]
  * @property {Record<string, *>[]} inputs   digested runtime inputs
  * @property {Record<string, *>[]} outputs  digested artifact tiles
+ * @property {import("./kernel.js").CellProvenance} [provenance]
+ *   What the cell read, wrote and took delivery of — slot labels and, where a
+ *   value arrived over the room, the sender's whole key-confirmed fingerprint
+ *   (`from`) or the name of the hand-carried link (`link`) whose sender no
+ *   key identifies. This is the receipt's answer to "whose shares rebuilt
+ *   this secret": labels and fingerprints, never values, so the invariant at
+ *   the top of this module holds. Absent when the cell touched no slot and
+ *   received nothing, and absent from receipts minted before it existed.
+ * @property {{ id: number, cause: Record<string, *> }} [run]
+ *   Why the cell ran — the reified run's id and cause (`lib/toolkit/run.js`),
+ *   recorded because "nothing records why a cell ran" is the sentence that
+ *   blocked automating result-sends, and a receipt that cannot say why is a
+ *   receipt that cannot be checked against a claim about intent.
  */
 
 /**
@@ -288,6 +307,14 @@ export async function buildRunReceipt(spec = {}) {
       durationMs: c.durationMs != null ? Number(c.durationMs) : undefined,
       inputs: c.inputs || [],
       outputs: c.outputs || [],
+      // Copied field-by-field like everything else here — a spread would be
+      // the door SAFE_ARTIFACT_FIELDS exists to keep shut. Provenance rows
+      // are labels and fingerprints, never values, so they keep the
+      // "a receipt never contains a value" invariant; both are optional and
+      // omitted when absent, so a v2 receipt from before they existed and one
+      // from after canonicalize without disagreeing about empty scaffolding.
+      ...(c.provenance ? { provenance: c.provenance } : {}),
+      ...(c.run ? { run: c.run } : {}),
     })),
   };
 }
@@ -430,7 +457,10 @@ export function mismatchLog() {
  * same ceremony differ in `createdAt` and `durationMs` by construction, so
  * treating those as evidence would make every verification fail. What must
  * match is the recipe, the registry the ops came from, and every input and
- * output digest, in order.
+ * output digest, in order. `provenance` and `run` are not compared for the
+ * timestamps' reason: any majority may rebuild a split and any press may be
+ * the one that ran a cell, so two honest recoveries can differ in both — they
+ * are the receipt's account of *this* run, not evidence about another.
  *
  * @param {RunReceipt} claimed
  * @param {RunReceipt} actual

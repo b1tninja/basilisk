@@ -42,6 +42,7 @@ const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)),
 const HOOK = read("../toolkit/useNotebook.ts");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
 const QUEUE = read("../toolkit/widgets/HandoffQueue.tsx");
+const RUNJS = read("../lib/toolkit/run.js");
 
 /**
  * Three peers, spelled the way `3d69090` made a peer: the whole fingerprint.
@@ -341,7 +342,7 @@ describe("the run is what hands them over, not a second press", () => {
     // `title` and the roster through closures `runFrom` does not depend on, so
     // calling it in the run's own body would offer the notebook as it stood
     // when that callback was built.
-    expect(HOOK).toMatch(/setFinishedRun\(seq\);/);
+    expect(HOOK).toMatch(/setFinishedRun\(run\);/);
     expect(HOOK).toMatch(
       /if \(finishedRun == null\) return;[\s\S]{0,120}void handOffPlaced\(finishedRun\);/
     );
@@ -358,15 +359,21 @@ describe("the run is what hands them over, not a second press", () => {
     // `NotebookSession._onKnock`'s order, and its reason: the failure being
     // prevented is two passes overlapping, and a mark written after the answer
     // comes back is not written during the window that matters.
-    expect(HOOK).toMatch(/bound\.sent\.add\(o\.key\);\s*\n\s*const r = await offerCell\(o\.cell\);/);
+    expect(HOOK).toMatch(
+      /run\.record\.sent\.add\(o\.key\);\s*\n\s*const r = await offerCell\(o\.cell\);/
+    );
   });
 
   it("bounds re-offering by what went out, and by the run, rather than by a clock", () => {
-    expect(HOOK).toMatch(/offersSentRef = useRef<\{ run: number; sent: Set<string> \}>/);
-    expect(HOOK).toMatch(/offersSentRef\.current = \{ run: seq, sent: new Set<string>\(\) \};/);
+    // The bound is a field of the run object now (`lib/toolkit/run.js`), and
+    // a fresh run means a fresh set — `createRun` mints `sent: new Set()`, so
+    // pressing Run again is a real retry for a peer who was not meshed.
+    expect(HOOK).toMatch(/const runRef = useRef<Run \| null>\(null\);/);
+    expect(HOOK).toMatch(/runRef\.current = run;/);
+    expect(RUNJS).toMatch(/sent: new Set\(\),/);
     // The guard that stops a stale run's offers being marked against a fresh
-    // bound.
-    expect(HOOK).toMatch(/if \(bound\.run !== run\) return;/);
+    // bound — identity now, not a counter kept in step.
+    expect(HOOK).toMatch(/if \(runRef\.current !== run\) return;/);
     expect(HOOK).not.toMatch(/setTimeout\([^)]*handOffPlaced/);
   });
 
@@ -382,8 +389,8 @@ describe("the run is what hands them over, not a second press", () => {
     // it is the body of the `else` the stop check opens. Written as two
     // assertions because "it is inside an else" and "there is no second copy
     // outside one" are the two ways this can go wrong.
-    expect(HOOK.match(/setFinishedRun\(seq\)/g)).toHaveLength(1);
-    expect(HOOK).toMatch(/\} else \{\r?\n\s*setFinishedRun\(seq\);\r?\n\s*\}/);
+    expect(HOOK.match(/setFinishedRun\(run\)/g)).toHaveLength(1);
+    expect(HOOK).toMatch(/\} else \{\r?\n\s*setFinishedRun\(run\);\r?\n\s*\}/);
   });
 
   it("puts what happened on the run line, which is the surface always on screen", () => {
@@ -407,8 +414,15 @@ describe("the run is what hands them over, not a second press", () => {
   it("still leaves the accepted cell in the sender's list", () => {
     // The recovery `HandoffQueue` promises in writing survives the automation:
     // sending is still non-destructive, so asking a peer to hand a cell over
-    // again is still a complete fix.
-    expect(HOOK).not.toMatch(/skippedRef\.current\s*=\s*skippedRef\.current\.filter/);
+    // again is still a complete fix. The list is `run.record.declined` now;
+    // `offerCell` finds in it and nothing anywhere consumes from it.
+    const body = HOOK.slice(
+      HOOK.indexOf("const offerCell = useCallback"),
+      HOOK.indexOf("Hand over what this run left")
+    );
+    expect(body).toMatch(/record\.declined\.find\(/);
+    expect(body).not.toMatch(/\.splice\(|\.filter\(/);
+    expect(HOOK).not.toMatch(/record\.declined\s*=\s*[^;\n]*\.filter/);
   });
 });
 
@@ -475,29 +489,32 @@ describe("the copy describes what the code does", () => {
       HOOK.indexOf("const handOffPlaced = useCallback"),
       HOOK.indexOf("const sendCellResult = useCallback")
     );
-    expect(body).toMatch(/noteOffers\(\s*aside\.map[\s\S]*?\)\);[\s\S]*?if \(!getLiveSession\(\)\)/);
+    expect(body).toMatch(/noteOffers\(run, aside\.map[\s\S]*?\)\);[\s\S]*?if \(!getLiveSession\(\)\)/);
     // Folded in, never replacing: the effect can re-fire, and the second pass
-    // knows only about the aside half.
-    expect(HOOK).toMatch(/const by = new Map\(prev\.map\(\(o\) => \[o\.cell, o\]\)\);/);
+    // knows only about the aside half. The merge lives on the run object now
+    // (`noteOfferVerdicts`), latest per cell winning.
+    expect(RUNJS).toMatch(/const by = new Map\(run\.record\.offers\.map\(\(o\) => \[o\.cell, o\]\)\);/);
     expect(HOOK).not.toMatch(/setAutoOffered\(outcomes\)/);
   });
 
   it("keeps the plan beside the report of what it declined", () => {
     // The rule needs `consumes[].from`, `produces` and `mine`, and none of them
     // is in the gate's report. A plan from a different run answering about this
-    // run's declines is the failure this pins.
-    expect(HOOK).toMatch(/skippedRef\.current = \[\];[\s\S]{0,600}runPlanRef\.current = null;/);
-    expect(HOOK).toMatch(/runPlanRef\.current = plan;\s*\r?\n\s*placement = \{ plan, onSkip:/);
+    // run's declines is the failure this pins — and both are fields of one run
+    // object now, so they cannot come from different runs by construction.
+    expect(HOOK).toMatch(
+      /run\.plan = plan;\s*\r?\n\s*placement = \{ plan, onSkip: \(sk: any\) => run\.record\.declined\.push\(sk\) \};/
+    );
     // The sentence a Stop leaves behind names what this run *would* have sent,
     // not every cell the gate declined — otherwise it invites the reader to
     // press Hand over on the very documents the rule exists to stop.
     expect(HOOK).toMatch(/const \{ owed: waiting \} = offersOwed\(/);
     // And no call site decides without the plan. Both of them — the run's own
-    // send and that sentence — name the same ref.
+    // send and that sentence — read it off the same run.
     const calls = [...HOOK.matchAll(/offersOwed\(/g)];
     expect(calls).toHaveLength(2);
     for (const at of calls) {
-      expect(HOOK.slice(at.index, at.index + 200)).toContain("runPlanRef.current");
+      expect(HOOK.slice(at.index, at.index + 200)).toContain("run.plan");
     }
   });
 });

@@ -76,8 +76,12 @@
  *   120 seconds and said so only after they had run out. It now carries an
  *   explicit `wait=`, half an hour long, and the picker prints the number
  *   before anybody presses anything.
- * - **7a** — nothing on the recovering machine says whose shares rebuilt the
- *   secret. The sender writes an Activity entry; the receiver writes none.
+ * - **7a** — *fixed.* Nothing on the recovering machine said whose shares
+ *   rebuilt the secret: the sender wrote an Activity entry, the receiver wrote
+ *   none, and `meta.from` reached no tile, no slot row and no receipt. The run
+ *   keeps a record now (`lib/toolkit/run.js`) and the gather cell draws its
+ *   slice of it — step 7 asserts both contributors' whole fingerprints on the
+ *   cell a person is reading when the secret comes back.
  * - **8a** — the destroyed browser's row reads "verified" beside "failed",
  *   because the field that retracts a verdict is cleared by a channel close and
  *   a destroyed browser never sends one.
@@ -762,23 +766,37 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
     expect(secret).toMatch(/^[0-9a-f]{64}$/);
     expect(secret).not.toBe(recovered);
 
-    // **FINDING (7a) — nothing on either screen says whose shares rebuilt it.**
-    // The recoverer's gather is `quorum.recv count=1`, which takes a message and
-    // reports a value; the sender's fingerprint rides on `meta.from` and reaches
-    // no tile, no slot row and no receipt. This file can name the two holders
-    // only because it removed every other possibility from the notebook first. A
-    // person who ran the ceremony as generated cannot, and the question "did this
-    // recovery need the dealer?" is exactly the question a 2-of-3 is bought to be
-    // able to answer.
+    // **FINDING (7a), fixed — the gather cell names whose shares rebuilt it.**
+    // It used to be that the sender's fingerprint rode on `meta.from` and
+    // reached no tile, no slot row and no receipt, so this file could name the
+    // two holders only because it removed every other possibility from the
+    // notebook first. The run keeps a record now: the kernel notes what each
+    // cell read off a slot and took off the room (`CellProvenance`, fed by
+    // `lib/toolkit/run.js`), and the gather cell — the thing a person is
+    // reading when the secret comes back — draws it. Both contributors, by
+    // whole fingerprint, read off the very cell that recombined: the other
+    // holder, whose share arrived over the room *inside* this cell's own
+    // `quorum.recv`; and the dealer, who dealt `$share-2` before leaving — so
+    // "did this recovery need the dealer?" is answered with "the dealer's
+    // machine returned nothing; its only part was dealing this holder's own
+    // share", which is exactly the question a 2-of-3 is bought to answer.
     //
-    // Pinned in the two places a person would look. The gather cell itself,
-    // which is the thing they are reading when the secret comes back; and the
-    // Activity tray, which is where a disposition goes — `noteSend` writes an
-    // outward entry on the *sender* naming who it wrote to, and the receiving
-    // end writes nothing at all, so the one machine that ends up with the secret
-    // is the one machine with no record of where it came from.
-    const gather = await cell(recoverer, 6).innerText();
-    expect(gather, "the gather cell names its sender after all").not.toContain(L.bystander);
+    // Whitespace squeezed for the same reason the Activity assertions squeeze
+    // it: a 40-hex fingerprint wraps.
+    const gather = (await cell(recoverer, 6).innerText()).replace(/\s+/g, "");
+    expect(
+      gather,
+      "the gather cell does not name the holder whose share it received"
+    ).toContain(L.bystander);
+    expect(
+      gather,
+      "the gather cell does not say where $share-2 came from"
+    ).toContain(L.dealer);
+    // The Activity tray is still the *outward* record and still writes nothing
+    // on receipt — the receiving side's record belongs to the run and is drawn
+    // on the cell, not re-narrated as an activity nobody performed. Kept as an
+    // assertion so a second, parallel inbound ledger has to come back here and
+    // argue.
     await trayTab(recoverer, "Activity");
     const activity = (await tray(recoverer).innerText()).replace(/\s+/g, " ");
     expect(

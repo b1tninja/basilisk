@@ -66,6 +66,7 @@ import {
   OpsShelf,
   DocsFooter,
   CellTypeErrors,
+  CellProvenance,
   GpgKeyBinder,
   KeyVault,
   type VaultKeyView,
@@ -3435,6 +3436,16 @@ export function ToolkitShell() {
                           })() : null}
                         </div>
 
+                        {/* Whose values this cell's last run used, when any
+                            arrived from another machine — finding 7a: the
+                            gather is the thing a person is reading when the
+                            secret comes back, so the senders are named here,
+                            above the outputs they produced. Renders nothing
+                            for a purely local run. */}
+                        <CellProvenance
+                          className="mt-3 px-1"
+                          provenance={nb.cellProvenance[i]}
+                        />
                         {(nb.cellOutputs[i] || []).length > 0 ? (
                           <OutputList
                             className="mt-3"

@@ -34,6 +34,7 @@ import {
   narrateOffers,
   offersOwed,
 } from "../lib/toolkit/run-offers.js";
+import { cellsInScope, createRun, noteOfferVerdicts } from "../lib/toolkit/run.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
 import { clearActivity } from "../lib/toolkit/activity-log.js";
@@ -88,6 +89,12 @@ import type {
 
 /** A manifest attestation as `lib/toolkit/attest.js` defines one. */
 export type ManifestAttestation = import("../lib/toolkit/attest.js").ManifestAttestation;
+
+/** The reified run — `lib/toolkit/run.js` holds the argument for its shape. */
+export type Run = import("../lib/toolkit/run.js").Run;
+
+/** What one cell's last run here read, wrote and received (`kernel.js`). */
+export type CellProvenance = import("../lib/toolkit/kernel.js").CellProvenance;
 
 /** What `manifestAttestedBy` answers about one manifest. */
 export type AttestationCoverage = Awaited<ReturnType<typeof manifestAttestedBy>>;
@@ -913,6 +920,18 @@ export function useNotebook() {
   const cellTimings: ({ ranAt: number; durationMs: number } | null)[] = useMemo(() => {
     void kernelEpoch;
     return chains.map((_, i) => kernelRef.current.getCellTiming?.(i) ?? null);
+  }, [chains, kernelEpoch]);
+
+  /**
+   * What each cell's last run here read, wrote and received — the kernel's
+   * per-cell record, read on `kernelEpoch` like the statuses and timings
+   * beside it. The cell draws its provenance line from this (finding 7a: a
+   * recovering machine must be able to say whose shares rebuilt the secret,
+   * and this is where the senders' fingerprints reach something on screen).
+   */
+  const cellProvenance: (CellProvenance | null)[] = useMemo(() => {
+    void kernelEpoch;
+    return chains.map((_, i) => kernelRef.current.getCellProvenance?.(i) ?? null);
   }, [chains, kernelEpoch]);
 
   /**
@@ -1748,9 +1767,23 @@ export function useNotebook() {
         );
         return;
       }
-      const runnable = chains
-        .map((c, i) => i)
-        .filter((i) => i >= from && (chains[i]?.steps?.length ?? 0) > 0);
+      /**
+       * The run, as a thing — `lib/toolkit/run.js` holds the argument. The
+       * cause is this press and where it landed; the scope states the bound
+       * this loop always had (`from` to the end of the notebook) instead of
+       * implying it, and `cellsInScope` is what walks it, so the record and
+       * the loop cannot disagree about what this run was allowed to touch.
+       * Everything below that used to be its own ref — the declined list, the
+       * plan, the sent-offers bound, the sequence number — is a field of this
+       * object now: one identity, so a decline and the plan that declined it,
+       * or an offer and the run that bounds it, can never come from different
+       * runs.
+       */
+      const run = createRun({
+        cause: { kind: "press", press: "run-from", cell: from },
+        scope: { from, to: chains.length - 1 },
+      });
+      const runnable = cellsInScope(run.scope, chains);
       setBusy(true);
       setRunError("");
       setRunStatus("Running…");
@@ -1766,6 +1799,19 @@ export function useNotebook() {
        * takes its cell index explicitly, and nothing reads an ambient one).
        */
       let at = -1;
+      // Installing the fresh run is what retires the last one: `runRef` is the
+      // one place a "current run" exists, so replacing it here — before the
+      // loop, not after — means a run that throws still leaves the next one a
+      // clean bound, and the throwing run is the *usual* one, since a cell
+      // reading a slot somebody else's cell writes is what stops a placed run
+      // in the first place. A pending hand-over pass for the old run finds
+      // itself outdated by identity (`handOffPlaced` checks the ref) rather
+      // than by a number it has to keep in step.
+      runRef.current = run;
+      // Cleared with it, so the queue never annotates this run's declined
+      // cells with what happened to the last one's. The record's own offer
+      // list starts empty on the fresh object; this clears the rendered copy.
+      setAutoOffered([]);
       /**
        * Who runs what, for this run.
        *
@@ -1774,30 +1820,18 @@ export function useNotebook() {
        * gate and this is the run it has always been, which `placement.js`
        * insists is a different thing from a gate that admits everything.
        */
-      skippedRef.current = [];
-      // Cleared on the same breath, and set again below on the same breath: the
-      // plan is what says whether a declined cell is owed an offer, and a plan
-      // from one run beside another run's declines would answer that question
-      // about a notebook that is not the one on screen.
-      runPlanRef.current = null;
-      // A run of its own, with its own record of what it has handed out. Both
-      // are reset here rather than after the loop, so a run that throws still
-      // leaves the next one a clean bound — and the throwing run is the *usual*
-      // one, since a cell reading a slot somebody else's cell writes is what
-      // stops a placed run in the first place.
-      const seq = (runSeqRef.current += 1);
-      offersSentRef.current = { run: seq, sent: new Set<string>() };
-      // Cleared with them, so the queue never annotates this run's declined
-      // cells with what happened to the last one's.
-      setAutoOffered([]);
       const { roster, me } = handoffWho();
       let placement: any;
       if (me && Object.keys(roster).length) {
         try {
           const plan = planRun(compileRecipe(source), { me, roster });
           if (plan.ok && plan.play === "placed") {
-            runPlanRef.current = plan;
-            placement = { plan, onSkip: (sk: any) => skippedRef.current.push(sk) };
+            // The plan and the declines it produces are fields of one run —
+            // the plan is what says whether a declined cell is owed an offer,
+            // and a plan from one run beside another run's declines would
+            // answer that question about a notebook not on screen.
+            run.plan = plan;
+            placement = { plan, onSkip: (sk: any) => run.record.declined.push(sk) };
           }
         } catch {
           /* an uncompilable notebook is the editor's complaint, not the gate's */
@@ -1833,7 +1867,7 @@ export function useNotebook() {
           setRunningCell(i);
           setRunStatus(`Running cell ${i}…`);
           at = i;
-          await kernelRef.current.runCell(i, chains[i], bindings, placement);
+          await kernelRef.current.runCell(i, chains[i], bindings, placement, run);
         }
         setKernelEpoch((n) => n + 1);
         setRunStatus("Done");
@@ -1853,7 +1887,7 @@ export function useNotebook() {
         setBusy(false);
         setRunProgress(null);
         setRunningCell(null);
-        // The run is over however it got here, and `skippedRef` now holds what
+        // The run is over however it got here, and its record now holds what
         // it declined. Handing those over is asked for as *state* rather than
         // done on this line, for `finishedRun`'s reason one screen down:
         // `offerCell` reads `source`, `title` and the roster through closures
@@ -1876,9 +1910,9 @@ export function useNotebook() {
         // the reader to send the very documents the rule above exists to stop.
         if (stopRunRef.current) {
           const { owed: waiting } = offersOwed(
-            skippedRef.current,
-            offersSentRef.current.sent,
-            runPlanRef.current
+            run.record.declined,
+            run.record.sent,
+            run.plan ?? undefined
           );
           if (waiting.length) {
             setRunStatus(
@@ -1891,7 +1925,7 @@ export function useNotebook() {
             );
           }
         } else {
-          setFinishedRun(seq);
+          setFinishedRun(run);
         }
       }
     },
@@ -1902,7 +1936,7 @@ export function useNotebook() {
     // press Start) is the roster from before anybody was in the room. `me` is
     // "" there, no plan is built, `runCell` is handed no placement, and the
     // notebook runs every cell locally including the ones belonging to other
-    // people: no decline, nothing in `skippedRef`, and nothing for this run to
+    // people: no decline, an empty record, and nothing for this run to
     // hand over. Reproduced in the browser — the same notebook and the same
     // room gated only after a keystroke made the callback fresh.
     //
@@ -2005,7 +2039,19 @@ export function useNotebook() {
             label: ceremonyParams.label || ceremonyTitle(ceremonyParams),
           },
         };
-        await kernelRef.current.runCell(at, compiled[at], bindings);
+        // The stage's own run: caused by this stage's button, scoped to the
+        // one cell it appends — which is the ceremony's whole contract ("each
+        // stage appends its own cell and runs exactly that one"), now stated
+        // on the object the kernel records under rather than implied by the
+        // call shape. Deliberately *not* installed as `runRef.current`: that
+        // ref is the notebook run whose declined cells the queue is about,
+        // a stage declines nothing, and replacing the ref here would retire
+        // a hand-over pass the previous notebook run may still be owed.
+        const run = createRun({
+          cause: { kind: "press", press: "ceremony-stage", stage },
+          scope: { from: at, to: at },
+        });
+        await kernelRef.current.runCell(at, compiled[at], bindings, undefined, run);
         setKernelEpoch((n) => n + 1);
         setCeremonyRun("done");
       } catch (err) {
@@ -2352,61 +2398,48 @@ export function useNotebook() {
   const pendingHandoffs = useCallback(() => getPendingHandoffs(), []);
 
   /**
-   * Cells the last run declined because they belong to somebody else.
+   * The current run — the one identity that used to be four refs.
    *
-   * A ref, not state: it is written inside the run loop and read by the offer
-   * that follows it, and a render in between would be a render that could
-   * arrive after the read. The list is replaced per run rather than appended
-   * to, so a cell that stopped being somebody else's does not linger.
+   * `lib/toolkit/run.js` argues the object; what belongs here is why it is a
+   * ref and what moved in. A ref, not state: its record is written inside the
+   * run loop and read by the offer pass that follows it, and a render in
+   * between would be a render that could arrive after the read. Replaced
+   * whole per run — never mutated back to empty — so a cell that stopped
+   * being somebody else's does not linger in anybody's declined list.
+   *
+   * What collapsed into it, and the argument each piece brought along:
+   *
+   * - **`record.declined`** (was `skippedRef`) — the gate's own report,
+   *   written during the run and gone with it.
+   * - **`plan`** (was `runPlanRef`) — "declined" is not "owed an offer";
+   *   `run-offers.js` argues which declined cells this machine is on an end
+   *   of, and every fact that answers it (`consumes[].from`, `produces`,
+   *   `mine`) is in the plan and nowhere else. `skippedCells` is deliberately
+   *   not widened to carry them: a report that carried the dependency graph
+   *   would be `placement.js` deciding placement a second time. As a field of
+   *   the same object as the declines, the two cannot come from different
+   *   runs — the invariant the old comments asked two refs to keep by being
+   *   "written and cleared on the lines beside" each other.
+   * - **`record.sent`** (was `offersSentRef.sent`) — `NotebookSession
+   *   ._invited`'s pattern: a set of what has been served, consulted before
+   *   serving and written *before* the send is awaited, so a second pass
+   *   arriving while the first is in flight finds the cell claimed. Pressing
+   *   Run again mints a fresh run with a fresh set, which is what lets a peer
+   *   who was not meshed the first time be tried again.
+   * - **the sequence number** (was `runSeqRef` + `offersSentRef.run`) — the
+   *   question "is this pass about the current run" is answered by object
+   *   identity now (`handOffPlaced` compares against this ref), so the
+   *   counter survives only as `run.id`, minted in `createRun` for the
+   *   receipt's benefit.
+   *
+   * The kernel writes `record.cells` — what each performed cell read, wrote
+   * and received — as the run walks; nothing here touches it.
    */
-  const skippedRef = useRef<any[]>([]);
-  const skippedCells = useCallback(() => skippedRef.current.slice(), []);
-
-  /**
-   * The plan that gate was built from, kept for as long as its report is.
-   *
-   * "Declined" is not "owed an offer" — `run-offers.js` argues which declined
-   * cells this machine is on an end of, and every fact that answers it
-   * (`consumes[].from`, `produces`, `mine`) is in the plan and nowhere else.
-   * `skippedCells` is deliberately not widened to carry them: the gate copies
-   * plan fields into its report and a report that carried the dependency graph
-   * would be `placement.js` deciding placement a second time.
-   *
-   * Written and cleared on the lines beside `skippedRef`'s, because
-   * `placement.onSkip` is a field of the object this plan is handed to — a
-   * declined cell cannot exist without the plan that declined it, and the two
-   * must not be able to come from different runs.
-   */
-  const runPlanRef = useRef<any>(null);
-
-  /**
-   * Runs, counted, so an offer can be bounded by the one that caused it.
-   *
-   * Not a timestamp and not a flag. The question an automatic offer has to
-   * answer is "has this cell already gone out *for this run*", and a run is the
-   * only thing that makes the answer stable: `skippedRef` is replaced per run,
-   * so a number that moves with it is the whole of the identity needed.
-   */
-  const runSeqRef = useRef(0);
-
-  /**
-   * What the current run has handed out, by `offerKey`.
-   *
-   * `NotebookSession._invited`'s pattern, and for its reason: a set of what has
-   * been served, consulted before serving and written *before* the send is
-   * awaited, so a second pass that arrives while the first is in flight finds
-   * the cell claimed. The run number rides along because the set is only an
-   * answer about one run — a later run starts a fresh one, which is what lets a
-   * peer who was not meshed the first time be tried again by pressing Run.
-   *
-   * A ref, not state, for `skippedRef`'s reason: it is written between a render
-   * and the send that follows it, and a render in between would be a render
-   * that could arrive after the read.
-   */
-  const offersSentRef = useRef<{ run: number; sent: Set<string> }>({
-    run: 0,
-    sent: new Set<string>(),
-  });
+  const runRef = useRef<Run | null>(null);
+  const skippedCells = useCallback(
+    () => (runRef.current?.record.declined ?? []).slice(),
+    []
+  );
 
   /**
    * The run whose declined cells have not been handed over yet, or null.
@@ -2417,7 +2450,7 @@ export function useNotebook() {
    * one of these — it appended cells and then had to run the notebook those
    * cells were in — and it is gone with them; this is the last of the device.
    */
-  const [finishedRun, setFinishedRun] = useState<number | null>(null);
+  const [finishedRun, setFinishedRun] = useState<Run | null>(null);
 
   /**
    * What the last run decided about each cell it declined, for the queue to
@@ -2431,28 +2464,32 @@ export function useNotebook() {
    * other two are: without it the row for a cell the run deliberately left alone
    * is indistinguishable from the row for a cell a Stop cut short, and those ask
    * the reader for opposite things.
+   *
+   * A rendered copy of `run.record.offers`, not a second ledger: the verdicts
+   * live on the run (`noteOfferVerdicts` folds them there, latest per cell
+   * winning) and this state exists only because a ref cannot cause a render.
    */
   const [autoOffered, setAutoOffered] = useState<
     { cell: number; peer: string; state: "sent" | "refused" | "aside"; why?: string }[]
   >([]);
 
   /**
-   * Fold a pass's verdicts into the run's record, latest per cell winning.
+   * Fold a pass's verdicts into the run's record and re-render the copy.
    *
-   * A merge rather than a replace because `handOffPlaced` writes twice — the
-   * cells it is leaving alone before the sends, the outcomes after — and because
-   * the effect that calls it can re-fire on a re-render, where the second pass
-   * finds every send already claimed and knows only about the `aside` half. A
-   * replace there would erase this run's record of what went out.
+   * The merge itself is `noteOfferVerdicts` — a merge rather than a replace
+   * because `handOffPlaced` writes twice (the cells it is leaving alone before
+   * the sends, the outcomes after) and because the effect that calls it can
+   * re-fire on a re-render, where the second pass finds every send already
+   * claimed and knows only about the `aside` half. A replace there would
+   * erase this run's record of what went out.
    */
   const noteOffers = useCallback(
-    (rows: { cell: number; peer: string; state: "sent" | "refused" | "aside"; why?: string }[]) => {
+    (
+      run: Run,
+      rows: { cell: number; peer: string; state: "sent" | "refused" | "aside"; why?: string }[]
+    ) => {
       if (!rows.length) return;
-      setAutoOffered((prev) => {
-        const by = new Map(prev.map((o) => [o.cell, o]));
-        for (const row of rows) by.set(row.cell, row);
-        return [...by.values()].sort((a, b) => a.cell - b.cell);
-      });
+      setAutoOffered(noteOfferVerdicts(run, rows));
     },
     []
   );
@@ -2815,7 +2852,7 @@ export function useNotebook() {
    */
   const offerCell = useCallback(
     async (cell: number) => {
-      const skipped = skippedRef.current.find((sk) => sk.cell === cell);
+      const skipped = runRef.current?.record.declined.find((sk) => sk.cell === cell);
       if (!skipped) return { ok: false, why: "That cell was not left to anybody." };
       const { roster, me } = handoffWho();
       const ctx = await handoffContext({ source, me, roster, title });
@@ -2873,10 +2910,11 @@ export function useNotebook() {
    * does not consume the skipped cell — that non-destructiveness is what makes
    * recovery after a reload possible, and `HandoffQueue` promises it in writing
    * — so nothing downstream would stop a second pass from sending the same cell
-   * twice. `offersSentRef` is `NotebookSession._invited` one layer up: marked
-   * before the await, so a re-entry finds the cell claimed rather than in
-   * flight, and scoped to the run so that pressing Run again is a real retry
-   * for a peer who was not reachable the first time.
+   * twice. `run.record.sent` is `NotebookSession._invited` one layer up:
+   * marked before the await, so a re-entry finds the cell claimed rather than
+   * in flight, and a field of the run so that pressing Run again — a fresh
+   * object, a fresh set — is a real retry for a peer who was not reachable
+   * the first time.
    *
    * **Failures are said out loud, in the handoff layer's words.** A run that
    * silently handed nothing over is the experience this whole arc exists to
@@ -2889,19 +2927,22 @@ export function useNotebook() {
    * "Failed" and why a cell did not go out are on screen together.
    */
   const handOffPlaced = useCallback(
-    async (run: number) => {
-      const bound = offersSentRef.current;
-      // A newer run has already replaced the bound this one would mark against.
-      // Sending now would be offering the previous run's answers under the
-      // current run's numbering.
-      if (bound.run !== run) return;
-      const { owed: waiting, aside } = offersOwed(skippedRef.current, bound.sent, runPlanRef.current);
+    async (run: Run) => {
+      // A newer run has already replaced this one as the current run. Sending
+      // now would be offering the previous run's answers under the current
+      // run's numbering — identity, not a counter, is what says so.
+      if (runRef.current !== run) return;
+      const { owed: waiting, aside } = offersOwed(
+        run.record.declined,
+        run.record.sent,
+        run.plan ?? undefined
+      );
       // Recorded before the sends and whether or not there is a session, because
       // it is a reading of the notebook rather than a thing that happened: the
       // holder's `quorum.recv` is not this dealer's to hand over in an empty
       // room either, and the row must not say "nothing has gone out" as though
       // the room were the reason.
-      noteOffers(aside.map((o) => ({ cell: o.cell, peer: o.peer, state: "aside" as const })));
+      noteOffers(run, aside.map((o) => ({ cell: o.cell, peer: o.peer, state: "aside" as const })));
       if (!waiting.length) return;
       if (!getLiveSession()) {
         setRunStatus((prev) => `${prev} ${narrateNoSession(waiting)}`.trim());
@@ -2913,11 +2954,12 @@ export function useNotebook() {
         // on the line above its own await for the same reason: the failure this
         // prevents is two passes overlapping, and a mark written after the
         // answer comes back is not written during the window that matters.
-        bound.sent.add(o.key);
+        run.record.sent.add(o.key);
         const r = await offerCell(o.cell);
         outcomes.push({ cell: o.cell, peer: o.peer, ok: !!r.ok, why: r.ok ? undefined : r.why });
       }
       noteOffers(
+        run,
         outcomes.map((o) => ({
           cell: o.cell,
           peer: o.peer,
@@ -3232,6 +3274,7 @@ export function useNotebook() {
     slotMetas,
     cellStatuses,
     cellTimings,
+    cellProvenance,
     cellOutputs,
     cellErrors,
     cellWarnings,
