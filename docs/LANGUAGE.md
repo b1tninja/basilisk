@@ -410,6 +410,35 @@ new rule — it is the same two steps in the same grammatical position they have
 always occupied. A payload-taking step fed a whole pair type-refuses, which is
 what makes the projection discoverable rather than optional-and-forgotten.
 
+#### Why this is not a general `map`, and what the general form would be
+
+The obvious generalization is a lambda-like `map`: iterate one collection,
+applying a verb against a second same-length iterable — `$session.peers`, say.
+`scatter` **is** that operation, narrowed three times, and each narrowing is a
+security choice rather than a simplification:
+
+- **The second list is derived, never named.** A `$session.peers` value a
+  recipe zips against would make the pairing order something each machine
+  materializes — and `peersSha` cannot check order, only membership. Canonical
+  audience order is the one order both machines can derive without either
+  deciding anything; exposing the list as a value invites reordering it, and a
+  reordered pairing is the failure nothing in the product would report.
+- **The lambda is the `-` body.** It is anonymous, applied once per pair, and
+  already the language's only body form. Function *values* — a named verb
+  passed as data — would be a second-order language for one use, and every
+  argument in this document assumes a reader can know what a recipe does from
+  its text alone.
+- **The pair, not the index, is what the body sees.** No `i`, no subscripts:
+  `:key`/`:value` project it, pair-aware verbs consume it whole.
+
+The general form is legitimate exactly when the second list's order is **in
+the text**: `scatter with=$recipients`, zipping against a list somebody wrote,
+is safe by the first principle — the text is the agreement, and an authored
+order is an agreed one. It is not built because every use that has actually
+blocked is shares×room, and a mechanism without a consumer is this codebase's
+signature defect. When a second consumer appears, `with=` is the extension
+point, and the derived-order rule above stays the default it falls back from.
+
 #### The slot-free deal, which this buys and the parked spellings did not
 
 ```text
