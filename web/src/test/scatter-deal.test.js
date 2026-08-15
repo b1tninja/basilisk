@@ -255,3 +255,33 @@ describe("the body's slots keep foreach's bundle rule", () => {
     expect(tiles.map((a) => a.content)).toEqual(members);
   });
 });
+
+describe("out after send to=each binds the dealer's own share, once", () => {
+  it("the slot holds the value itself — the one pair whose member is this machine", async () => {
+    // The carve-out from the bundle rule, decided by the body's syntax: a
+    // delivered pair's pipe ends at `send`, so exactly one value — the share
+    // that never crossed a wire — reaches the `out`, and the slot binds it
+    // directly rather than as a bundle-of-one. This is what the generated
+    // deal's `$share` is, and what the recovery's `$share | quorum.send`
+    // reads back, so a bundle here would break the second notebook on the
+    // dealer's machine while every unit assertion about the wire still
+    // passed.
+    const { createSlotRegistry } = await import("../lib/toolkit/slot-registry.js");
+    const slotRegistry = createSlotRegistry();
+    await openRoom(others());
+    const { ast, errors } = parseRecipe(
+      "random 32 | sss.split 2/3 | blip39.encode | scatter to=room\n  - send to=each | out $share"
+    );
+    expect(errors).toEqual([]);
+    await runRecipe(ast, {}, { slotRegistry });
+
+    const mine = slotRegistry.resolve("$share");
+    expect(mine.type, `the slot holds ${mine.type}`).toBe("text");
+    const header = readShareHeader(String(mine.data));
+    expect(header, "the slot does not hold a share mnemonic").toBeTruthy();
+    // And it is *this machine's* share: the index is this session's position
+    // in the canonical audience — the pairing rule, read back off the one
+    // value that stayed.
+    expect(header.index).toBe(positionOf(self.fpr));
+  });
+});

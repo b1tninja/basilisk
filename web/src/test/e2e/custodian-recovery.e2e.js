@@ -20,13 +20,13 @@
  *
  * ## Why the shares are minted here rather than borrowed
  *
- * The split cell below is `roomCeremony`'s own first cell, character for
- * character in what it does: `random 32 | tee - digest … | sss.split
- * threshold=2 shares=3 | blip39 | out $set`. So the mnemonics a custodian is
- * handed here are the same objects a room ceremony deals — same `sss.split`,
- * same BLIP39 encoding, same set id, same absence of commitments. Borrowing them
- * out of the three-party suite would couple two files and prove less: what
- * matters is that these are shares of a 2-of-3, not which ceremony made them.
+ * The split cell below mints with the same codec the room ceremony deals with:
+ * `sss.split threshold=2 shares=3 | blip39`. So the mnemonics a custodian is
+ * handed here are the same objects a room ceremony's `scatter` delivers — same
+ * split, same BLIP39 encoding, same set id, same absence of commitments — minus
+ * the live room this fixture deliberately does not have. Borrowing them out of
+ * the three-party suite would couple two files and prove less: what matters is
+ * that these are shares of a 2-of-3, not which ceremony made them.
  *
  * ## The four refusals, and why they are the point
  *
@@ -53,9 +53,15 @@
  * Numbered in the steps that hold them, and pinned on assertions so a fix has to
  * come back here:
  *
- * - **2a** — a custodian holding a mnemonic and an empty notebook has nowhere to
- *   put it. The shares tray appears only once a recipe that reads `shares` has
- *   been typed, and nothing on an empty notebook names that recipe.
+ * - **2a** — *fixed, and turned over in step 2.* A custodian holding a
+ *   mnemonic and an empty notebook had nowhere to put it: the shares tray
+ *   appears only once a recipe that reads `shares` exists, and nothing on an
+ *   empty notebook named that recipe. The recovery section on the session
+ *   sheet now offers "Recover from cards instead" — one press writes the
+ *   one-cell paste recovery (`room-recovery.js`'s `custodianRecovery`), and
+ *   the share rows open because the notebook now asks for them. Step 2 first
+ *   pins the honest *before* (an empty notebook still needs nothing), then
+ *   drives the road; nothing in this file types a pipeline any more.
  * - **2b** — the cold "Check a share…" panel *can* say which share this is, how
  *   many recombine and which set it belongs to — the exact facts
  *   `three-party-ceremony.e2e.js` finding 5c says a holder cannot learn — and it
@@ -72,9 +78,8 @@
  *   the message now names every row with the set it came from — in the same
  *   four hex digits the check panel prints, which is what step 5 compares.
  *
- * What remains pinned unfixed is 2a and 2b: nothing points a custodian at the
- * one surface written for them, and that surface then asks for commitments an
- * `sss.split` ceremony cannot produce.
+ * What remains pinned unfixed is 2b: the one surface that reads a lone share
+ * still asks for commitments an `sss.split` ceremony cannot produce.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -94,33 +99,19 @@ if (!availability.ok && availability.kind === "broken") {
 }
 
 /**
- * The ceremony's own dealing cell, and the ceremony's own gather.
- *
- * Written out rather than imported from `room-ceremony.js` because the point of
- * the second one is that a custodian has to *retype* it: importing the string
- * this file is complaining nobody can find would be asserting against the very
- * copy a person does not have. The split is spelled here for the same reason the
- * generator spells it — one place, so the two numbers cannot drift.
+ * A minting cell for the cards this file carries — the solo shape, typed on
+ * the ceremony machine only. It used to mirror `roomCeremony`'s first cell
+ * character for character; the room's deal cell is a `scatter` now, which
+ * needs a live room this fixture deliberately does not have, so this is the
+ * *solo* minting the "Split a secret" road produces: same `sss.split`, same
+ * BLIP39 encoding, same set id, same absence of commitments. What matters is
+ * that the mnemonics are shares of a real 2-of-3, not which ceremony made
+ * them — the custodian's machine never sees this cell at all.
  */
 const SPLIT = [
   "random 32 | tee",
   "  - digest | encode hex | out $expected",
   "| sss.split threshold=2 shares=3 | blip39 | out $set",
-].join("\n");
-
-/**
- * What a custodian must arrive at with no notebook in front of them.
- *
- * `shares` collects from the Inputs tray when the recipe names nothing else,
- * which is the only road in for somebody holding paper. The `tee` is the awkward
- * part and it is not decoration: without a digest branch there is nothing to
- * compare against the ceremony's `$expected`, and comparing is the only way to
- * know a recombination produced the right bytes rather than merely some bytes.
- */
-const RECOVER = [
-  "shares | blip39 -d | sss.combine | tee",
-  "  - digest | encode hex | out $recovered",
-  "| encode hex | out $secret",
 ].join("\n");
 
 /** One notebook cell, by index — the shell renders exactly one `<article>` each. */
@@ -295,24 +286,16 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
 
   /* ── 2. the custodian opens the toolkit cold ─────────────────────────────── */
 
-  it("gives a custodian holding a mnemonic nowhere to put it", async () => {
+  it("hands a custodian holding a mnemonic somewhere to put it, in one press", async () => {
     // Nothing has ever run here. This is the state the cards are printed for.
     expect(await readNotebookSource(custodian)).toBe("");
     expect(await custodian.locator("article").count()).toBe(1);
 
-    // **FINDING (2a) — the shares tray does not exist until a recipe asks for
-    // it, and the sentence in its place names a panel rather than a pipeline.**
-    // `notebookNeeds` is derived from the recipe, so an empty notebook needs
-    // nothing and the share rows are not drawn. What is drawn is honest and is
-    // as far as it goes helpful — it says a step that reads *shares* would open
-    // one — but the gap it leaves is the whole of what this reader is missing:
-    // which step, in what order, with what after it. The room ceremony teaches
-    // `shares with=$share-2`, which names a slot this browser has never had;
-    // `shareCheckRecipe()` teaches `vss.verify`, which belongs to the other
-    // ceremony and cannot recombine anything. So the affordance is downstream of
-    // the knowledge it exists to supply, and the two documents that would close
-    // the gap — the notebook and the printed playbook — are the two things a
-    // custodian arriving cold does not have.
+    // The honest *before*, kept: the shares tray is derived from the recipe,
+    // so an empty notebook needs nothing and the share rows are not drawn.
+    // This is still right — an affordance for every input kind on an empty
+    // notebook would be a form with no question — and it is exactly why the
+    // road below has to exist somewhere a cold reader can find it.
     await trayTab(custodian, "Inputs");
     const inputs = (await tray(custodian).innerText()).replace(/\s+/g, " ");
     expect(
@@ -320,16 +303,50 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
       `the Inputs tray on an empty notebook: ${inputs.slice(0, 300)}`
     ).not.toContain("BLIP39 share mnemonics");
     expect(await tray(custodian).locator("textarea").count()).toBe(0);
-    // The sentence that is there instead, pinned in full: it names the *kind* of
-    // input and stops. A fix that turns "shares" into something a person can
-    // press has to come back and change this line.
     expect(inputs, `the Inputs tray on an empty notebook: ${inputs}`).toContain(
       "No cell needs runtime input yet"
     );
-    expect(inputs).toContain("add a step that reads text, ciphertext, shares");
-    expect(inputs, "the empty tray started naming the op that reads them").not.toContain(
-      "sss.combine"
-    );
+
+    // **FINDING (2a), turned over — the road exists and this drives it.** The
+    // session sheet's recovery section offers the paste path to exactly this
+    // reader: no vault, no session, no notebook, no picker to fill in. One
+    // press writes `room-recovery.js`'s one-cell paste recovery, and the share
+    // rows open because the notebook now reads `shares`. The affordance is no
+    // longer downstream of the knowledge it exists to supply — nothing in this
+    // file types a pipeline into the custodian's browser any more.
+    await trayTab(custodian, "Connections");
+    await tray(custodian).getByRole("button", { name: "Start session" }).click();
+    const sheet = custodian.locator("[data-session-sheet]");
+    await sheet.waitFor({ state: "visible", timeout: 20000 });
+    const recovery = custodian.locator("[data-room-recovery]");
+    await recovery.waitFor({ state: "visible", timeout: 20000 });
+    // The contributor picker refuses honestly — there is no deal here and no
+    // key to recover as — while the cards road stays open beside it, because
+    // the reader it serves is precisely the one the picker cannot describe.
+    expect(await recovery.locator("[data-room-recovery-issues]").count()).toBeGreaterThan(0);
+    await recovery.getByRole("button", { name: "Recover from cards instead" }).click();
+    await expect
+      .poll(async () => await recovery.locator("[data-room-recovery-note='1']").innerText(), {
+        timeout: 20000,
+      })
+      .toContain("Inputs tray");
+    await custodian.keyboard.press("Escape");
+    await sheet.waitFor({ state: "hidden", timeout: 10000 });
+
+    // The notebook is the paste recovery now — recombine, digest, and the two
+    // outs — and the tray it needs opened itself.
+    const source = await readNotebookSource(custodian);
+    expect(source, `the written recovery: ${source}`).toContain("sss.combine");
+    expect(source).toContain("blip39");
+    expect(source).toContain("out $recovered");
+    expect(source).toContain("out $secret");
+    expect(source, "the paste recovery grew a header").not.toContain("@");
+    await trayTab(custodian, "Inputs");
+    await expect
+      .poll(async () => (await tray(custodian).innerText()).includes("BLIP39 share mnemonics"), {
+        timeout: 10000,
+      })
+      .toBe(true);
   });
 
   /* ── 3. what the cold check surface can and cannot tell them ─────────────── */
@@ -420,17 +437,10 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
   /* ── 4. one share of a 2-of-3 ────────────────────────────────────────────── */
 
   it("refuses one share of two, says how many of each, and asks for a card", async () => {
-    // The recipe a custodian has to arrive at unaided. Once it is typed the tray
-    // appears — which is the shape of finding 2a: the affordance is downstream of
-    // the knowledge it exists to supply.
-    await writeCell(custodian, 0, RECOVER);
-    await trayTab(custodian, "Inputs");
-    await expect
-      .poll(async () => (await tray(custodian).innerText()).includes("BLIP39 share mnemonics"), {
-        timeout: 10000,
-      })
-      .toBe(true);
-
+    // The notebook is the one the recovery section wrote in step 2 — nothing
+    // typed, and the tray is already open. What is under test from here down
+    // is the refusals, which are the point: Shamir does not error on a bad
+    // set, it returns a different secret.
     await pasteShares(custodian, [cards[1]]);
     await custodian.getByRole("button", { name: "Run all" }).click();
     await runSettled(custodian);

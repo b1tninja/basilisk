@@ -631,9 +631,23 @@ Order of work, bug fixes first:
    the deal, and `to=each` outside a body refuses naming the state.
    `gather` follows once the published set exists to gather from, and takes
    `from=room` for the same reason.
-7. **The recover generator** — recovery written at recovery time from the
-   shares' own headers, and the deal notebook reduced to the deal. Retires the
-   dealer's return cell and the phase labels one press cannot honour.
+7. **The recover generator** — **done.** Recovery is written at recovery time
+   from the shares' own headers, and the deal notebook is reduced to the deal:
+   one `scatter to=room` cell with `- send to=each | out $share` — the `out`
+   after `send to=each` binds the value itself, the one pair that never
+   crossed a wire, decided by the body's syntax on both the compile and run
+   sides — plus one `quorum.recv | out $share-i` per holder, numbered by the
+   canonical-audience pairing. Retired: the dealer's return cell, the
+   revealable `$set`, the armed thirty-minute gather, and the phase labels one
+   press could not honour. `room-recovery.js` asks who is contributing, reads
+   threshold/count/set id off the recoverer's own share header, and writes the
+   gather/combine notebook (or the one-cell paste recovery for a cold
+   custodian); its gather takes exactly the listed contributors, never
+   `threshold - 1` of whoever arrived first. The compiler defers a *placed*
+   cell's unknown slot to the run — a recovery notebook reads slots its deal
+   bound, and the compiler holds no claim about a value another notebook
+   bound — while an unheaded cell keeps the refusal. `gather from=room` stays
+   deferred; the recovery's `quorum.recv` shape did not need it.
 
 ## What gated all of it — **met**
 

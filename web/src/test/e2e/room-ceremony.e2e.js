@@ -34,12 +34,19 @@
  * 2. **The quorum comes from the room.** A two-person room is a 2-of-2, and the
  *    panel says so before the press. A count that disagreed with the number of
  *    people is unreachable rather than refused.
- * 3. **The recovery half is in the notebook the ceremony wrote**, not found
- *    afterwards — and it recombines on the machine that never held the secret.
- *    Step 6 is the assertion the whole thing ships or does not ship on: a digest
- *    computed on the dealer's machine, of thirty-two bytes that were never
- *    written to any slot, equal to a digest computed on the holder's machine of
- *    what the holder put back together out of two mnemonics that crossed a room.
+ * 3. **The deal is the whole notebook, and the recovery is a second one,
+ *    written at recovery time.** The generated ceremony used to carry both —
+ *    return cells, an armed gather, phase labels one press could not honour —
+ *    and LANGUAGE.md's "two agreements, two notebooks" retired that shape.
+ *    Step 6 drives the recovery picker on the *holder's* machine, with the
+ *    dealer as its one named contributor: a 2-of-2 needs both shares, so this
+ *    file is where the dealer-present recovery — the dealer as an ordinary
+ *    checkbox, their own `$share` sent by an ordinary cell — runs across real
+ *    browsers. Step 6 is still the assertion the whole thing ships or does
+ *    not ship on: a digest computed on the dealer's machine, of thirty-two
+ *    bytes that were never written to any slot, equal to a digest computed on
+ *    the holder's machine of what the holder put back together out of two
+ *    mnemonics that crossed a room.
  *
  * ## What the run does at the end, and what that used to cost
  *
@@ -142,7 +149,7 @@ async function ceremonySlots(page) {
   const rows = tray(page).locator("li code");
   const out = [];
   for (const text of await rows.allInnerTexts()) {
-    const m = /^@(expected|set|share-\d+|recovered|secret)$/.exec(text.trim());
+    const m = /^@(expected|share(?:-\d+)?|recovered|secret|set)$/.exec(text.trim());
     if (m) out.push(m[1]);
   }
   return out.sort();
@@ -163,6 +170,8 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
   let ceremonySource = "";
   /** The whole notebook at the moment Share is pressed — ceremony plus session. */
   let sharedSource = "";
+  /** The recovery the holder writes for itself in step 6. */
+  let recoverySource = "";
   /** The digest of the master, off the dealer's screen. Never the master. */
   let expectedDigest = "";
 
@@ -256,7 +265,13 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // the canonical fraction, so the preview and the notebook cannot differ by
     // a respelling.
     expect(preview).toContain("sss.split 2/2");
-    expect(preview).toContain(`quorum.send ${L.holder}`);
+    // **Every destination is a derivation now.** The deal is one `scatter`
+    // cell: `to=room` is the audience in canonical order and `to=each` is the
+    // pair's member, so no constant `quorum.send <fpr>` appears — the pairing
+    // is derived on every machine and chosen by nobody.
+    expect(preview).toContain("scatter to=room");
+    expect(preview).toContain("- send to=each | out $share");
+    expect(preview).not.toContain(`quorum.send ${L.holder}`);
     expect(preview).toContain(`quorum.recv from=${L.dealer}`);
     // Whole keys in the preview too — the one place a reader checks who is
     // being handed a share before anyone is handed one.
@@ -274,43 +289,37 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     await sheet.waitFor({ state: "hidden", timeout: 10000 });
 
     ceremonySource = await readNotebookSource(dealer);
-    // Five cells: the split, one send, one receive, the dealer's return, and
-    // the recombination. Written out rather than counted from a formula, so a
-    // change in shape has to be re-derived here.
-    //
-    // **There is no "keep share 1" cell**, by choice rather than by trap now:
-    // `$set | at 1 | out $mine` would bind `$mine` today — `out` always
-    // registers its label since the `meta.shareIndex` divert was removed from
-    // `slot-registry.register` — but the dealer already holds every share
-    // inside `$set`, so a `$mine` slot would only be a second copy. (This
-    // journey is where the divert was found: the dealer's return cell failed
-    // with `in $mine: unknown slot (register earlier with out $mine)`, an
-    // error naming a remedy sitting three cells above it.)
+    // Two cells: the deal, and the holder's receive. Written out rather than
+    // counted from a formula, so a change in shape has to be re-derived here.
+    // The five-cell shape this used to assert — split, send, receive, the
+    // dealer's return, the recombination — was the deal and the recovery in
+    // one document, which is the one-press hazard the two-notebooks change
+    // retired; the recovery is generated in step 6, when it is wanted.
     const cells = ceremonySource.split(/\n\s*\n+/).map((c) => c.trim());
-    expect(cells).toHaveLength(5);
-    expect(ceremonySource, "a selected share is being written to a slot").not.toMatch(
-      /\[1\] \| out /
-    );
+    expect(cells, ceremonySource).toHaveLength(2);
     // **The headers are in the notebook and this file never typed one, and
     // never chose one from a menu either.** `placed-journey` proves the menu
     // works; this proves the generator does not need it.
     expect(cells[0].split("\n")[0]).toBe(`@${L.dealer}`);
-    expect(cells[2].split("\n")[0]).toBe(`@${L.holder}`);
-    expect(cells[4].split("\n")[0]).toBe(`@${L.holder}`);
+    expect(cells[1].split("\n")[0]).toBe(`@${L.holder}`);
     // The quorum is in the text, where two peers will digest it — `ade4043`,
     // spelled as the verb's object since migration step 2.
     expect(ceremonySource).toContain("sss.split 2/2");
     // Never `publish`: a share leaves this machine because a verb said so.
     expect(ceremonySource).not.toContain("publish");
-    // The master is in no slot. The split cell writes a digest and the share
-    // set, and nothing anywhere writes the thirty-two bytes.
+    // The master is in no slot, **and neither is the set**: `random 32` flows
+    // into `sss.split` and the shares flow through the scatter body without
+    // stopping — split, sent, gone. The deal cell's only outs are the digest
+    // and this machine's own share, which is what retired the revealable
+    // `$set` (the three-party suite's finding 4a) by construction.
     expect(cells[0]).toContain("out $expected");
-    expect(cells[0]).toContain("out $set");
+    expect(cells[0]).toContain("out $share");
+    expect(ceremonySource).not.toContain("$set");
     expect(ceremonySource).not.toContain("out $master");
-    // And the recovery half is *in* the notebook, on the machine that never
-    // held the secret — not a thing to find afterwards.
-    expect(cells[4]).toContain("sss.combine");
-    expect(cells[4]).toContain("out $secret");
+    // And no recovery anywhere in it — no gather, no armed wait, nothing below
+    // the deal for a run to walk into.
+    expect(ceremonySource).not.toContain("sss.combine");
+    expect(ceremonySource).not.toContain("wait=");
 
     // It compiles, for the person: read off the control rather than out of the
     // compiler, because "the recipe parses" and "Run all can be pressed" are two
@@ -318,9 +327,9 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     expect(
       await dealer.getByRole("button", { name: "Run all" }).getAttribute("aria-disabled")
     ).toBe(null);
-    for (let i = 0; i < 5; i++) expect(await cellErrors(dealer, i)).toBe("");
+    for (let i = 0; i < 2; i++) expect(await cellErrors(dealer, i)).toBe("");
     // Nothing has run: the press wrote a notebook, it did not perform one.
-    for (let i = 0; i < 5; i++) expect(await cellStatus(dealer, i)).toBe("idle");
+    for (let i = 0; i < 2; i++) expect(await cellStatus(dealer, i)).toBe("idle");
     expect(await ceremonySlots(dealer)).toEqual([]);
   });
 
@@ -449,46 +458,42 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // canonical text, so nothing was re-spelled on the way.
     expect(await readNotebookSource(holder)).toBe(sharedSource);
     // Arrived and untouched by any run.
-    for (let i = 0; i < 5; i++) expect(await cellStatus(holder, i)).toBe("idle");
+    for (let i = 0; i < 2; i++) expect(await cellStatus(holder, i)).toBe("idle");
     expect(await ceremonySlots(holder)).toEqual([]);
   });
 
   /* ── 4. the deal ─────────────────────────────────────────────────────────── */
 
-  it("splits, keeps one share, and sends the other — the holder's cells declined", async () => {
+  it("splits, deals the holder's share, and keeps exactly its own", async () => {
     await cell(dealer, 0).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(dealer);
 
-    // The dealer's own four cells ran and the holder's two did not. `declined`
-    // rather than `ok` is `cf56628`'s finding standing on a generated notebook:
-    // a cell the gate refused must not be drawn as a cell that ran.
-    // Read as one map rather than six assertions, so a failure names every
-    // cell's state and its complaint at once — a ceremony that stops halfway is
-    // diagnosed by what the *other* cells did, and six separate `expect`s
-    // report only the first.
+    // The dealer's one cell ran and the holder's did not. `declined` rather
+    // than `ok` is `cf56628`'s finding standing on a generated notebook: a
+    // cell the gate refused must not be drawn as a cell that ran.
     const dealerCells = {};
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 2; i++) {
       dealerCells[i] = `${await cellStatus(dealer, i)}${
         (await cellErrors(dealer, i)) ? ` — ${await cellErrors(dealer, i)}` : ""
       }`;
     }
     const why = JSON.stringify(dealerCells, null, 1);
     expect(dealerCells[0], why).toBe("ok");
-    expect(dealerCells[1], why).toBe("ok");
     expect(
-      dealerCells[2],
+      dealerCells[1],
       `the dealer performed the holder's receiving cell — ${why}`
     ).toBe("declined");
-    expect(dealerCells[3], why).toBe("ok");
-    expect(dealerCells[4], why).toBe("declined");
 
-    // What the dealer is holding: a digest, the whole share set, and their own
-    // share. **Not the secret.** The absence is the assertion — `random 32`
-    // flows into `sss.split` and is never `out`-ed, so there is no slot, no tile
-    // and no receipt entry anywhere holding the thirty-two bytes.
+    // What the dealer is holding: a digest, and **one share — its own**. Not
+    // the secret, and not the set: `random 32` flows into `sss.split` and is
+    // never `out`-ed, and the shares flow through the scatter body without
+    // stopping, so the only copies anywhere are one per member, each on its
+    // member. The three-party suite holds the full argument as finding 4a
+    // turned over; this is the same state on the smallest room.
     const held = await ceremonySlots(dealer);
-    expect(held).toEqual(["expected", "set"]);
+    expect(held).toEqual(["expected", "share"]);
     expect(held, "the master reached a slot").not.toContain("secret");
+    expect(held, "the whole set reached a slot").not.toContain("set");
     expect(held).not.toContain("recovered");
 
     expectedDigest = await reveal(dealer, 0, "expected");
@@ -500,38 +505,108 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
   /* ── 5. the holder receives, on a machine that split nothing ─────────────── */
 
   it("delivers one share to the holder", async () => {
-    await cell(holder, 2).getByRole("button", { name: "Run", exact: true }).click();
+    await cell(holder, 1).getByRole("button", { name: "Run", exact: true }).click();
     await expect
-      .poll(async () => await cellStatus(holder, 2), { timeout: 60000, intervals: [250] })
+      .poll(async () => await cellStatus(holder, 1), { timeout: 60000, intervals: [250] })
       .toBe("ok");
 
     const held = await ceremonySlots(holder);
-    // `share-2`, not `share-1`. The generator names a holder's slot for the
-    // share in it rather than for their seat: in a room of two the dealer keeps
-    // share 1 inside `$set` and the holder is dealt share 2, so `$share-1` is
-    // now a slot that correctly exists nowhere. `three-party-ceremony.e2e.js`
-    // finding 5b is the same rename seen where it mattered most — a machine
-    // dealt share 3 used to keep it in `$share-2`.
+    // `share-2`, not `share-1`. Slots are numbered by the pairing that fills
+    // them — share i to member i in canonical audience order — so the holder,
+    // second in the sorted room, was dealt share 2. The dealer's own share is
+    // the unnumbered `$share` on their machine, and `$share-1` correctly
+    // exists nowhere. `three-party-ceremony.e2e.js` finding 5b is the same
+    // rule seen where it mattered most.
     expect(held, "the share did not arrive").toContain("share-2");
-    // And nothing the dealer holds. This browser has never run `random`, has no
-    // `$set`, and could not have produced a share of this split by itself.
+    // And nothing the dealer holds. This browser has never run `random`, holds
+    // no set, and could not have produced a share of this split by itself.
     expect(held).not.toContain("set");
     expect(held).not.toContain("expected");
   });
 
   /* ── 6. and the secret comes back, on the machine that never held it ─────── */
 
-  it("recombines the dealer's secret out of shares that crossed the room", async () => {
-    // The dealer's return cell already ran in step 4 — it is cell 3, part of the
-    // same run — so both shares are in this browser's inbox or its slots by now.
-    // That ordering is deliberate and it is the one a person gets: pressing Run
-    // once on the dealer walks the deal and the return together, and `onChat`
-    // queues whatever arrives before a cell is waiting for it.
+  it("writes the recovery at recovery time and recombines away from the dealer", async () => {
     await runSettled(holder);
-    await cell(holder, 4).getByRole("button", { name: "Run", exact: true }).click();
+
+    // **The recovery picker, on the holder — the machine that never held the
+    // secret.** A 2-of-2 needs both shares, so the one contributor to name is
+    // the dealer: not a special case, a checkbox, whose generated cell reads
+    // the unnumbered `$share` their own deal bound. This is the
+    // dealer-present recovery, driven the same way the dealer-absent suite
+    // drives the other one.
+    await trayTab(holder, "Connections");
+    await tray(holder).getByRole("button", { name: "Session", exact: true }).click();
+    const sheet = holder.locator("[data-session-sheet]");
+    await sheet.waitFor({ state: "visible", timeout: 20000 });
+    const recovery = holder.locator("[data-room-recovery]");
+    await recovery.waitFor({ state: "visible", timeout: 20000 });
+
+    // Everything but "who" is read off the share this machine holds.
+    const facts = await recovery.locator("[data-room-recovery-facts]").innerText();
+    expect(facts, `the recovery facts: ${facts}`).toContain("share 2 of 2");
+    expect(facts).toContain("any 2 recombine");
+
+    await recovery
+      .locator(`input[aria-label="Add ${L.dealer} as a contributor"]`)
+      .check();
     await expect
-      .poll(async () => await cellStatus(holder, 4), { timeout: 120000, intervals: [250] })
+      .poll(async () => await recovery.locator("[data-room-recovery-issues]").count(), {
+        timeout: 10000,
+      })
+      .toBe(0);
+    await recovery.getByRole("button", { name: /^Write the 2-of-2 recovery$/ }).click();
+    await expect
+      .poll(async () => await recovery.locator("[data-room-recovery-note='1']").innerText(), {
+        timeout: 20000,
+      })
+      .toContain("2-of-2 recovery");
+    await holder.keyboard.press("Escape");
+    await sheet.waitFor({ state: "hidden", timeout: 10000 });
+
+    recoverySource = await readNotebookSource(holder);
+    const rcells = recoverySource.split(/\n\s*\n+/).map((c) => c.trim());
+    expect(rcells, recoverySource).toHaveLength(2);
+    expect(rcells[0].split("\n")[0]).toBe(`@${L.dealer}`);
+    expect(rcells[0]).toContain("$share |");
+    expect(rcells[1].split("\n")[0]).toBe(`@${L.holder}`);
+    expect(rcells[1]).toContain(`quorum.recv from=${L.dealer}`);
+    expect(rcells[1]).toContain("shares with=$share-2");
+
+    // The agreement crosses like any notebook — and the dealer, who has run
+    // work to lose, is asked before their deal is replaced by it.
+    await trayTab(holder, "Connections");
+    await tray(holder).getByRole("button", { name: "Share this notebook" }).click();
+    await expect
+      .poll(async () => await holder.locator("[data-notebook-share-note]").innerText(), {
+        timeout: 30000,
+      })
+      .toMatch(/signed and shared with 1 peer\b/);
+    // The proposal is offered where sharing lives — the Connections tray — so
+    // the dealer's is opened to read it, exactly as a person would.
+    await trayTab(dealer, "Connections");
+    const adopt = dealer.getByRole("button", { name: "Adopt their notebook" });
+    await adopt.waitFor({ state: "visible", timeout: 60000 });
+    await adopt.click();
+    await expect
+      .poll(async () => await readNotebookSource(dealer), { timeout: 30000 })
+      .toBe(recoverySource);
+    // Adopting replaced the notebook, not the machine's values: the dealer's
+    // own share is still in `$share`, which is what the send cell reads.
+    expect(await ceremonySlots(dealer)).toEqual(["expected", "share"]);
+
+    // The dealer agrees by pressing: their send cell, then the holder's gather.
+    await cell(dealer, 0).getByRole("button", { name: "Run", exact: true }).click();
+    await expect
+      .poll(async () => await cellStatus(dealer, 0), { timeout: 120000, intervals: [250] })
       .toBe("ok");
+    await runSettled(dealer);
+
+    await cell(holder, 1).getByRole("button", { name: "Run", exact: true }).click();
+    await expect
+      .poll(async () => await cellStatus(holder, 1), { timeout: 120000, intervals: [250] })
+      .toBe("ok");
+    await runSettled(holder);
 
     const held = await ceremonySlots(holder);
     expect(held).toContain("secret");
@@ -543,41 +618,36 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // what this machine put back together out of two mnemonics that crossed the
     // room. Compared through the screen on both ends, so neither number is one
     // this file worked out.
-    const recovered = await reveal(holder, 4, "recovered");
+    const recovered = await reveal(holder, 1, "recovered");
     expect(recovered, "the holder recombined into something else").toBe(expectedDigest);
 
     // And the secret itself is here, revealable, on the machine that is meant
     // to end up with it. Without this the digest match would only prove the
     // shares agree about a value nobody can spend.
-    const secret = await reveal(holder, 4, "secret");
+    const secret = await reveal(holder, 1, "secret");
     expect(secret).toMatch(/^[0-9a-f]{64}$/);
     expect(secret).not.toBe(recovered);
     // Never on the dealer. Recovery happens away from the machine that made the
     // secret, which is the property that makes the split worth anything: the
     // secret survives the dealer.
     expect(await ceremonySlots(dealer)).not.toContain("secret");
-  });
+  }, 300_000);
 
   /* ── 7. the notebook is the ceremony, and the run reaches its end ────────── */
 
-  it("holds only the ceremony, all of which ran, and one live exchange", async () => {
-    // **This step used to assert an error.** `startSession` appended, a run
-    // walks to the end, so the dealer's run in step 4 reached `quorum.offer`
-    // for a room that was already open and cell 6 finished in `error` — pinned
-    // here as a wart of "Start appends" meeting "Run walks to the end". Start
-    // writes no cells now, and the property that replaced the wart is the one
-    // the reader wanted: the notebook is five cells, they are the ceremony's
-    // five, and the run that walked to the end of it walked into nothing else.
-    const source = await readNotebookSource(dealer);
-    expect(source).toBe(ceremonySource);
-    expect(source.split(/\n\s*\n+/)).toHaveLength(5);
-    expect(await dealer.locator("article").count()).toBe(5);
-    // Every cell of it settled — `ok` on this machine's, `declined` on the
-    // holder's — and none of them in `error`. Read as a map so a failure names
-    // every cell at once.
-    const settled = {};
-    for (let i = 0; i < 5; i++) settled[i] = await cellStatus(dealer, i);
-    expect(Object.values(settled), JSON.stringify(settled)).not.toContain("error");
+  it("holds the recovery both machines agreed to, and one live exchange", async () => {
+    // Both machines end on the recovery notebook — the dealer because they
+    // adopted it, by a press, with their deal replaced only after they were
+    // asked. Two agreements existed; the second is the one both parties to it
+    // are holding, and every cell of it settled without an error.
+    for (const page of [dealer, holder]) {
+      const source = await readNotebookSource(page);
+      expect(source).toBe(recoverySource);
+      expect(await page.locator("article").count()).toBe(2);
+      const settled = {};
+      for (let i = 0; i < 2; i++) settled[i] = await cellStatus(page, i);
+      expect(Object.values(settled), JSON.stringify(settled)).not.toContain("error");
+    }
 
     // The refusal itself is not weakened and has not moved: `execQuorumOpen`
     // still declines a second exchange, and `quorum-lifecycle.test.js` is where

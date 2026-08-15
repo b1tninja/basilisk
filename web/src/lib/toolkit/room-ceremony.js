@@ -4,40 +4,52 @@
  * `ceremony.js` beside this file is the *solo* ceremony: one machine splits, one
  * machine verifies, one machine prints cards, and `@peer` appears in it zero
  * times. This is the other one — the secret is dealt to the people who are in
- * the room, over the room, and it is put back together on a machine that never
- * held it.
+ * the room, over the room.
  *
- * ## Why this is a generator and not a preset
+ * ## This notebook is the deal and nothing else
  *
- * Because the cell count depends on who is in the room, and nothing in the
- * language can vary a recipient per iteration. `foreach` declares `params: []`,
- * so there is no `to=` for it to change between rounds; `tee`'s `-` lines
- * concatenate a stem rather than branching to different addressees. So one send
- * cell per holder and one receive cell per holder is not a stylistic choice, it
- * is the only shape that exists — and a template that is a fixed string cannot
- * have a variable number of cells in it.
+ * It used to also contain the recovery — return cells for every holder, the
+ * dealer's own return, a gather armed with a thirty-minute wait — and the
+ * dealer-absent e2e proved what that costs: `runFrom(i)` walks to the end of
+ * the document, the dealer's return cell sat below the split, so the one press
+ * that dealt the secret also gave the dealer's share back, and every later
+ * recovery silently preferred it. The picker's phase labels ("Dealing — run
+ * once, together" / "Recovering — run when the secret is wanted back") were
+ * doctrine with no mechanism: nothing in the product can run one phase.
  *
- * That is also what dissolves the chicken-and-egg the product owner reported.
- * A `@peer` header addresses a whole fingerprint, and `to=`/`from=` carry whole
- * fingerprints too, so the notebook cannot be written until the room is known.
- * The order is therefore: **choose the audience, and the notebook falls out of
- * it.** Nothing here is authored against a placeholder that is resolved later —
- * see `ROOM_CEREMONY_PLACEHOLDERS` for why a placeholder could not have worked.
+ * A deal and its reversal are made at different times, by different sets of
+ * people — the recoverer's whole premise is that the dealer may be gone — under
+ * different threat models. **They are two agreements, so they are two
+ * notebooks.** This module writes the deal; `room-recovery.js` beside it writes
+ * the recovery, at recovery time, from the shares' own BLIP39 headers. There is
+ * nothing below the deal for a run to walk into, so the phases this module used
+ * to label do not exist to be mislabelled.
+ *
+ * ## Why this is still a generator and not a preset
+ *
+ * Because the receive-cell count depends on who is in the room, and a `@peer`
+ * header addresses a whole fingerprint — so the notebook cannot be written
+ * until the room is known. The order is therefore: **choose the audience, and
+ * the notebook falls out of it.** Nothing here is authored against a
+ * placeholder that is resolved later — see `ROOM_CEREMONY_PLACEHOLDERS` for
+ * why a placeholder could not have worked.
  *
  * ## What the room decides
  *
  * - **`shares` is the room size.** One share per member, so a count that
  *   disagrees with the number of people is unreachable by construction rather
- *   than refused after the fact.
+ *   than refused after the fact — and it is the count `scatter to=room` will
+ *   verify against the live exchange before anything moves.
  * - **`threshold` is a majority**, `floor(shares / 2) + 1`. Majority rather than
  *   any smaller fraction because any two qualifying sets then intersect: with
  *   `2/4`, two disjoint pairs could each rebuild the secret without the other
  *   knowing it had happened, and no record anywhere would show two recoveries.
  *   A majority makes that arithmetically impossible.
- * - **Who recombines is the first holder**, not the dealer. The dealer already
- *   saw the secret, so a dealer who recovers it demonstrates nothing; a holder
- *   recovering it from shares that crossed the room demonstrates that the
- *   secret outlives the machine that made it.
+ * - **Who holds which share is the canonical audience order.** `scatter` deals
+ *   share i to member i in `canonicalAudience`'s order — sorted, deduped,
+ *   derived on every machine and chosen by nobody — so the receive slots here
+ *   are numbered by that same derivation, through the same function. A second
+ *   opinion about the order would be the one divergence nothing could report.
  *
  * ## What it is, said plainly
  *
@@ -52,6 +64,7 @@
  * @module lib/toolkit/room-ceremony
  */
 
+import { canonicalAudience } from "../notebook/room.js";
 import { canonicalizeRecipe, parseRecipe, serializeRecipe } from "./recipe.js";
 
 /**
@@ -70,15 +83,6 @@ export const MAX_ROOM = 16;
 export const MIN_ROOM = 2;
 
 /**
- * How long the recovery gather waits, in milliseconds.
- *
- * Exported so the picker's prose and the recipe's `wait=` are one number, and
- * so a test can pin it without reading it out of a generated string. Thirty
- * minutes: see the gather cell below for the argument.
- */
-export const RECOVERY_WAIT_MS = 1_800_000;
-
-/**
  * The sentence that corrects the assumption a reader arrives with.
  *
  * Exported rather than inlined in the widget because it is a claim about what
@@ -94,12 +98,37 @@ export const DEALER_BASED =
  * `random 32` flows straight into `sss.split`; the only thing written down is a
  * SHA-256 of it, on a `tee` branch. So the secret is in no slot, in no output
  * tile, in no receipt, and in nothing the Slots tray can be asked to reveal.
- * The digest is what makes the recovery checkable without ever showing it again
- * — which is `ceremony.js`'s decision 1 and 2, applied here for the same
- * reasons.
+ * The digest is what makes a recovery checkable without ever showing the
+ * secret again — which is `ceremony.js`'s decision 1 and 2, applied here for
+ * the same reasons.
  */
 export const MASTER_NEVER_OUT =
-  "The secret itself is never written to a slot — only a SHA-256 of it, so there is something to check the recovery against without putting the secret on screen a second time. It is in no output tile, no receipt and no Slots row, on any machine.";
+  "The secret itself is never written to a slot — only a SHA-256 of it, so there is something to check a recovery against without putting the secret on screen a second time. It is in no output tile, no receipt and no Slots row, on any machine.";
+
+/**
+ * What the deal leaves on the dealer's machine, stated because the old shape
+ * left the opposite.
+ *
+ * The generated notebook used to bind every share into a revealable `$set` on
+ * the dealer, with nothing on any screen saying to delete it — a 2-of-3 that
+ * was a 1-of-1 until somebody remembered. Under `scatter` the shares flow from
+ * the split straight onto the wire: the hazard is not warned about, it is
+ * unconstructable, and this sentence is the picker's record of that property.
+ */
+export const DEALER_KEEPS_ONE =
+  "Dealing leaves this machine holding exactly one share — its own, in $share. The others go straight from the split onto the wire, each to its member, so there is no set of shares anywhere to reveal or to forget to delete.";
+
+/**
+ * Why this notebook contains no recovery, said where the deal is offered.
+ *
+ * The claim that makes it safe to say is the BLIP39 header: threshold, share
+ * count and set id ride in every mnemonic, so a recovery can be written years
+ * later, by whoever is recovering, from the shares themselves — the dealer,
+ * this notebook, and this machine can all be gone. `room-recovery.js` is the
+ * generator that does it.
+ */
+export const RECOVERY_IS_ITS_OWN_NOTEBOOK =
+  "This notebook is the deal and nothing else. Getting the secret back is a separate agreement made at a different time by whichever holders are doing it — each share carries the threshold, the count and the set id in its own header, so the recovering quorum writes its own recovery notebook when the day comes, dealer present or not.";
 
 /**
  * What two people get, said before they press rather than discovered later.
@@ -119,11 +148,11 @@ export const NO_REDUNDANCY_AT_TWO =
  * them for fingerprints when the audience is chosen. It cannot work, and the
  * reason is worth writing down so nobody tries it again: a peer is named in two
  * different grammatical positions here. `@peer` in the header is a header, and
- * `setCellPeer` rewrites those — but `quorum.send to=` and `quorum.recv from=`
- * are *step parameters*, and there is no mutator anywhere that edits one. Worse,
- * `to=@holder1` does not parse at all: `@` is not a legal character in a param
- * value, so a notebook full of placeholders would not compile while it waited to
- * be resolved, and every cell would be drawing a compile error at the reader.
+ * `setCellPeer` rewrites those — but `quorum.recv from=` is a *step parameter*,
+ * and there is no mutator anywhere that edits one. Worse, `from=@holder1` does
+ * not parse at all: `@` is not a legal character in a param value, so a
+ * notebook full of placeholders would not compile while it waited to be
+ * resolved, and every cell would be drawing a compile error at the reader.
  *
  * So the audience comes first and the whole notebook is generated from it. The
  * placeholders below exist only in prose, where they are a way of describing the
@@ -159,7 +188,7 @@ export function ceremonyQuorum(size) {
 export function roomCeremonyIssues({ audience = [], self = "" } = {}) {
   /** @type {string[]} */
   const issues = [];
-  const room = canonicalMembers(audience);
+  const room = canonicalAudience(audience);
   const me = String(self || "").toUpperCase();
   if (!me) {
     issues.push(
@@ -191,31 +220,9 @@ export function roomCeremonyIssues({ audience = [], self = "" } = {}) {
 }
 
 /**
- * The audience as the room reads it: upper case, de-duplicated, order kept.
- *
- * Order is kept rather than sorted because it is the order the reader built the
- * list in, and share 2 goes to whoever is second on the panel they are looking
- * at. `deriveRoomMaterial` sorts for its own purposes; nothing here depends on
- * that and this is deliberately not a second opinion about it.
- *
- * @param {string[]} audience
- * @returns {string[]}
- */
-function canonicalMembers(audience) {
-  /** @type {string[]} */
-  const out = [];
-  for (const raw of audience || []) {
-    const hex = String(raw || "").toUpperCase().replace(/\s+/g, "");
-    if (hex && !out.includes(hex)) out.push(hex);
-  }
-  return out;
-}
-
-/**
  * @typedef {object} CeremonyCell
  * @property {string} peer    whole fingerprint this cell is placed on
  * @property {string} recipe  the pipeline, with no header on it
- * @property {"deal"|"recover"} phase
  * @property {string} why     one line, for the preview — what this cell is for
  */
 
@@ -227,12 +234,11 @@ function canonicalMembers(audience) {
  * @property {number} shares
  * @property {number} threshold
  * @property {string} dealer      whole fingerprint of the machine that splits
- * @property {string} recoverer   whole fingerprint of the machine that recombines
  * @property {string[]} issues    empty when `cells` is worth anything
  */
 
 /**
- * Write the ceremony for this room.
+ * Write the deal for this room.
  *
  * Returns cells with their peer beside them rather than a block of text with
  * headers in it, because the caller writes those headers through
@@ -249,7 +255,10 @@ function canonicalMembers(audience) {
  */
 export function roomCeremony({ audience = [], self = "" } = {}) {
   const issues = roomCeremonyIssues({ audience, self });
-  const members = canonicalMembers(audience);
+  // The same derivation the engine's `scatter` reads off the live exchange —
+  // one function, so the slot numbers written here and the pairing performed
+  // there cannot be two opinions.
+  const members = canonicalAudience(audience);
   const me = String(self || "").toUpperCase();
   const { shares, threshold } = ceremonyQuorum(members.length);
   if (issues.length) {
@@ -260,142 +269,62 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
       shares,
       threshold,
       dealer: me,
-      recoverer: "",
       issues,
     };
   }
 
-  // You are the dealer, and the rest of the room are holders in the order the
-  // reader put them in. `holders[0]` is the one who will recombine.
-  const holders = members.filter((m) => m !== me);
-  const recoverer = holders[0];
-  // Which share the recoverer is holding, by the same arithmetic that deals
-  // them: the dealer keeps share 1, so the holder at position `i` gets `i + 2`.
-  // Derived rather than written as `2` so that a change to which holder
-  // recombines moves the gather's `with=` with it.
-  const recovererShare = holders.indexOf(recoverer) + 2;
-
   /** @type {CeremonyCell[]} */
   const cells = [];
 
-  /* ── dealing ────────────────────────────────────────────────────────────── */
-
-  // The `tee` branch is the whole reason the ceremony can be checked. `random
-  // 32` never reaches an `out`, so the master is in no slot on any machine —
-  // but a plain Shamir recombination of a corrupted set returns a *different*
+  // The whole deal, in one cell. `scatter to=room` zips the split against the
+  // canonical audience and its body runs once per (share, member) pair:
+  // `send to=each` delivers each pair's share to that pair's member over the
+  // room's own channel, and the one pair whose member is this machine never
+  // touches a wire — a dealer deals to the whole table, themselves included.
+  // `out $share` after the send binds that one retained share, and only it:
+  // a delivered pair's pipe ends at the verb that delivered it, so exactly
+  // one value reaches the `out`. There is deliberately no `$set` — the old
+  // notebook's highest-ranked finding was the dealer keeping every share in a
+  // revealable slot with nothing saying to delete it, and under this form
+  // that state is unconstructable rather than warned about.
+  //
+  // The `tee` branch is what makes a recovery checkable. `random 32` never
+  // reaches an `out`, so the master is in no slot on any machine — but a
+  // plain Shamir recombination of a corrupted set returns a *different*
   // secret rather than an error, so without something to compare against, a
-  // recovery that quietly produced the wrong bytes would look exactly like a
-  // recovery that worked. The digest is that something, and it discloses
-  // nothing: it is a SHA-256 of thirty-two random bytes.
+  // recovery that quietly produced the wrong bytes would look exactly like
+  // one that worked. The digest is that something, and it discloses nothing:
+  // it is a SHA-256 of thirty-two random bytes.
   cells.push({
     peer: me,
-    phase: "deal",
-    why: "Draws the secret, splits it, and writes down a digest of it — never the secret.",
+    why: `Draws the secret, splits it ${threshold}-of-${shares}, and deals share i to member i over the room — writing down a digest of the secret, never the secret, and keeping only this machine's own share in $share.`,
     recipe: [
       "random 32 | tee",
-      "  - digest | encode hex | out $expected",
+      "  - digest sha-256 | encode hex | out $expected",
       // The quorum as the verb's object — the canonical spelling, so the text
       // this generator writes is the text `serializeRecipe` would write back
       // and the preview cannot differ from the notebook by a respelling.
-      `| sss.split ${threshold}/${shares} | blip39 | out $set`,
+      `| sss.split ${threshold}/${shares} | blip39.encode | scatter to=room`,
+      "  - send to=each | out $share",
     ].join("\n"),
   });
 
-  // **There is no `$set | at 1 | out $mine` cell, and the reason is a copy.**
-  // The cell would work — `out` binds its label whatever the value carries,
-  // since the registry stopped diverting on `meta.shareIndex` — but the dealer
-  // already holds every share inside `$set`, so `$mine` would be a second copy
-  // of share 1 on the one machine that needs no reminder of it, and a second
-  // slot to wipe when the set should go. (Historically the cell also *could
-  // not* work: the registry diverted any share-stamped value away from the
-  // label map, which is how a two-browser run found `in $mine: unknown slot`
-  // three cells below an `out $mine` that reported ok.) So share 1 stays
-  // inside `$set`, and the cell that hands it back selects it again at that
-  // moment.
-
-  // One send per holder, addressed by whole fingerprint. Never `publish`: a
-  // value leaves this machine because a verb said so, and a header that also
-  // disclosed it would be a second road out of the same cell.
-  holders.forEach((h, i) => {
+  // One receive per holder, numbered by the share the pairing will hand them:
+  // the member at canonical position i is dealt share i, so the slot is
+  // `$share-i` — a person comparing a slot against a printed card that says
+  // "share 3 of 3" sees the same number in both places. Each holder writes
+  // their own slot because the compiler reads the whole notebook: two cells
+  // placed on two machines still live in one document, and `out $share`
+  // twice would be `Duplicate out slot $share`. The dealer's own number never
+  // appears — their share stays in the unnumbered `$share` the deal cell
+  // binds, which is honest: it is the one share that was never received.
+  members.forEach((m, i) => {
+    if (m === me) return;
     cells.push({
-      peer: me,
-      phase: "deal",
-      why: `Hands share ${i + 2} to one holder, over the room's own channel.`,
-      recipe: `$set | at ${i + 2} | quorum.send to=${h}`,
+      peer: m,
+      why: `Receives share ${i + 1}, on the holder's own machine, into a slot named for it.`,
+      recipe: `quorum.recv from=${me} | out $share-${i + 1}`,
     });
-  });
-
-  // One receive per holder. Each writes its own slot: `out $share` twice would
-  // be `Duplicate out slot $share`, because the compiler reads the whole
-  // notebook rather than the part that runs here — the two holders' cells are
-  // in one document even though they never run on one machine.
-  //
-  // **The slot is numbered by the share, not by the holder.** It used to be
-  // `$share-${i + 1}`, one below the `at ${i + 2}` that selected the share
-  // being sent — so the machine dealt share 3 kept it in `$share-2`, and a
-  // person comparing a slot against a printed card that says "share 3 of 3"
-  // had no way to tell whether they had been dealt the wrong one. There is
-  // deliberately no `$share-1` anywhere in the notebook, and that is now
-  // honest rather than an off-by-one: share 1 is the dealer's and stays inside
-  // `$set`, for the `slotsByIndex` reason written above.
-  holders.forEach((h, i) => {
-    cells.push({
-      peer: h,
-      phase: "deal",
-      why: `Receives share ${i + 2}, on the holder's own machine, into a slot named for it.`,
-      recipe: `quorum.recv from=${me} | out $share-${i + 2}`,
-    });
-  });
-
-  /* ── recovering ─────────────────────────────────────────────────────────── */
-
-  // Everybody except the recoverer offers their share back. Running these is
-  // what "a majority agreed" looks like as a sequence of presses: whoever does
-  // not run theirs simply does not count toward the threshold, and the gather
-  // below takes the first `threshold - 1` that arrive.
-  cells.push({
-    peer: me,
-    phase: "recover",
-    why: "Returns your own share — share 1, selected out of the set again.",
-    recipe: `$set | at 1 | quorum.send to=${recoverer}`,
-  });
-  holders.slice(1).forEach((h, i) => {
-    cells.push({
-      peer: h,
-      phase: "recover",
-      why: `Returns share ${i + 3} when a recovery is called for.`,
-      recipe: `$share-${i + 3} | quorum.send to=${recoverer}`,
-    });
-  });
-
-  // The gather, on a machine that never held the secret. `count=` is one short
-  // of the threshold because the recoverer's own share makes up the difference,
-  // and `from=` is deliberately absent: any majority may rebuild it, so the cell
-  // must not name which holders those are. `shares` is the collector `dc5d7cb`
-  // added for exactly this — it reads the pipe and the slot `with=` names, so a
-  // holder recombines what reached them without being sent to a paste tray for
-  // values they are already holding.
-  //
-  // **`wait=` is written out, and it is written long.** `quorum.recv`'s
-  // registry default is 120000 ms, which is the right default for a step
-  // somebody is watching — and this is the one cell in the notebook that is
-  // pressed at a different time from every other. The picker says so itself:
-  // "Recovering — run when the secret is wanted back". Two minutes is a
-  // network timeout; what happens here is that a person telephones another
-  // custodian, who walks to a machine, opens a notebook and finds a cell. The
-  // failure that follows a 120 s wait tells the reader to "give it a longer
-  // `wait=`" — an edit to a generated recipe, in a notebook whose other
-  // copies then no longer match it, made by the one person who cannot fix the
-  // problem from their own screen. Half an hour is the length of the act.
-  cells.push({
-    peer: recoverer,
-    phase: "recover",
-    why: `Recombines ${threshold} shares back into the secret, and digests it so it can be checked against the dealer's. Waits up to ${RECOVERY_WAIT_MS / 60000} minutes for the ${threshold - 1 === 1 ? "other custodian" : "other custodians"} to run their cell.`,
-    recipe: [
-      `quorum.recv count=${threshold - 1} wait=${RECOVERY_WAIT_MS} | shares with=$share-${recovererShare} | blip39 -d | sss.combine | tee`,
-      "  - digest | encode hex | out $recovered",
-      "| encode hex | out $secret",
-    ].join("\n"),
   });
 
   return {
@@ -405,7 +334,6 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
     shares,
     threshold,
     dealer: me,
-    recoverer,
     issues: [],
   };
 }
@@ -463,6 +391,8 @@ export function roomCeremonySummary(ceremony) {
     // number without the reason will try to lower it.
     `${threshold} is a majority of ${shares}, so no two separate groups can ever rebuild it independently — any two groups of ${threshold} share at least one person.`,
     MASTER_NEVER_OUT,
+    DEALER_KEEPS_ONE,
+    RECOVERY_IS_ITS_OWN_NOTEBOOK,
     DEALER_BASED,
   ];
   if (shares === 2) lines.push(NO_REDUNDANCY_AT_TWO);
@@ -474,9 +404,9 @@ export function roomCeremonySummary(ceremony) {
  *
  * Only used by tests and by anything comparing this module's output with a live
  * notebook's Source view. `loadRecipeText` compiles what it is given and the
- * editor re-serializes, so `at 1` is drawn back as `[1]` and `blip39` as
- * `blip39.encode`; a comparison against the text this module composed would be
- * comparing two spellings of one recipe.
+ * editor re-serializes, so `blip39` is drawn back as `blip39.encode`; a
+ * comparison against the text this module composed would be comparing two
+ * spellings of one recipe.
  *
  * @param {string} text
  * @returns {string}

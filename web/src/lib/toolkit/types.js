@@ -24,6 +24,10 @@ import { BASE_ENCODINGS as BASE_ENCODING_LIST } from "./step-names.js";
  * @property {string} [encoding]
  * @property {"v4"|"v6"|"name"} [family]  `host` address family
  * @property {"udp"|"tcp"} [protocol]  `endpoint`/`candidate` transport
+ * @property {boolean} [deferred]  a value another notebook bound: a placed
+ *   cell read a slot this document never writes, so the compiler holds no
+ *   claim about it — every check that sees the flag stays silent and the
+ *   run's own resolver is the check (see `validateRecipe`)
  */
 
 /**

@@ -172,15 +172,17 @@ export type SessionStartProps = {
     /** The notebook as `serializeRecipe` will hold it, headers and all. */
     text: string;
     /**
-     * One line per cell, in cell order, with the phase it belongs to.
+     * One line per cell, in cell order.
      *
      * The recipe below it is the truth and this is the reading of it, and both
-     * are needed: eleven cells of forty-character fingerprints is not a thing a
-     * person can scan for "which of these run now and which run when I want the
-     * secret back" — which is the half of the product owner's report that is
-     * about *running* the ceremony rather than composing it.
+     * are needed: a column of forty-character fingerprints is not a thing a
+     * person can scan for "who does what". There is no phase on a cell any
+     * more — the deal notebook is the deal and nothing else, one occasion,
+     * and the labels that named a second one ("Recovering — run when the
+     * secret is wanted back") were doctrine no control could honour. Recovery
+     * is its own notebook now, written at recovery time (`RoomRecovery`).
      */
-    cells: { phase: "deal" | "recover"; why: string }[];
+    cells: { why: string }[];
     threshold: number;
     shares: number;
     onWrite: () => void;
@@ -846,45 +848,31 @@ export function SessionStart({
               </button>
               {showCeremony ? (
                 <>
-                  {/* The two phases, named and counted, before the recipe. A
-                      ceremony that could only be understood by reading eleven
-                      pipelines is the complaint this whole feature answers, and
-                      the ordering — deal now, recover when you need it — is the
-                      part of it that is about running rather than composing.
+                  {/* One reading per cell, before the recipe. The phase
+                      headings that used to split this list ("Dealing — run
+                      once, together" / "Recovering — run when the secret is
+                      wanted back") are retired with the phases themselves:
+                      the notebook is the deal and nothing else, one occasion,
+                      and a heading naming a second one was doctrine no
+                      control could honour (the dealer-absent e2e's finding
+                      1a/5a). Recovery has its own section and its own
+                      notebook now.
 
                       Numbered from **zero**, because that is what the badge on
                       the cell says. The notebook draws `[0]` on its first cell,
                       so a list numbered from one would be a reading of the
                       notebook that disagreed with the notebook by one row all
                       the way down — worse than no numbers at all. */}
-                  {(["deal", "recover"] as const).map((phase) => {
-                    const rows = ceremony.cells
-                      .map((c, i) => ({ ...c, at: i }))
-                      .filter((c) => c.phase === phase);
-                    if (!rows.length) return null;
-                    return (
-                      <div key={phase} className="flex flex-col gap-0.5">
-                        <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
-                          {phase === "deal"
-                            ? `Dealing — ${rows.length} cells, run once, together`
-                            : `Recovering — ${rows.length} cells, run when the secret is wanted back`}
-                        </span>
-                        <ol
-                          className="flex list-none flex-col gap-0.5 p-0"
-                          data-room-ceremony-phase={phase}
-                        >
-                          {rows.map((c) => (
-                            <li
-                              key={c.at}
-                              className="text-[10px] leading-snug text-[var(--muted-foreground)]"
-                            >
-                              <span className="font-mono">[{c.at}]</span> {c.why}
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    );
-                  })}
+                  <ol className="flex list-none flex-col gap-0.5 p-0">
+                    {ceremony.cells.map((c, i) => (
+                      <li
+                        key={i}
+                        className="text-[10px] leading-snug text-[var(--muted-foreground)]"
+                      >
+                        <span className="font-mono">[{i}]</span> {c.why}
+                      </li>
+                    ))}
+                  </ol>
                   <pre
                     className="overflow-x-auto rounded-[6px] border border-[var(--border)] bg-[var(--surface)] p-2 font-mono text-[10px] text-[var(--muted-foreground)]"
                     data-room-ceremony-recipe

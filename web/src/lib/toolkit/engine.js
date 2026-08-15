@@ -463,12 +463,25 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
      * A factory because two loops iterate a body — `foreach` over one list
      * and `scatter` over a zip of two — and the slot semantics of a body
      * `out` must be one rule, not one per loop.
+     *
+     * The one carve-out is stated in the text, not inferred from a count: an
+     * `out` written after `send to=each` binds the **value itself**, because
+     * that spelling retains exactly one pair's payload — the pair whose
+     * member is this machine, named once by the deduped canonical audience.
+     * A bundle-of-one there would make the dealer's own share a different
+     * shape from every holder's, for no reason a reader could see in the
+     * text. `singleOuts` is the set of `out` steps in that position, decided
+     * by the body's syntax before any pair runs — the compile side
+     * (`validateBodySteps`) types the slot by the same rule.
      * @param {string} loopKind  `foreach-out` (scatter reuses it: what a slot
      *   holds is "a per-iteration bundle", not which verb looped)
+     * @param {Set<import("./recipe.js").RecipeStep>} [singleOuts]
      */
-    const makeBodyOutCollector = (loopKind) => {
+    const makeBodyOutCollector = (loopKind, singleOuts) => {
       /** @type {Map<string, PipelineValue[]>} */
       const bodyOuts = new Map();
+      /** @type {Set<string>} */
+      const singleNames = new Set();
       return {
         /**
          * @param {import("./recipe.js").RecipeStep} step
@@ -477,6 +490,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
         note(step, itemVal) {
           if (step.name !== "out" || !itemVal) return;
           const nameRef = String(step.params?.name || DEFAULT_OUT_SLOT);
+          if (singleOuts?.has(step)) singleNames.add(nameRef);
           registry.registerIndexed?.(itemVal);
           const list = bodyOuts.get(nameRef);
           if (list) list.push(clonePipelineValue(itemVal));
@@ -484,6 +498,23 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
         },
         bind() {
           for (const [nameRef, parts] of bodyOuts) {
+            if (singleNames.has(nameRef)) {
+              if (parts.length !== 1) {
+                // Unreachable through any room this product opens — the
+                // audience always names this machine — but if a session ever
+                // scatters into a room it is not part of, the honest report
+                // is that no pair stayed, not a slot quietly holding a shape
+                // the text does not describe.
+                throw new Error(
+                  `out $${nameRef.replace(/^\$/, "")} after send to=each: ` +
+                    `${parts.length} pairs stayed on this machine, and ` +
+                    "exactly one — this machine's own — can. Is this " +
+                    "session's key in the room it scattered into?"
+                );
+              }
+              registerSlot(nameRef, parts[0], preexisting);
+              continue;
+            }
             registerSlot(
               nameRef,
               {
@@ -592,7 +623,27 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
         );
       }
 
-      const outs = makeBodyOutCollector("foreach-out");
+      // Which body `out`s bind once rather than as a bundle: the ones the
+      // text places after a `send to=each`. Decided from the body's syntax
+      // before any pair runs, the same way the compile side types the slot —
+      // a runtime count deciding a slot's shape would be the determinism
+      // rule broken where nobody could see it.
+      /** @type {Set<import("./recipe.js").RecipeStep>} */
+      const singleOuts = new Set();
+      {
+        let sentEach = false;
+        for (const step of node.body) {
+          if (
+            step.name === "send" &&
+            String(step.params?.to ?? "each").trim().toLowerCase() === "each"
+          ) {
+            sentEach = true;
+          } else if (sentEach && step.name === "out") {
+            singleOuts.add(step);
+          }
+        }
+      }
+      const outs = makeBodyOutCollector("foreach-out", singleOuts);
       /** @type {PipelineValue[]} */
       const parts = [];
       for (let i = 0; i < payloads.length; i++) {
@@ -619,6 +670,9 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
             artifacts[ai].stepName = step.name;
           }
           outs.note(step, itemVal);
+          // A delivered pair's pipe ends at the verb that delivered it —
+          // `send`'s tip is what stays, and for that pair nothing does.
+          if (itemVal == null) break;
         }
         if (itemVal) parts.push(itemVal);
       }
@@ -2682,11 +2736,18 @@ async function execStepBody(step, value, bindings, artifacts) {
       );
     }
     case "send": {
-      // `quorum.send` addressed by the pair. The pair whose member is this
-      // machine never reaches a wire: a dealer deals to the whole table,
-      // themselves included, and "mine" is the one that never crossed one —
-      // the payload simply passes through, exactly what the tip records for
-      // every other pair (execQuorumSend passes its value through too).
+      // `quorum.send` addressed by the pair — and **the tip is what this
+      // machine still holds after the send**. A delivered pair leaves
+      // nothing: `noteSend`'s own doctrine is that the sender keeps the
+      // digest, the recipients and the clock, and keeps no bytes — a tip
+      // that carried the payload onward was that doctrine broken one layer
+      // down, a copy of every dealt share riding the dealer's pipe after
+      // the deal. So a delivered pair's body pipe ends here (`null`), and
+      // the one pair that continues is the pair whose member is this
+      // machine — the share that never crossed a wire, which is exactly
+      // what the dealer ends up holding. `out $share-N` after `send
+      // to=each` therefore binds once, to that one share: the canonical
+      // audience names each member exactly once, so exactly one pair stays.
       const pair = requireScatterPair(value, "send");
       if (pair.payload.type !== "text") {
         throw new Error(
@@ -2696,13 +2757,29 @@ async function execStepBody(step, value, bindings, artifacts) {
         );
       }
       const to = String(step.params?.to ?? "each").trim();
-      const member =
-        to.toLowerCase() === "each"
-          ? pair.member
-          : to.toUpperCase().replace(/[^0-9A-F]/g, "");
+      const each = to.toLowerCase() === "each";
+      const member = each
+        ? pair.member
+        : to.toUpperCase().replace(/[^0-9A-F]/g, "");
       const q = await import("./quorum-ops.js");
-      if (member === q.scatterRoom().self) return pair.payload;
-      return q.execQuorumSend(pair.payload, { to: member });
+      const self = q.scatterRoom().self;
+      if (!each && member === self) {
+        // A constant recipient that is this session's own key: nothing could
+        // be sent (a session is never its own peer), and passing every
+        // payload through would quietly keep the whole set on this machine —
+        // the revealable-`$set` hazard rebuilt out of a spelling. `to=each`
+        // already keeps this machine's own share, and only that one.
+        throw new Error(
+          `send to=${member}: that is this session's own key, and a session ` +
+            "is never its own peer — nothing can be sent, and keeping every " +
+            "pair's payload here would rebuild the whole set on one machine. " +
+            "Write `send to=each`: it delivers each share to its member and " +
+            "keeps only this machine's own."
+        );
+      }
+      if (each && member === self) return pair.payload;
+      await q.execQuorumSend(pair.payload, { to: member });
+      return null;
     }
     case "gpg.encrypt": {
       if (!value || (value.type !== "text" && value.type !== "bytes")) {

@@ -342,13 +342,16 @@ function supplyNoun(want) {
  * @param {import("./types.js").RefinedType[]} slotTypesByIndex
  * @param {RecipeError[]} errors
  * @param {number} stepIndex
+ * @param {boolean} [deferUnknown]  see `validateRecipe` — a placed cell's
+ *   unknown slot is the run's question, not this document's
  */
 function validateStepSlotParams(
   step,
   slotTypes,
   slotTypesByIndex,
   errors,
-  stepIndex
+  stepIndex,
+  deferUnknown = false
 ) {
   const spec = getStep(step.name);
   for (const p of spec?.params || []) {
@@ -379,6 +382,15 @@ function validateStepSlotParams(
         : `${SLOT_SIGIL}${raw}`;
     const loaded = lookupSlotType(ref, slotTypes, slotTypesByIndex);
     if (!loaded) {
+      // A slot this document never writes, named from a cell that carries a
+      // peer header: whether the machine that runs the cell holds the value
+      // is that machine's session's business — a ceremony's deal binds slots
+      // that its *recovery*, a separate agreement written later, reads. The
+      // compiler holds no claim about a value another notebook bound, so it
+      // neither refuses nor types it; the run's own slot resolver is the
+      // check (`placement.js`'s `hasSlot` seam, and the engine's refusal
+      // names the slot when it is really absent).
+      if (deferUnknown) continue;
       errors.push({
         message: `${step.name} ${p.name}=${raw}: unknown slot (register earlier with out ${ref})`,
         start: step.start,
@@ -1305,7 +1317,9 @@ export function projectTypeForMember(current, memberOrSelector) {
  *   inScatter?: boolean,
  *   collectionLength?: number,
  *   source?: string,
- * }} ctx
+ *   placed?: boolean,
+ * }} ctx  `placed` — this body's cell carries a `@peer` header, so an unknown
+ *   slot in it is deferred to the run (see `validateRecipe`'s argument)
  * @returns {{
  *   final: import("./types.js").RefinedType,
  *   encryptInBody: boolean,
@@ -1316,6 +1330,16 @@ function validateBodySteps(body, startType, ctx) {
   /** @type {import("./types.js").RefinedType} */
   let current = startType;
   let encryptInBody = false;
+  /**
+   * What a `send` in this body left behind, tracked because **the tip is what
+   * stays**. After `send to=each` exactly one pair's payload remains — the
+   * pair whose member is this machine, named once by the deduped canonical
+   * audience — so an `out` after it binds a single value, not a per-pair
+   * bundle. After `send to=<fingerprint>` every payload left, so a later
+   * step has nothing to read and refuses here, where the author is.
+   */
+  let sentEach = false;
+  let sentConstant = false;
   /** @type {import("./input-needs.js").InputPanel[]} */
   const inputNeeds = [];
   /** @type {Map<string, import("./types.js").RefinedType>|undefined} */
@@ -1381,6 +1405,19 @@ function validateBodySteps(body, startType, ctx) {
         continue;
       }
     }
+    if (sentConstant) {
+      ctx.errors.push({
+        message:
+          `Nothing follows \`send to=<fingerprint>\` — every pair's payload ` +
+          `left this machine for that one peer, so there is nothing for ` +
+          `"${step.name}" to read. \`send to=each\` keeps this machine's own ` +
+          `share, and a step after it reads that.`,
+        start: step.start,
+        end: step.end,
+        stepIndex: ctx.stepIndex,
+      });
+      continue;
+    }
     {
       const reserved = reservedRecipientError(step, !!ctx.inScatter);
       if (reserved) {
@@ -1424,7 +1461,8 @@ function validateBodySteps(body, startType, ctx) {
         slotTypes,
         slotTypesByIndex,
         ctx.errors,
-        ctx.stepIndex
+        ctx.stepIndex,
+        !!ctx.placed
       );
     }
     collectInputNeeds(step, inputNeeds, current);
@@ -1442,6 +1480,10 @@ function validateBodySteps(body, startType, ctx) {
 
     const resolved = resolveStepType(spec, current, step.params || {});
     if (!resolved.ok) {
+      // The same silence `validateRecipe` keeps over a deferred tip: a value
+      // another notebook bound is not one this document may make claims
+      // about, in refusals or in types.
+      if (current.deferred) continue;
       ctx.errors.push({
         message: resolved.error,
         start: step.start,
@@ -1452,6 +1494,11 @@ function validateBodySteps(body, startType, ctx) {
     }
     checkPooledPipelineValue(step, current, resolved.output, ctx.errors, ctx.stepIndex);
     current = resolved.output;
+    if (step.name === "send") {
+      const to = String(step.params?.to ?? "each").trim().toLowerCase();
+      if (to === "each") sentEach = true;
+      else sentConstant = true;
+    }
     if (step.name === "out" && slotTypes && slotTypesByIndex) {
       const ref = String(step.params?.name || DEFAULT_OUT_SLOT);
       const key = slotLabelKey(ref);
@@ -1463,7 +1510,7 @@ function validateBodySteps(body, startType, ctx) {
             end: step.end,
             stepIndex: ctx.stepIndex,
           });
-        } else if (ctx.inForeach) {
+        } else if (ctx.inForeach && !sentEach) {
           // A foreach body's `out $x` runs once per iteration and binds `$x`
           // once, to a *bundle* of every iteration's value — the runtime's
           // exact shape, recorded here so `in $x` / `with=$x` type-check
@@ -1472,6 +1519,12 @@ function validateBodySteps(body, startType, ctx) {
           // `at`. This used to be exempt from the slot walk entirely, which
           // left the label claimed by nothing and `in $x` refusing a slot the
           // notebook visibly writes.
+          //
+          // After `send to=each` the bundle rule does not apply: that
+          // spelling retains exactly one pair's payload — this machine's own
+          // share — so the slot holds the value itself, typed below by the
+          // ordinary rule. The engine's `singleOuts` is the same decision at
+          // run time, read off the same syntax.
           slotTypes.set(
             key,
             typeOf(
@@ -1817,6 +1870,21 @@ export function validateRecipe(ast) {
     validateChainHeader(chains[ci], globalStepIndex, errors);
     validatePublishSteps(steps, globalStepIndex, errors);
 
+    /**
+     * Whether this cell carries a `@peer` header — the placed half of the
+     * two-notebooks rule. A ceremony's deal binds slots that its *recovery*,
+     * a separate agreement written later, reads: the recovery notebook names
+     * `$share-2` and no cell in it writes one, because the deal did, on the
+     * machine the cell is placed on. The compiler holds no claim about a
+     * value another notebook bound, so a placed cell's unknown slot is
+     * deferred to the run — `placement.js`'s `hasSlot` seam admits the cell
+     * when the value is really there, and the engine's refusal names the
+     * slot when it is really absent. An *unheaded* cell keeps the refusal:
+     * with no peer there is no other machine the value could be on, so
+     * "register earlier with out $x" is a remedy the author can perform.
+     */
+    const placed = !!chains[ci].peer;
+
     /** @type {import("./types.js").RefinedType} */
     let current = tNone();
 
@@ -2005,6 +2073,20 @@ export function validateRecipe(ast) {
         const key = slotLabelKey(ref);
         loaded = key ? slotTypes.get(key) : undefined;
         if (!loaded) {
+          if (placed) {
+            // The `in` half of the deferral `placed` argues above: whether
+            // the machine this cell is placed on holds `$x` is that
+            // machine's session's business, so the read is neither refused
+            // nor typed. `deferred` marks the tip as a value this document
+            // knows nothing about — the walk below suppresses every claim
+            // it would otherwise make about it, and the flag rides `out`
+            // into the slot map so a later read stays as unclaimed as this
+            // one. (A numeric `in N` still refuses either way: an index is
+            // a position in *this* document's out order, and another
+            // notebook's order is not a thing this one can count into.)
+            current = { ...tNone(), deferred: true };
+            continue;
+          }
           errors.push({
             message: `in ${ref}: unknown slot (register it earlier with out ${ref.startsWith(SLOT_SIGIL) ? ref : `${SLOT_SIGIL}${ref}`})`,
             start: step.start,
@@ -2027,7 +2109,7 @@ export function validateRecipe(ast) {
       continue;
     }
 
-    validateStepSlotParams(step, slotTypes, slotTypesByIndex, errors, stepIndex);
+    validateStepSlotParams(step, slotTypes, slotTypesByIndex, errors, stepIndex, placed);
 
     pushDiscouragedAlgoWarnings(step, warnings, stepIndex);
     pushUsageHonestyWarnings(step, warnings, stepIndex);
@@ -2043,7 +2125,7 @@ export function validateRecipe(ast) {
       // refusing to consume it left the type with a producer and no consumer.
       // `quorum.recv count=all` is the first source of a bundle that is not a
       // foreach result, which is what made the gap visible.
-      if (current.base !== "shares" && current.base !== "bundle") {
+      if (current.base !== "shares" && current.base !== "bundle" && !current.deferred) {
         errors.push({
           message: `foreach requires a collection (shares or bundle) — got ${formatType(current)}. Add sss, blip39, shares, or quorum.recv count=all before foreach.`,
           start: step.start,
@@ -2087,6 +2169,7 @@ export function validateRecipe(ast) {
         slotTypes,
         slotTypesByIndex,
         source: ast.source,
+        placed,
       });
       if (bodyVal.encryptInBody) {
         foreachGpg = true;
@@ -2102,7 +2185,7 @@ export function validateRecipe(ast) {
     if (step.name === "scatter") {
       // The same collection rule as `foreach` — scatter is that loop with a
       // second list, and the second list is the room's.
-      if (current.base !== "shares" && current.base !== "bundle") {
+      if (current.base !== "shares" && current.base !== "bundle" && !current.deferred) {
         errors.push({
           message: `scatter requires a collection (shares or bundle) — got ${formatType(current)}. Add sss.split, blip39, shares, or quorum.recv count=all before scatter.`,
           start: step.start,
@@ -2160,6 +2243,7 @@ export function validateRecipe(ast) {
         slotTypes,
         slotTypesByIndex,
         source: ast.source,
+        placed,
       });
       if (bodyVal.encryptInBody) {
         foreachGpg = true;
@@ -2179,7 +2263,7 @@ export function validateRecipe(ast) {
     }
 
     if (step.name === "tee") {
-      if (current.base === "none") {
+      if (current.base === "none" && !current.deferred) {
         errors.push({
           message: `"tee" needs a pipeline value`,
           start: step.start,
@@ -2311,6 +2395,13 @@ export function validateRecipe(ast) {
 
     const resolved = resolveStepType(spec, current, step.params || {});
     if (!resolved.ok) {
+      // A deferred tip is a value another notebook bound: a refusal here
+      // would be a claim about a value the compiler never saw, made in words
+      // that describe the wrong state ("needs an input" about a slot the run
+      // will hold). No claim is made either way — the step is walked past
+      // with the tip still unclaimed, and the run's own type checks are the
+      // ones entitled to speak.
+      if (current.deferred) continue;
       let message = resolved.error;
       if (current.base === "keypair" && /expects bytes/i.test(message)) {
         message = `"${step.name}" expects DER bytes — add export pkcs8, export scalar, or spki first.`;

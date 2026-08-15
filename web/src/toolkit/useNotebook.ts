@@ -53,6 +53,7 @@ import {
   bridgeModeMeta,
 } from "../lib/toolkit/conjugate-stitch.js";
 import { listSteps, getStep } from "../lib/toolkit/registry.js";
+import { readShareHeader } from "../lib/slip39/blip39.js";
 import { wiredForCell } from "../lib/toolkit/slot-graph.js";
 import {
   ceremonyCells,
@@ -3176,6 +3177,28 @@ export function useNotebook() {
     setKernelEpoch((n) => n + 1);
   }, []);
 
+  /**
+   * What the share in a slot says about itself, and only that.
+   *
+   * The recovery generator needs the threshold, count and set id off this
+   * machine's own share, and those four facts are the whole of what leaves
+   * the kernel here — the mnemonic itself is resolved and dropped inside this
+   * callback, never returned, so no share ever rides React state or a prop
+   * into a component tree. `readShareHeader` answers null for anything that
+   * is not a share, which is the honest answer for a slot holding something
+   * else: the caller's refusal names that state rather than typing it.
+   */
+  const shareFacts = useCallback(
+    (label: string) => {
+      void kernelEpoch;
+      const slots = kernelRef.current.slots;
+      if (!slots.has(label)) return null;
+      const value = slots.resolve(label);
+      return value?.type === "text" ? readShareHeader(String(value.data)) : null;
+    },
+    [kernelEpoch]
+  );
+
   const clearAllSlots = useCallback(() => {
     kernelRef.current.slots.clear();
     setKernelEpoch((n) => n + 1);
@@ -3339,6 +3362,7 @@ export function useNotebook() {
     insertSlotRef,
     clearSlot,
     clearAllSlots,
+    shareFacts,
     toolkitPrefs,
     updateToolkitPrefs,
     refreshVault,

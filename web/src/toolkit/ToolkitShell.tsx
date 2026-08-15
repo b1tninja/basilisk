@@ -136,6 +136,11 @@ import {
   roomCeremonySummary,
 } from "../lib/toolkit/room-ceremony.js";
 import {
+  custodianRecovery,
+  dealHoldings,
+  roomRecovery,
+} from "../lib/toolkit/room-recovery.js";
+import {
   keyPower,
   keyPowerReadout,
   loadedCount,
@@ -1278,6 +1283,87 @@ export function ToolkitShell() {
       `Wrote ${draftCeremony.cells.length} cells — a ${draftCeremony.threshold}-of-${draftCeremony.shares} split, one share per person. Start the session, then Share this notebook: a cell only crosses to somebody holding the same text.`
     );
   }, [draftCeremony, nb.loadRecipeText, nb.setCellPeer]);
+
+  /**
+   * The other agreement — recovery, generated at recovery time.
+   *
+   * The deal picker above answers "who is in the room"; this one answers the
+   * only question a recovery has, **who is contributing**, and reads
+   * everything else off the shares themselves: who holds what comes from the
+   * deal notebook's own text (`dealHoldings`), and the threshold, count and
+   * set id come off this machine's share header (`nb.shareFacts` — four
+   * facts, never the words). Dealer-absent is not a mode: the dealer is a
+   * checkbox like everyone else, checked or not.
+   */
+  const [recoveryContributors, setRecoveryContributors] = useState<string[]>([]);
+  const [recoveryNote, setRecoveryNote] = useState("");
+  const recoveryHoldings = useMemo(
+    () => dealHoldings(nb.chains as RecipeChain[]),
+    [nb.chains]
+  );
+  /**
+   * Whose recovery this would be: the live session's own key when there is
+   * one, the draft's chosen key before that — the same key `SessionStart`'s
+   * chooser names, so the two sections cannot disagree about who "you" is.
+   */
+  const recoverySelf = (
+    sessionLive ? String(nb.quorumState.self || "") : sessionDraft.keyFingerprint
+  ).toUpperCase();
+  const recoveryFacts = useMemo(() => {
+    const mine = recoveryHoldings.find((h) => h.fingerprint === recoverySelf);
+    if (!mine) return null;
+    return nb.shareFacts(mine.slot);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recoveryHoldings, recoverySelf, nb.shareFacts]);
+  const draftRecovery = useMemo(
+    () =>
+      roomRecovery({
+        self: recoverySelf,
+        header: recoveryFacts,
+        holdings: recoveryHoldings,
+        contributors: recoveryContributors,
+      }),
+    [recoverySelf, recoveryFacts, recoveryHoldings, recoveryContributors]
+  );
+
+  /**
+   * Write it — bodies through the loader, headers through the mutator,
+   * exactly `writeRoomCeremony`'s two doors and for its reason: no header in
+   * this app is ever spelled by hand.
+   */
+  const writeRoomRecovery = useCallback(() => {
+    if (draftRecovery.issues.length || !draftRecovery.cells.length) return;
+    const bodies = draftRecovery.cells.map((c) => c.recipe).join("\n\n");
+    if (!nb.loadRecipeText(draftRecovery.title, bodies)) {
+      setRecoveryNote(
+        "The recovery that was generated does not compile, so nothing was written. The notebook you had is untouched."
+      );
+      return;
+    }
+    draftRecovery.cells.forEach((c, i) => nb.setCellPeer(i, c.peer));
+    setRecoveryNote(
+      `Wrote ${draftRecovery.cells.length} cells — a ${draftRecovery.threshold}-of-${draftRecovery.total} recovery gathering ${draftRecovery.contributors.length} ${draftRecovery.contributors.length === 1 ? "share" : "shares"}. Share this notebook so the contributors hold the same text, then each runs their own cell.`
+    );
+  }, [draftRecovery, nb.loadRecipeText, nb.setCellPeer]);
+
+  /**
+   * The paste path — one unheaded cell, no picker, no session. Offered from
+   * the same section because the reader it serves (a custodian holding words
+   * on paper, in a cold browser) is exactly the one the picker cannot
+   * describe: no deal notebook, no holdings, no key.
+   */
+  const writeCustodianRecovery = useCallback(() => {
+    const r = custodianRecovery();
+    if (!nb.loadRecipeText(r.title, r.cells[0].recipe)) {
+      setRecoveryNote(
+        "The paste recovery does not compile, so nothing was written. The notebook you had is untouched."
+      );
+      return;
+    }
+    setRecoveryNote(
+      "Wrote one cell that reads share mnemonics from the Inputs tray — paste each card into its own row there, then press Run. $recovered is a digest of what came back, for checking against the deal's $expected."
+    );
+  }, [nb.loadRecipeText]);
 
   /**
    * The same function, reachable from an effect that must not re-subscribe.
@@ -4641,10 +4727,11 @@ export function ToolkitShell() {
               summary: roomCeremonySummary(draftCeremony),
               issues: draftCeremony.issues,
               text: draftCeremony.text,
-              // The phase and the sentence, not the pipeline: the widget draws
-              // the reading of the notebook beside the notebook, and the peer
-              // is already in the recipe below it whole.
-              cells: draftCeremony.cells.map((c) => ({ phase: c.phase, why: c.why })),
+              // The sentence, not the pipeline: the widget draws the reading
+              // of the notebook beside the notebook, and the peer is already
+              // in the recipe below it whole. No phase — the deal is one
+              // occasion now, and recovery is its own notebook.
+              cells: draftCeremony.cells.map((c) => ({ why: c.why })),
               threshold: draftCeremony.threshold,
               shares: draftCeremony.shares,
               onWrite: writeRoomCeremony,
@@ -4661,6 +4748,32 @@ export function ToolkitShell() {
                 role: sessionDraft.role,
               });
             },
+          }}
+          recovery={{
+            facts: recoveryFacts
+              ? `This machine holds share ${recoveryFacts.index} of ${recoveryFacts.total} — any ${recoveryFacts.threshold} recombine (set ${recoveryFacts.setId}).`
+              : "",
+            issues: draftRecovery.issues,
+            text: draftRecovery.text,
+            cells: draftRecovery.cells.map((c) => ({ why: c.why })),
+            threshold: draftRecovery.threshold,
+            total: draftRecovery.total,
+            // Everyone the deal dealt to, minus this machine — the pickable
+            // contributors, named where a name is known, whole either way.
+            choices: recoveryHoldings
+              .filter((h) => h.fingerprint !== recoverySelf)
+              .map((h) => ({
+                fingerprint: h.fingerprint,
+                name: peerNames.get(h.fingerprint),
+                chosen: recoveryContributors.includes(h.fingerprint),
+              })),
+            onToggle: (fpr: string) =>
+              setRecoveryContributors((list) =>
+                list.includes(fpr) ? list.filter((f) => f !== fpr) : [...list, fpr]
+              ),
+            onWrite: writeRoomRecovery,
+            onWriteCustodian: writeCustodianRecovery,
+            note: recoveryNote,
           }}
         />
 

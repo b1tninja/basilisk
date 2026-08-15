@@ -231,4 +231,32 @@ $sealed | out $again`;
     // rule, reused: reading it back must compile.
     expect(canonical(src)).toContain("$sealed");
   });
+
+  it("an out after send to=each types the slot as the value, not a bundle", () => {
+    // The carve-out's compile half, with its consumer: `send to=each` retains
+    // exactly one pair's payload — this machine's own share — so `$share` is a
+    // mnemonic, and a later cell may pipe it into `quorum.send`. Typed as a
+    // bundle (the rule for every other body out) that read-back would refuse
+    // with a type mismatch, which is exactly what the recovery notebook's
+    // dealer-contributor cell does with this slot on the deal's machine.
+    const src = `random 32 | sss.split 2/3 | blip39 | scatter to=room
+  - send to=each | out $share
+
+$share | quorum.send ${FPR_A} | out $sent`;
+    expect(canonical(src)).toContain("$share | quorum.send");
+  });
+
+  it("nothing follows a constant-recipient send — every payload left", () => {
+    // `send to=<fingerprint>` delivers every pair's payload to that one key,
+    // so the body pipe after it holds nothing on this machine — and a step
+    // written there refuses at compile, naming the state and the spelling
+    // that does retain a value. (A constant that is this session's *own* key
+    // refuses at run instead: keeping every payload would rebuild the whole
+    // set on one machine, the revealable-$set hazard out of a spelling.)
+    const msg = refusal(
+      `random 32 | sss.split 2/3 | blip39 | scatter to=room\n  - send to=${FPR_A} | out $x`
+    );
+    expect(msg).toContain("Nothing follows `send to=<fingerprint>`");
+    expect(msg).toContain("`send to=each` keeps this machine's own share");
+  });
 });

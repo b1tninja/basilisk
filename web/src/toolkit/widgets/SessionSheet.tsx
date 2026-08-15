@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/sheet";
 import { SessionLive, type SessionLiveProps } from "./SessionLive";
 import { SessionStart, type SessionStartProps } from "./SessionStart";
+import { RoomRecovery, type RoomRecoveryProps } from "./RoomRecovery";
 
 export type SessionSheetProps = {
   open: boolean;
@@ -21,6 +22,17 @@ export type SessionSheetProps = {
    */
   live: Omit<SessionLiveProps, "className"> | null;
   start: Omit<SessionStartProps, "className">;
+  /**
+   * The recovery generator's section — under *both* halves, deliberately.
+   *
+   * The deal's picker lives inside `SessionStart` because a deal cannot be
+   * written before the room exists. A recovery is the opposite way round: it
+   * is most often written while the original room is live (the recoverer is
+   * standing in it, dealer present or not), and the cold custodian who needs
+   * the paste path has no session at all — so pinning the section to either
+   * half would hide it from the reader the other half serves.
+   */
+  recovery?: Omit<RoomRecoveryProps, "className">;
 };
 
 /**
@@ -42,7 +54,7 @@ export type SessionSheetProps = {
  * honest shape, because a closed exchange leaves nothing to observe and the
  * same audience derives the same room again.
  */
-export function SessionSheet({ open, onOpenChange, live, start }: SessionSheetProps) {
+export function SessionSheet({ open, onOpenChange, live, start, recovery }: SessionSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -63,6 +75,7 @@ export function SessionSheet({ open, onOpenChange, live, start }: SessionSheetPr
 
         <div className="flex flex-col gap-3 overflow-y-auto px-4 pb-4">
           {live ? <SessionLive {...live} /> : <SessionStart {...start} />}
+          {recovery ? <RoomRecovery {...recovery} /> : null}
         </div>
       </SheetContent>
     </Sheet>

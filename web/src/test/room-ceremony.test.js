@@ -4,53 +4,38 @@
  * This is the first template in the product that is a *function of the
  * audience* rather than a string, so the thing to prove is not that one recipe
  * works — it is that every recipe the product can generate works. There are
- * fifteen of them (rooms of 2 through 16), the largest has 47 cells, and each
- * one has to compile, place every cell on somebody, and refuse nothing, from
- * the point of view of every member in turn.
+ * fifteen of them (rooms of 2 through 16), and each one has to compile, place
+ * every cell on somebody, and refuse nothing, from the point of view of every
+ * member in turn.
+ *
+ * ## The notebook is the deal and nothing else
+ *
+ * This file used to pin the other shape: return cells, a gather with a
+ * thirty-minute wait, phase labels — a deal and its recovery in one document.
+ * The dealer-absent e2e proved what that costs (`runFrom` walks to the end, so
+ * the press that deals also returns the dealer's share; findings 1a and 5a),
+ * and LANGUAGE.md's "two agreements, two notebooks" settled the direction:
+ * recovery is generated at recovery time by `room-recovery.js`, and
+ * `room-recovery.test.js` is where its properties now live. The pins below
+ * that used to hold the recovery in this notebook are turned over into pins
+ * that it is *absent* — a return cell or a gather reappearing here would be
+ * the one-press hazard coming back.
  *
  * ## Why a generator at all
  *
- * Because the cell count depends on the room and nothing in the language can
- * vary a recipient per iteration: `foreach` declares `params: []` so it has no
- * `to=` to change between rounds, and `tee`'s `-` lines concatenate a stem
- * rather than branching to different addressees. `refuses the shapes a fixed
- * template would have taken` below is that claim as a test rather than as a
- * paragraph, because it is the premise the whole module rests on.
- *
- * ## The three findings this file pins
- *
- * 1. **Two holders cannot both write `out $share`.** The compiler reads the
- *    whole notebook, not the part that runs here, so two cells placed on two
- *    different machines still collide — `Duplicate out slot $share`. The shape
- *    that was handed to me had exactly that in it and does not compile. Pinned
- *    twice: the naive spelling is asserted to fail, and the generated one to
- *    pass, so a future "simplification" back to one slot name fails loudly.
- * 2. **A peer cannot be a placeholder in a step param**, and the way it fails
- *    is worse than a compile error: on `quorum.send`, whose recipient is
- *    positional, `to=@holder1` parses cleanly and is kept as a literal — a cell
- *    that compiles, runs, and addresses nobody. On `quorum.recv` the same
- *    spelling does not lex at all. Either way there is no mutator for a step
- *    param, so resolution-after-the-fact has nothing to resolve with and the
- *    audience has to come first.
- * 3. **`$set | at 1 | out $mine` makes a slot now — and the generator still
- *    does not write it.** A selected share carries `meta.shareIndex`, and
- *    `slot-registry.register` used to divert any such value into
- *    `slotsByIndex` and return *before* `slotsByLabel.set` — so the cell
- *    reported `ok`, drew a tile, and the next cell to read `$mine` failed with
- *    "unknown slot (register earlier with out $mine)", naming a remedy that
- *    had already been performed. That divert was found by running the ceremony
- *    across two browsers, and it is gone: `out` always binds its label. The
- *    generator keeps the shape for a different reason — the dealer already
- *    holds every share inside `$set`, and `$mine` would be a second copy.
+ * Because the receive-cell count depends on the room, and a `@peer` header
+ * addresses a whole fingerprint — `refuses the shapes a fixed template would
+ * have taken` below is that claim as a test rather than as a paragraph.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   DEALER_BASED,
+  DEALER_KEEPS_ONE,
   MAX_ROOM,
   NO_REDUNDANCY_AT_TWO,
-  RECOVERY_WAIT_MS,
+  RECOVERY_IS_ITS_OWN_NOTEBOOK,
   canonicalCeremonyText,
   ceremonyQuorum,
   roomCeremony,
@@ -137,36 +122,58 @@ describe("every notebook the product can generate", () => {
     }
   });
 
-  it("writes the cells the room implies, and no others", () => {
+  it("writes one deal cell and one receive per holder, and nothing else", () => {
+    // **Turned over from the eight-cell shape.** The count used to be
+    // `1 + holders*2 + (n-1) + 1` — sends, receives, returns and a gather —
+    // and the returns and the gather were the recovery living in the deal's
+    // document, which is finding 1a's mechanism. `scatter` folded the sends
+    // into the split cell, and the recovery is a separate notebook now, so a
+    // room of n is exactly n cells: the deal, and n-1 deliveries.
     for (const n of SIZES) {
       const c = ceremonyFor(n);
       const members = room(n);
       const dealer = fpr(1);
       const holders = members.slice(1);
-      // The split, one send each, one receive each, the returns from everybody
-      // but the recoverer, and the one gather. Written out rather than as a
-      // formula, so a change in shape has to be re-derived here. There is no
-      // "keep share 1" cell — see the test below for why there cannot be.
-      expect(c.cells).toHaveLength(1 + holders.length * 2 + (n - 1) + 1);
+      expect(c.cells).toHaveLength(n);
       expect(c.dealer).toBe(dealer);
-      // The recoverer is a holder, never the dealer: the dealer already saw the
-      // secret, so a dealer who recovers it has demonstrated nothing.
-      expect(holders).toContain(c.recoverer);
-      expect(c.recoverer).not.toBe(dealer);
-      for (const cell of c.cells) expect(members).toContain(cell.peer);
-      // Exactly one receiving cell per holder, and every one of them on the
-      // holder themselves.
+      expect(c.cells[0].peer).toBe(dealer);
+      // The deal cell deals over the room's derivation, in the canonical
+      // spelling — the destinations are in the text, and none is chosen.
+      expect(c.cells[0].recipe).toContain(`sss.split ${c.threshold}/${c.shares}`);
+      expect(c.cells[0].recipe).toContain("scatter to=room");
+      expect(c.cells[0].recipe).toContain("send to=each | out $share");
+      // Exactly one receiving cell per holder, every one on the holder.
       const receiving = c.cells.filter((cell) => cell.recipe.startsWith("quorum.recv from="));
       expect(receiving.map((cell) => cell.peer).sort()).toEqual([...holders].sort());
-      // Exactly one send per holder, all of them the dealer's.
-      const dealing = c.cells.filter(
-        (cell) => cell.phase === "deal" && cell.recipe.startsWith("$set | at ")
+      expect(receiving).toHaveLength(n - 1);
+      for (const cell of receiving) expect(cell.recipe).toContain(`from=${dealer}`);
+    }
+  });
+
+  it("contains no recovery — no return cell, no gather, no armed wait", () => {
+    // **The turned-over pins of findings 1a and 5a.** The dealer's return
+    // cell (`$set | at 1 | quorum.send`) is what made the deal's one press
+    // also a recovery; the gather with its thirty-minute `wait=` sat armed in
+    // a notebook that might not be run for years; and the phase labels named
+    // a distinction no control could honour. All three are retired *by
+    // absence*: recovery is `room-recovery.js`'s notebook, written at
+    // recovery time by the quorum doing it. Any of these strings reappearing
+    // here is the single-notebook shape coming back.
+    for (const n of SIZES) {
+      const c = ceremonyFor(n);
+      expect(c.text, "a gather is armed in the deal notebook").not.toContain("sss.combine");
+      expect(c.text, "a recovery wait is armed in the deal notebook").not.toContain("wait=");
+      expect(c.text, "a cell selects a share back out of a set").not.toMatch(
+        /\bat \d+\b|\[\d+\]/
       );
-      expect(dealing).toHaveLength(holders.length);
-      for (const cell of dealing) {
-        expect(cell.peer).toBe(dealer);
-        expect(cell.recipe).toContain("quorum.send");
+      for (const cell of c.cells) {
+        expect(cell, "a cell carries a phase — the labels are retired").not.toHaveProperty(
+          "phase"
+        );
       }
+      // And the object no longer nominates a recoverer: who recombines is
+      // decided by whoever actually recovers, when they do.
+      expect(c).not.toHaveProperty("recoverer");
     }
   });
 
@@ -189,7 +196,8 @@ describe("every notebook the product can generate", () => {
     );
     // And the generated one does not have that shape. Asserted as an absence of
     // duplicates rather than as a spelling, so renaming the slots is free and
-    // colliding them is not.
+    // colliding them is not. The dealer's own `$share` is in the count: it is
+    // a slot like the others and must collide with nothing.
     const c = ceremonyFor(4);
     const outs = [...c.text.matchAll(/\bout \$([\w-]+)/g)].map((m) => m[1]);
     expect(new Set(outs).size, `two cells write the same slot: ${outs.join(", ")}`).toBe(
@@ -197,90 +205,55 @@ describe("every notebook the product can generate", () => {
     );
   });
 
-  it("names each holder's slot for the share in it, not for their seat", () => {
-    // **The finding this fixes.** Receive cells were numbered by holder —
-    // `$share-${i + 1}` for the holder at position `i` — while the send beside
-    // them selected `at ${i + 2}`. So the machine dealt share 3 kept it in
-    // `$share-2`, and a person comparing a slot against a printed card that
-    // says "share 3 of 3" could not tell whether they had been dealt the wrong
-    // one. Asserted as a pairing between the two cells rather than as a
-    // spelling of either, because the defect was that the two disagreed.
+  it("numbers each holder's slot by the pairing that will fill it", () => {
+    // **Finding 5b, carried into the scatter shape.** `scatter` deals share i
+    // to member i in canonical audience order — sorted, derived, chosen by
+    // nobody — so the receive slot on the member at canonical position i must
+    // say i, or a person comparing a slot against a printed card that says
+    // "share 3 of 3" cannot tell whether they were dealt the wrong one. The
+    // test fingerprints sort in list order, so position is index + 1.
     for (const n of SIZES) {
       const c = ceremonyFor(n);
-      // Dealing sends only: the dealer's *recovery* cell is `$set | at 1 |
-      // quorum.send` too, and share 1 is the one share that is deliberately in
-      // no slot at all.
-      const sent = c.cells
-        .filter(
-          (cell) =>
-            cell.phase === "deal" && /^\$set \| at \d+ \| quorum\.send/.test(cell.recipe)
-        )
-        .map((cell) => Number(/at (\d+)/.exec(cell.recipe)[1]));
-      const received = c.cells
-        .filter((cell) => cell.recipe.startsWith("quorum.recv from="))
-        .map((cell) => Number(/out \$share-(\d+)/.exec(cell.recipe)[1]));
-      expect(received, `sent ${JSON.stringify(sent)}`).toEqual(sent);
-      // The dealer keeps share 1 inside `$set`, so no slot is named for it —
-      // and that is now the honest reading of the gap rather than an
-      // off-by-one hiding in it.
-      // Word-bounded: a room of eleven has a `$share-10`, and a substring test
-      // would read it as the slot that must not exist.
-      expect(c.text, "a slot was named for the share the dealer keeps").not.toMatch(
+      const members = room(n);
+      for (const cell of c.cells.slice(1)) {
+        const pos = members.indexOf(cell.peer) + 1;
+        expect(
+          cell.recipe,
+          `${cell.peer} (position ${pos}) receives into the wrong slot`
+        ).toContain(`out $share-${pos}`);
+        expect(cell.why).toContain(`share ${pos}`);
+      }
+      // The dealer's own number appears nowhere: their share is the unnumbered
+      // `$share` the deal cell binds — the one share that was never received —
+      // and the dealer is position 1 here.
+      expect(c.text, "a slot was numbered for the dealer's own share").not.toMatch(
         /\$share-1\b/
       );
     }
   });
 
-  it("gives the recovery gather a wait a person could actually meet", () => {
-    // **The finding this fixes.** The gather carried no `wait=`, so it took
-    // `quorum.recv`'s registry default of 120000 ms — and it is the one cell in
-    // the notebook pressed at a different time from every other, the one the
-    // picker describes as "run when the secret is wanted back". Two minutes
-    // later it failed with a message telling the reader to "give it a longer
-    // wait=", which means editing a generated recipe in a notebook whose other
-    // copies then no longer match it.
+  it("keeps exactly one share on the dealer — the revealable $set is unconstructable", () => {
+    // **Finding 4a, turned over.** The dealer used to keep every share in a
+    // revealable `$set` with nothing on any screen saying to delete it — a
+    // 2-of-3 that was a 1-of-1 until somebody remembered. Under the pair-aware
+    // form the shares flow through the scatter body without stopping: the
+    // delivered pairs' pipes end at `send`, and the one `out` in the body
+    // binds the single pair that stays, this machine's own. No slot in the
+    // text can hold the set, because no step in the text retains it.
     for (const n of SIZES) {
       const c = ceremonyFor(n);
-      const gather = c.cells.at(-1);
-      expect(gather.recipe).toContain(`wait=${RECOVERY_WAIT_MS}`);
-      // And the number is on the panel before anybody presses anything, which
-      // is this module's rule about every other number it writes.
-      expect(gather.why).toContain(String(RECOVERY_WAIT_MS / 60000));
+      expect(c.text, "the whole set reached a slot").not.toContain("$set");
+      const dealt = c.cells[0].recipe;
+      // The only outs on the deal cell are the digest and the dealer's own
+      // share — asserted as the exact list so a third `out` has to argue here.
+      expect([...dealt.matchAll(/\bout \$([\w-]+)/g)].map((m) => m[1])).toEqual([
+        "expected",
+        "share",
+      ]);
     }
-    // Long enough to be a different kind of thing from a network timeout: what
-    // happens between the press and the message arriving is a telephone call
-    // and a walk to another machine.
-    expect(RECOVERY_WAIT_MS).toBeGreaterThan(10 * 60_000);
-  });
-
-  it("could now name a selected share, and still does not, to avoid a second copy", () => {
-    // The finding that cost a two-browser run, inverted. `at` stamps
-    // `meta.shareIndex`, and `register` used to divert on it — `out $mine`
-    // after a selection wrote a tile and no slot, and the failure surfaced one
-    // cell later as `in $mine: unknown slot`, naming a remedy already
-    // performed. The divert is gone: registration is decided by the call,
-    // never by what the value carries, so the label binds either way. Pinned
-    // at the registry, where the divert lived, so its return would fail here
-    // first.
-    const registry = createSlotRegistry();
-    registry.register("$mine", { type: "text", data: "one share", meta: { shareIndex: 1 } });
-    expect(registry.resolve("$mine").data).toBe("one share");
-    registry.register("$plain", { type: "text", data: "not a share", meta: {} });
-    expect(registry.resolve("$plain").data).toBe("not a share");
-    // The generator still selects a share only where the selection is consumed
-    // on the spot — into `quorum.send` — but for a reason about copies rather
-    // than about a trap: the dealer already holds every share inside `$set`,
-    // and an `out $mine` would put share 1 in a second slot on the one machine
-    // that needs no reminder of it.
-    for (const n of SIZES) {
-      for (const cell of ceremonyFor(n).cells) {
-        if (/\bat \d+\b/.test(cell.recipe)) {
-          expect(cell.recipe, "a selected share is being written to a slot").not.toMatch(
-            /\bat \d+ \| out /
-          );
-        }
-      }
-    }
+    // And the picker says the property out loud, as this module's own copy.
+    expect(roomCeremonySummary(ceremonyFor(3))).toContain(DEALER_KEEPS_ONE);
+    expect(DEALER_KEEPS_ONE).toContain("exactly one share");
   });
 
   it("refuses the shapes a fixed template would have taken", () => {
@@ -307,15 +280,30 @@ describe("every notebook the product can generate", () => {
       compileRecipe(`quorum.recv from=@${fpr(2)} | out $x`).validation.errors.length
     ).toBeGreaterThan(0);
     // And there is no mutator for a step param anywhere in the product:
-    // `setCellPeer` rewrites headers, and `to=`/`from=` are not headers. So
+    // `setCellPeer` rewrites headers, and `from=` is not a header. So
     // resolution-after-the-fact has nothing to resolve with, and the audience
     // has to come first.
     //
     // `foreach` is the other half of the argument: it declares no params, so it
     // cannot be handed a different recipient per round however the loop is
-    // written. That is why the cell count has to come from the room.
+    // written. `scatter` is that loop *with* the recipient — derived from the
+    // room, never written — which is exactly why the deal collapsed into it.
     const spec = getStep("foreach");
     expect(spec.params ?? []).toEqual([]);
+  });
+
+  it("still binds a label whatever the value carries — the registry divert stays gone", () => {
+    // The finding that cost a two-browser run, kept pinned at the registry:
+    // `register` used to divert any share-stamped value into `slotsByIndex`
+    // and return before `slotsByLabel.set`, so an `out` reported ok and the
+    // next cell failed with "unknown slot", naming a remedy already performed.
+    // The deal cell's `out $share` binds a share-stamped value on every run
+    // now, so this pin matters more than it did, not less.
+    const registry = createSlotRegistry();
+    registry.register("$share", { type: "text", data: "one share", meta: { shareIndex: 1 } });
+    expect(registry.resolve("$share").data).toBe("one share");
+    registry.register("$plain", { type: "text", data: "not a share", meta: {} });
+    expect(registry.resolve("$plain").data).toBe("not a share");
   });
 });
 
@@ -324,16 +312,13 @@ describe("the secret, and what is written down about it", () => {
     for (const n of SIZES) {
       const c = ceremonyFor(n);
       const split = c.cells[0];
-      // The split cell's `out`s are the digest and the share set. The 32 bytes
-      // themselves go from `random` into `sss.split` and are never named, so
-      // there is no slot, no tile and no receipt entry holding them.
-      expect([...split.recipe.matchAll(/\bout \$([\w-]+)/g)].map((m) => m[1])).toEqual([
-        "expected",
-        "set",
-      ]);
-      expect(split.recipe).toContain("digest");
-      // `$set` is every share and it is the dealer's; a `publish` on it would be
-      // the whole secret leaving by a header instead of by a verb.
+      // The 32 bytes go from `random` into `sss.split` and are never named:
+      // no slot, no tile, no receipt entry holds them. Only the digest is
+      // written down, so a recovery can be checked without showing the secret.
+      expect(split.recipe).toContain("random 32 | tee");
+      expect(split.recipe).toContain("digest sha-256 | encode hex | out $expected");
+      // Never `publish`: a value leaves this machine because a verb said so,
+      // and the verb is `send to=each`, addressed by the derived pairing.
       expect(c.text).not.toContain("publish");
     }
   });
@@ -343,16 +328,15 @@ describe("the secret, and what is written down about it", () => {
     // `sss.split`, so the security property was absent from what the two ends
     // compare. A generated notebook is the case where that would be least
     // visible, since nobody typed the numbers. The canonical spelling is the
-    // verb's object now (`sss.split 2/3` — LANGUAGE.md migration step 2), so
-    // the pin moved with it; the property pinned is unchanged — both numbers
-    // are in the text the two ends digest.
+    // verb's object now (`sss.split 2/3`); the property pinned is unchanged —
+    // both numbers are in the text the two ends digest.
     for (const n of SIZES) {
       const c = ceremonyFor(n);
       expect(c.text).toContain(`sss.split ${c.threshold}/${c.shares}`);
     }
   });
 
-  it("says it is a dealer-based split and not distributed key generation", () => {
+  it("says it is a dealer-based split, and that recovery is its own notebook", () => {
     const summary = roomCeremonySummary(ceremonyFor(5));
     expect(summary).toContain(DEALER_BASED);
     // The correction names the weaker property and the verb that has the
@@ -364,71 +348,12 @@ describe("the secret, and what is written down about it", () => {
     // And the summary states the majority property rather than only the number,
     // so a reader tempted to lower it knows what it buys.
     expect(summary.join(" ")).toContain("majority");
-  });
-});
-
-describe("recovery is part of the template", () => {
-  it("recombines on a machine that never held the secret", () => {
-    for (const n of SIZES) {
-      const c = ceremonyFor(n);
-      const gather = c.cells.at(-1);
-      expect(gather.phase).toBe("recover");
-      expect(gather.peer).toBe(c.recoverer);
-      expect(gather.peer).not.toBe(c.dealer);
-      expect(gather.recipe).toContain("sss.combine");
-      // `shares` is the collector, reading the pipe and the slot `with=` names.
-      // Without it the holder is sent to a paste tray for values they are
-      // already holding, which is what `dc5d7cb` fixed.
-      //
-      // `$share-2`, not `$share-1`: slots are now named for the share they
-      // hold rather than for the holder's position, so the recoverer — the
-      // first holder, dealt share 2 — keeps it in `$share-2`. There is no
-      // `$share-1` in the notebook at all, because share 1 is the dealer's and
-      // stays inside `$set`. Read off the ceremony rather than written as a
-      // literal, so the two ends of the rename cannot drift.
-      expect(gather.recipe).toContain("shares with=$share-2");
-      expect(gather.recipe).toContain("out $secret");
-      // And a digest of what came back, so the recovery can be checked against
-      // the dealer's `$expected` without either machine showing the secret.
-      expect(gather.recipe).toContain("out $recovered");
-    }
-  });
-
-  it("asks for exactly one short of the threshold, because the recoverer holds one", () => {
-    for (const n of SIZES) {
-      const c = ceremonyFor(n);
-      const gather = c.cells.at(-1);
-      const asked = /quorum\.recv count=(\d+)/.exec(gather.recipe);
-      // `count=1` is the param's default and the serializer drops it, so the
-      // one-short-of-two case has no `count=` in the text at all. That is the
-      // same number said in fewer characters, and it is asserted as such rather
-      // than being allowed to look like an omission.
-      const count = asked ? Number(asked[1]) : 1;
-      expect(count + 1, `${c.threshold}-of-${c.shares} gathers the wrong number`).toBe(
-        c.threshold
-      );
-      // No `from=` anywhere in it. Any majority may rebuild the secret, so
-      // naming which holders those are would be a smaller promise than the
-      // split makes — and it has to be asked of the whole cell rather than of
-      // the string `quorum.recv from=`, because `count=` sits between the two
-      // and a narrower check let a `from=` through in mutation.
-      expect(gather.recipe, "the gather names who may answer").not.toContain("from=");
-    }
-  });
-
-  it("gives everybody but the recoverer a way to hand their share back", () => {
-    for (const n of SIZES) {
-      const c = ceremonyFor(n);
-      const returns = c.cells.filter(
-        (cell) => cell.phase === "recover" && cell.recipe.includes("quorum.send")
-      );
-      expect(returns).toHaveLength(n - 1);
-      expect(returns.map((cell) => cell.peer)).not.toContain(c.recoverer);
-      // Enough of them to reach the threshold even if the dealer is the only
-      // one who answers — which is the two-person room, where they are.
-      expect(returns.length).toBeGreaterThanOrEqual(c.threshold - 1);
-      for (const cell of returns) expect(cell.recipe).toContain(c.recoverer);
-    }
+    // The two-notebooks sentence is on the panel where the deal is offered:
+    // a reader who writes the deal must not go looking for the recovery cells
+    // the old shape taught them to expect.
+    expect(summary).toContain(RECOVERY_IS_ITS_OWN_NOTEBOOK);
+    expect(RECOVERY_IS_ITS_OWN_NOTEBOOK).toContain("separate agreement");
+    expect(RECOVERY_IS_ITS_OWN_NOTEBOOK).toContain("header");
   });
 });
 
@@ -513,10 +438,10 @@ describe("the text is the text the notebook will hold", () => {
  * The hook and the shell are React and this suite runs in node, so what can be
  * pinned here is that the generator has a caller and that the caller reaches the
  * notebook the way every other header-writer does. The behaviour is driven in
- * `placed-journey.e2e.js`, across two browsers, end to end.
+ * the ceremony e2e suites, across real browsers, end to end.
  *
- * `ask who consumes this` is the question these three answer: a generator with
- * no press behind it would be a finished feature nobody can reach, which is the
+ * `ask who consumes this` is the question these answer: a generator with no
+ * press behind it would be a finished feature nobody can reach, which is the
  * state `quorum.send` itself was in until this change.
  */
 describe("somebody presses it", () => {
@@ -556,22 +481,20 @@ describe("somebody presses it", () => {
     expect(block).toContain("aria-live=\"polite\"");
   });
 
-  it("draws every field the generator produces, so none of them is dead weight", () => {
-    // The audit question this repo keeps having to ask. `why` and `phase` are
-    // written per cell by `roomCeremony`, and a field with no consumer is a
-    // finished feature nobody can reach — the exact defect class the ceremony
-    // verbs were in before this change.
+  it("draws each cell's why, and no phase — the labels one press cannot honour are gone", () => {
+    // **Finding 5a's UI half, turned over.** The panel printed "Dealing — run
+    // once, together" and "Recovering — run when the secret is wanted back"
+    // over one contiguous run — doctrine with no mechanism. The deal notebook
+    // has one occasion now, so there is nothing to phase: the panel draws the
+    // per-cell `why` lines and must not grow the labels back without a
+    // control that can honour them.
     const at = PANEL.indexOf("data-room-ceremony");
     const block = PANEL.slice(at, PANEL.indexOf("<InviteCard", at));
-    expect(block).toContain("data-room-ceremony-phase");
     expect(block).toContain("c.why");
-    expect(SHELL).toContain("phase: c.phase, why: c.why");
-    // Both phases are drawn, and every cell the generator writes belongs to one
-    // of them — so the reading beside the recipe accounts for the whole
-    // notebook rather than most of it.
+    expect(block).not.toContain("data-room-ceremony-phase");
+    expect(block).not.toContain("Recovering — run when the secret is wanted back");
+    expect(SHELL).not.toContain("phase: c.phase");
     for (const n of SIZES) {
-      const phases = new Set(ceremonyFor(n).cells.map((c) => c.phase));
-      expect([...phases].sort()).toEqual(["deal", "recover"]);
       for (const cell of ceremonyFor(n).cells) {
         expect(cell.why.length, "a generated cell explains itself as nothing").toBeGreaterThan(
           20
