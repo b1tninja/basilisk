@@ -42,16 +42,59 @@
  * That is worth saying on the surface, because "paste your secret share into a
  * web page" is otherwise advice a careful person should refuse.
  *
+ * ## The scheme is an input, because the card cannot say
+ *
+ * This module used to have one road: read the mnemonic, then ask for
+ * commitments. `custodian-recovery.e2e.js` finding 2b is what that costs. The
+ * room ceremony deals with `sss.split` — see `room-ceremony.js`, whose deal
+ * cell is `random 32 | tee … | sss.split t/n | blip39.encode | scatter` — so
+ * for every card that ceremony produces, the commitments the panel asks for do
+ * not exist and never will. The custodian's only route out of `share-only` was
+ * to paste somebody *else's* commitments and be told their card might be
+ * broken.
+ *
+ * **A BLIP39 mnemonic does not say which scheme dealt it.** The header is
+ * version, flags, threshold, share count, index and set id (`blip39.js`), and
+ * `vss.split` emits "the same `shares` shape `sss.split` uses" so both go
+ * through the identical encoder. Commitments travel by another route by
+ * design. So the branch cannot be derived from the words on the card, and this
+ * module does not pretend it can: `scheme` is a parameter, the surface asks,
+ * and the default is the ceremony this product actually ships — SSS — with
+ * anything that arrives holding commitments starting on the other road,
+ * because commitments are evidence of a checkable split in a way no mnemonic
+ * is.
+ *
+ * What the SSS road can honestly offer is the header and nothing else, said
+ * plainly: the checksum proves the words were transcribed correctly, and the
+ * header says which set, which index and how many recombine. **None of that
+ * says the card will reconstruct.** The check that does exist for a plain
+ * Shamir split happens at recovery, not here: `6388ad0`'s deal tees a SHA-256
+ * of the master into `$expected`, and `room-recovery.js` digests whatever the
+ * recombination produced into `$recovered`, so a custodian compares two hex
+ * strings after the fact. That is a road, not a verdict, and the copy says so.
+ *
  * @module lib/toolkit/share-check
  */
 
 import { decodeMnemonic, formatSetId } from "../slip39/blip39.js";
 import { publicKeyOf } from "../quorum/vss.js";
 import { execVssVerify } from "./vss-ops.js";
+import { CUSTODIAN_RECOVERY } from "./room-recovery.js";
 
 /**
  * @typedef {"empty"|"bad-share"|"bad-commitments"|"share-only"|"commitments-only"
- *   |"verified"|"mismatch"} ShareCheckStatus
+ *   |"verified"|"mismatch"|"header-only"} ShareCheckStatus
+ */
+
+/**
+ * Which kind of split dealt the card in the reader's hand.
+ *
+ * `"vss"` — `vss.split`, whose dealer published commitments; the share can be
+ * checked against them here and now. `"sss"` — `sss.split`, which is what the
+ * room ceremony deals; there are no commitments and there is nothing to check
+ * a single card against offline.
+ *
+ * @typedef {"vss"|"sss"} ShareScheme
  */
 
 /**
@@ -210,16 +253,35 @@ export function readCommitments(text) {
 }
 
 /**
- * The recipe that does exactly what this panel does.
+ * The recipe that does exactly what this panel does — or, on the SSS road,
+ * the recipe that does the thing the panel cannot.
  *
  * Shown on the surface, not hidden behind it: a custodian who does not trust a
  * form should be able to run the check as ordinary notebook cells and get the
  * same answer, and a custodian who *does* trust it should still be able to see
  * that it is not doing anything else.
  *
+ * The two branches print different kinds of thing on purpose. The VSS one is
+ * this panel's own arithmetic, written out. The SSS one is *not* a check of
+ * one card — no such check exists — it is `room-recovery.js`'s
+ * `CUSTODIAN_RECOVERY`, the recombination that a quorum of cards can run, with
+ * the digest branch that makes its result comparable against the deal's
+ * `$expected`. Printing the verify recipe on that road was the other half of
+ * finding 2b: the custodian who opened the fold and copied what they were
+ * shown got an op that could never succeed for their card, and was still one
+ * op short of their secret.
+ *
+ * @param {ShareScheme} [scheme]
  * @returns {string}
  */
-export function shareCheckRecipe() {
+export function shareCheckRecipe(scheme = "vss") {
+  if (scheme === "sss") {
+    // `CUSTODIAN_RECOVERY` verbatim rather than a paraphrase, so the words a
+    // custodian copies off this panel are the words the recovery picker
+    // writes into a notebook. Two spellings of one recipe is how a panel and
+    // a generator come to disagree about what recovery is.
+    return CUSTODIAN_RECOVERY;
+  }
   return [
     "shares | blip39.decode",
     "| vss.verify commitments=$commitments",
@@ -257,14 +319,112 @@ function runVerify(share, split) {
 }
 
 /**
- * The whole verdict, in one call.
+ * What a plain Shamir card can be told about itself, offline, alone.
  *
- * @param {{ shareText?: string, commitmentsText?: string }} input
+ * Everything here comes out of the BLIP39 header and the checksum, and the
+ * wording's whole job is to keep three things apart that a reader will
+ * otherwise collapse into "my card is fine":
+ *
+ * - **The checksum passed.** RS1024 over the words. It proves the words were
+ *   read off the card and typed without a slip. It says nothing about who
+ *   dealt them.
+ * - **The header is self-describing.** Index, count, threshold and set id were
+ *   written by the encoder before a byte of data, so they arrive with the
+ *   card. They are the card's own account of itself and nothing has checked
+ *   that account against anything.
+ * - **Neither proves it will reconstruct.** A card from another set, or one
+ *   dealt from a different secret, decodes exactly this cleanly. There is no
+ *   arithmetic that can tell — that is what "plain Shamir" costs and what
+ *   `vss.split` exists to buy back.
+ *
+ * The road that does exist is named because it is real and reachable: the deal
+ * wrote a SHA-256 of the master into `$expected` and a recovery digests its
+ * result into `$recovered`, so a quorum's recombination is checkable after the
+ * fact. It is offered as what it is — a later comparison needing other people
+ * — and never as something this panel has done.
+ *
+ * @param {ShareFacts} f
+ * @param {ShareCheckVerdict} base
  * @returns {ShareCheckVerdict}
  */
-export function checkShare({ shareText = "", commitmentsText = "" } = {}) {
+function sssHeaderVerdict(f, base) {
+  return {
+    ...base,
+    status: "header-only",
+    // Not `ok`. Nothing has been verified and the tone must not suggest it
+    // has; not `error` either, because nothing is wrong. This is the honest
+    // middle the `share-only` status was invented for, kept for the same
+    // reason.
+    tone: "warn",
+    headline: `Share ${f.index} of ${f.total} — a well-formed card from set ${f.setId}.`,
+    detail:
+      `The checksum passed, so the words are transcribed correctly, and the card's own header ` +
+      `says it is share ${f.index} of ${f.total} in set ${f.setId} with any ${f.threshold} recombining. ` +
+      "That is everything a plain Shamir card can be asked on its own: it is not a check that this " +
+      "card came from the split you think it did, and it does not show that it will reconstruct " +
+      "anything — a card from another ceremony decodes exactly this cleanly. There are no " +
+      "commitments to compare it against, because sss.split does not produce any. The check that " +
+      `does exist happens at recovery: the deal wrote a SHA-256 of the secret to $expected, so when ` +
+      `${f.threshold} cards are recombined the digest of the result can be compared against it. ` +
+      "That needs the other holders, and it proves the recombination — not this card.",
+  };
+}
+
+/**
+ * The whole verdict, in one call.
+ *
+ * `scheme` decides which road this is on, and it is a parameter because no
+ * mnemonic carries the answer — see the module note. `"vss"` is the panel's
+ * original behaviour, unchanged; `"sss"` reads the header and refuses to ask
+ * for a document that cannot exist.
+ *
+ * @param {{ shareText?: string, commitmentsText?: string, scheme?: ShareScheme }} input
+ * @returns {ShareCheckVerdict}
+ */
+export function checkShare({ shareText = "", commitmentsText = "", scheme = "vss" } = {}) {
   const s = readShareMnemonic(shareText);
   const c = readCommitments(commitmentsText);
+
+  if (scheme === "sss") {
+    /** @type {ShareCheckVerdict} */
+    const base = {
+      status: "empty",
+      tone: "pending",
+      headline: "",
+      detail: "",
+      share: s.facts,
+      // Always null on this road, whatever text happens to be in the field the
+      // surface no longer draws: a plain Shamir card has no commitments, and
+      // reporting a split alongside it would put the two back in one sentence.
+      split: null,
+      shareError: s.error,
+      commitmentsError: "",
+    };
+    if (!s.ok && !s.empty) {
+      return {
+        ...base,
+        status: "bad-share",
+        tone: "error",
+        headline: "That is not a readable share.",
+        detail:
+          `${s.error}. Every BLIP39 mnemonic carries a checksum, so a single wrong or ` +
+          "missing word is caught here rather than later — re-read the card, and mind that " +
+          "the words are ordinary English ones that autocorrect likes to change.",
+      };
+    }
+    if (s.empty) {
+      return {
+        ...base,
+        status: "empty",
+        tone: "pending",
+        headline: "Nothing to check yet.",
+        detail:
+          "Paste the mnemonic from your card. It stays on this device — the reading is a " +
+          "checksum and a header, not a lookup, and there is nothing to send anywhere.",
+      };
+    }
+    return sssHeaderVerdict(/** @type {ShareFacts} */ (s.facts), base);
+  }
 
   /** @type {ShareCheckVerdict} */
   const base = {
@@ -335,7 +495,16 @@ export function checkShare({ shareText = "", commitmentsText = "" } = {}) {
       detail:
         "Nothing has been checked. A mnemonic that decodes cleanly proves only that it was " +
         "typed correctly; it does not show which split it came from, or that the person who " +
-        "handed it to you dealt it honestly. Paste the published commitments to find that out.",
+        "handed it to you dealt it honestly. Paste the published commitments to find that out — " +
+        // The second sentence is finding 2b's fix on this road. The first is
+        // still right for a `vss.split` card and stays; what was wrong was
+        // that it was the *only* way out, on a panel a custodian reaches
+        // holding a card the room ceremony dealt, for which the document it
+        // asks for does not exist. Naming the other road here is what makes
+        // the remedy performable rather than a dead end with a helpful tone.
+        "or, if this card came from a plain Shamir split, say so above: sss.split publishes no " +
+        "commitments and never will, and there is a different and shorter list of things that " +
+        "can be known about it.",
     };
   }
 

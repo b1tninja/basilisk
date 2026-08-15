@@ -7,6 +7,7 @@ import {
   linkOriginNote,
   relayFallbackReadout,
 } from "@/lib/toolkit/artifact-readouts.js";
+import { peerVerdictBadge } from "@/lib/toolkit/session-flow.js";
 import type { SessionStripState } from "./SessionStrip";
 
 /**
@@ -106,6 +107,7 @@ type Props = {
 };
 
 function PeerRow({ peer }: { peer: ConnectionPeer }) {
+  const verdict = peerVerdictBadge(peer);
   return (
     <li className="flex items-center gap-2 rounded-[6px] border border-[color-mix(in_srgb,var(--border)_70%,transparent)] px-2 py-1.5">
       {/* Colour comes from `[data-peer-state]` rules in toolkit.css, never an
@@ -151,14 +153,26 @@ function PeerRow({ peer }: { peer: ConnectionPeer }) {
       ) : null}
       {/* Authentication is reported separately from connectivity on purpose: a
           peer can be fully connected and completely unverified, and conflating
-          the two is how you end up trusting the wrong end of a working pipe. */}
+          the two is how you end up trusting the wrong end of a working pipe.
+
+          What that argument left open is the other direction, and it is what
+          `peerVerdictBadge` closes: a peer can be *confirmed* and completely
+          disconnected, and a badge reading only `verified` beside a dead link
+          invites the reader to hear it as "this link is good". Confirmation
+          stays true — it is a fact about a key, not about a transport — so the
+          badge keeps the word and pairs it with where the link stands, which
+          is `sent · unconfirmed`'s shape one surface over.
+
+          `data-verified` is deliberately still the confirmation bit alone. It
+          is the *history*, the same claim it always was, and the presence half
+          is `data-peer-state` on the dot and the state text beside it. */}
       {/* Tint from `--tile-tint`, not a hand-written 14%/16%. The two were
           written before the token existed and measured 3.90:1 and 3.92:1 in
           light against a 4.5 bar — the token is 6% there precisely so an
           accent keeps its contrast under its own wash. Same rule now as every
           other badge in the app (`.peer-verdict` in toolkit.css). */}
-      <span className="peer-verdict shrink-0" data-verified={peer.authenticated ? "1" : "0"}>
-        {peer.authenticated ? "verified" : "unverified"}
+      <span className="peer-verdict shrink-0" data-verified={verdict.verified ? "1" : "0"}>
+        {verdict.label}
       </span>
       <span className="shrink-0 text-[9.5px] text-[var(--muted-foreground)]">{peer.state}</span>
     </li>

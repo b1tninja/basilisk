@@ -62,11 +62,20 @@
  *   the share rows open because the notebook now asks for them. Step 2 first
  *   pins the honest *before* (an empty notebook still needs nothing), then
  *   drives the road; nothing in this file types a pipeline any more.
- * - **2b** — the cold "Check a share…" panel *can* say which share this is, how
- *   many recombine and which set it belongs to — the exact facts
- *   `three-party-ceremony.e2e.js` finding 5c says a holder cannot learn — and it
- *   then sends the reader after a commitments document that a `sss.split`
- *   ceremony never produces and never can.
+ * - **2b** — *fixed, and turned over in step 3.* The cold "Check a share…"
+ *   panel could always say which share this is, how many recombine and which
+ *   set it belongs to — the exact facts `three-party-ceremony.e2e.js` finding
+ *   5c says a holder cannot learn — and it then sent the reader after a
+ *   commitments document that a `sss.split` ceremony never produces and never
+ *   can. The panel branches on the scheme now. It has to *ask*, because a
+ *   BLIP39 mnemonic does not say: `vss.split` emits the same share shape as
+ *   `sss.split` and both go through the same encoder, so there is no field to
+ *   read and the card a custodian holds is byte-indistinguishable either way.
+ *   Opened with no commitments — which is how this custodian reaches it — the
+ *   panel opens on the plain-Shamir road, states what the checksum and the
+ *   header prove *and* what they do not, does not draw a commitments field at
+ *   all, and prints `room-recovery.js`'s recovery instead of a verify that
+ *   could never pass. Step 3 pins each of those.
  * - **3a** — *fixed.* The too-few-shares refusal named the true count and then
  *   attached a remedy about OpenPGP ciphertext and a GPG panel to a reader who
  *   had neither. The appendix is now conditional on armor actually sitting in
@@ -78,8 +87,9 @@
  *   the message now names every row with the set it came from — in the same
  *   four hex digits the check panel prints, which is what step 5 compares.
  *
- * What remains pinned unfixed is 2b: the one surface that reads a lone share
- * still asks for commitments an `sss.split` ceremony cannot produce.
+ * Nothing in this file is pinned unfixed any more. What step 3 still pins is
+ * the *shape* of the fix: the panel says less than it used to, and every
+ * sentence it kept is one it can pay for.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -378,7 +388,14 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
       await panel.locator("textarea").first().fill(cards[1]);
       await expect
         .poll(async () => await panel.getAttribute("data-status"), { timeout: 10000 })
-        .toBe("share-only");
+        .toBe("header-only");
+      // Opened on the plain-Shamir road without being asked, which is the
+      // whole of what "branch on the scheme" means for *this* custodian: they
+      // arrived holding nothing but a card, and a card from this ceremony is
+      // an `sss.split` card. The toggle is there to be moved by somebody who
+      // knows otherwise; nobody who does not has to know it exists.
+      read.scheme = String(await panel.getAttribute("data-scheme"));
+      read.commitmentsFields = String(await panel.locator("textarea").count());
       read.facts = (await panel.locator(".share-check-facts").innerText()).replace(/\s+/g, " ");
       read.detail = (await panel.locator(".share-check-detail").innerText()).replace(/\s+/g, " ");
       read.labels = (await panel.innerText()).replace(/\s+/g, " ");
@@ -407,31 +424,67 @@ describe.runIf(availability.ok)("recovering on a machine that never saw the deal
     expect(facts, `the panel's facts: ${facts}`).toMatch(/set [0-9A-F]{4}/);
     panelSetId = /set ([0-9A-F]{4})/.exec(facts)?.[1] || "";
 
-    // **FINDING (2b) — and then it sends them after a document that cannot
-    // exist.** The verdict is honest about what it has *not* checked, which is
-    // right and is the whole reason `share-only` is its own status. The remedy is
-    // not: the only route out of it is "paste the published commitments", and a
-    // share dealt by the room ceremony came from `sss.split`, which produces no
-    // commitments and never will. The panel's own `mismatch` copy knows this —
-    // it lists "the card came from `sss.split`, which produces shares that carry
-    // no commitments and can never match any" as one of three explanations for a
-    // failed check — but a custodian holding an SSS card can only reach that
-    // sentence by pasting somebody else's commitments and being told their card
-    // might be broken.
+    // **FINDING (2b), turned over — it no longer sends them after a document
+    // that cannot exist.**
     //
-    // The field label below states it as settled fact: the ceremony "was supposed
-    // to hand these out openly". For every share this room ceremony deals, it was
-    // not, and there is nothing the reader can do about it from here.
-    expect(read.detail, `the share-only verdict: ${read.detail}`).toContain(
-      "published commitments"
+    // The verdict was always honest about what it had *not* checked, which is
+    // right and is the whole reason `share-only` was its own status. The
+    // remedy was not: the only route out of it was "paste the published
+    // commitments", and a share dealt by the room ceremony came from
+    // `sss.split`, which produces no commitments and never will. The panel's
+    // own `mismatch` copy knew this — it lists an `sss.split` card as one of
+    // three explanations for a failed check — but a custodian holding one
+    // could only reach that sentence by pasting somebody else's commitments
+    // and being told their card might be broken.
+    //
+    // The panel branches now, and the branch is *asked for* rather than
+    // inferred, because a BLIP39 mnemonic carries no scheme: `vss.split` emits
+    // the same share shape as `sss.split` and both go through the same
+    // encoder, so there is nothing in the card to read. What decides the
+    // opening position is evidence — arriving with commitments in hand is only
+    // possible for a checkable split — and this custodian arrived with a card
+    // and nothing else.
+    expect(read.scheme, "the cold panel did not open on the road this ceremony deals").toBe("sss");
+    // One textarea: the card. The commitments box is not drawn, which is the
+    // honest form of a field nobody can fill. Absence rather than a disabled
+    // box with an apology in it — the apology was the defect.
+    expect(read.commitmentsFields, "the commitments field is still on the plain-Shamir road").toBe(
+      "1"
     );
-    expect(read.labels, "the commitments field stopped promising the ceremony published them")
-      .toContain("was supposed to hand these out openly");
-    // And the one recipe it prints verifies rather than recovers, so even the
-    // custodian who opens the fold and copies what they are shown is one op short
-    // of getting their secret back.
-    expect(read.byHand, `the recipe the panel prints: ${read.byHand}`).toContain("vss.verify");
-    expect(read.byHand, "the check panel grew a recovery recipe").not.toContain("sss.combine");
+    expect(read.labels, "the panel still promises this ceremony published commitments").not.toContain(
+      "was supposed to hand these out openly"
+    );
+
+    // **What the verdict now claims, and refuses to claim.** Every one of these
+    // is a sentence about the same two facts — a checksum and a header — and
+    // the negative half is asserted as hard as the positive, because a branch
+    // that lost its only real check is exactly where reassurance creeps in.
+    const { detail } = read;
+    expect(detail, `the verdict: ${detail}`).toContain("checksum passed");
+    expect(detail, `the verdict: ${detail}`).toMatch(
+      /share 2 of 3 in set [0-9A-F]{4} with any 2 recombining/
+    );
+    expect(detail, `the verdict: ${detail}`).toContain(
+      "not a check that this card came from the split you think it did"
+    );
+    expect(detail, `the verdict: ${detail}`).toContain("does not show that it will reconstruct");
+    // And why there is no commitments road here at all — stated as
+    // non-existence, not as something missing that could be chased.
+    expect(detail, `the verdict: ${detail}`).toContain("sss.split does not produce any");
+    // The road that *does* exist, named as what it is: a comparison made later,
+    // needing the other holders, proving the recombination rather than this
+    // card. `6388ad0`'s deal is what put a digest there to compare against.
+    expect(detail, `the verdict: ${detail}`).toContain("$expected");
+    expect(detail, `the verdict: ${detail}`).toContain("proves the recombination — not this card");
+
+    // And the recipe it prints is the recovery, so the custodian who opens the
+    // fold and copies what they are shown is holding the thing that gets their
+    // secret back rather than an op that could never pass for their card.
+    expect(read.byHand, `the recipe the panel prints: ${read.byHand}`).toContain("sss.combine");
+    expect(read.byHand, `the recipe the panel prints: ${read.byHand}`).toContain("digest sha-256");
+    expect(read.byHand, "the plain-Shamir road still prints a verify that cannot pass").not.toContain(
+      "vss.verify"
+    );
   }, 120_000);
 
   /* ── 4. one share of a 2-of-3 ────────────────────────────────────────────── */

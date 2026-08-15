@@ -292,6 +292,47 @@ export function confirmationReadout(peer) {
 }
 
 /**
+ * The roster row's verdict — key confirmation and link state as one string,
+ * because they are two claims and only one of them is present tense.
+ *
+ * `ConnectionsPanel` used to print the word `verified` on its own, from
+ * `pgpVerified && kcVerified`, and the row for a destroyed browser read
+ * *whole fingerprint · verified · failed*. Both halves of that were true and
+ * the pairing was not: the field that retracts key confirmation is cleared by
+ * `channel.onclose`, which a browser that is destroyed rather than closed down
+ * never fires, so `verified` was being read as "this link is good right now"
+ * on a link that had stopped. That is `dealer-absent-recovery.e2e.js` finding
+ * 8a, and it is a reading defect rather than a routing one — nothing acts on
+ * the stale bit, because every send gates on the channel's own `readyState`.
+ *
+ * The fix is not to retract the word. **Confirmation is history**: their
+ * signed signalling proved the key and a transcript hash proved the channel
+ * was the one that key was on, and a transport dying later does not un-prove
+ * either. What it must never do is stand alone, where a reader supplies the
+ * present tense themselves. So the badge carries both, in `1dbc950`'s shape —
+ * `sent · unconfirmed` is the same sentence about a different fact: what
+ * happened, then where it stands.
+ *
+ * The presence half is `confirmationReadout`'s word and never a second
+ * vocabulary. That function already answers "what is this link doing" for
+ * every non-connected state (`link down`, `connecting`, `closed`), so the
+ * roster and the session strip cannot end up with two names for one state.
+ *
+ * An unconfirmed peer is unchanged: there is no history to pair anything with,
+ * and `unverified` is already the whole claim.
+ *
+ * @param {{ state?: string, authenticated?: boolean }} peer
+ * @returns {{ label: string, verified: boolean, live: boolean }}
+ */
+export function peerVerdictBadge(peer) {
+  const verified = !!peer?.authenticated;
+  const live = String(peer?.state || "new") === "connected";
+  if (!verified) return { label: "unverified", verified, live };
+  if (live) return { label: "verified", verified, live };
+  return { label: `verified · ${confirmationReadout(peer).verdict}`, verified, live };
+}
+
+/**
  * Has this peer signed an attestation over the manifest *this* machine derives?
  *
  * `null` where there is nothing to compare against — no notebook, or a notebook

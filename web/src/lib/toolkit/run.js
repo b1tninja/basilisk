@@ -28,11 +28,15 @@
  * - **`scope`** — the cells this run may execute, inclusive on both ends.
  *   `runFrom(i)` is a run whose scope is `i..end` — the behaviour it always
  *   had, now stated instead of implied — and a ceremony stage's run is scoped
- *   to its one cell. Nothing here adds a control that runs a narrower scope;
- *   whether a per-cell button should exist is a product decision this module
- *   does not make. What scope buys today is that the loop's bounds and the
- *   record agree by construction, and that a future phase-scoped run (the
- *   recover generator's missing control) has a place to say what it means.
+ *   to its one cell. This module used to end the paragraph with "nothing here
+ *   adds a control that runs a narrower scope; whether a per-cell button
+ *   should exist is a product decision this module does not make". That
+ *   decision has since been made and the control exists — `useNotebook`'s
+ *   `runCellOnly`, drawn as *Only this cell* beside each cell's Run — and it
+ *   needed nothing here beyond a scope both of whose ends are the same cell.
+ *   That is the point worth keeping: the capability was already complete, and
+ *   what was missing was a caller. Run itself is untouched and still walks to
+ *   the end.
  *
  * - **`record`** — what the run did. The kernel writes it as cells execute:
  *   per-cell reads/writes with the sender's fingerprint where a value came
@@ -55,8 +59,14 @@
  * @property {"press"} kind   the only kind anything can produce today — see
  *   the module note for why no others are declared
  * @property {string} press   which control: `"run-from"` (the notebook's Run,
- *   from a cell) or `"ceremony-stage"` (a CeremonySheet stage button)
- * @property {number} [cell]  where the press landed, for `run-from`
+ *   from a cell, walking to the end), `"run-cell"` (*Only this cell*, whose
+ *   scope is that one cell) or `"ceremony-stage"` (a CeremonySheet stage
+ *   button). `run-from` and `run-cell` are kept apart even though a Run
+ *   pressed on the last cell produces the identical scope: a receipt asking
+ *   "did somebody choose to run just this" is asking about the press, and a
+ *   scope that happens to be one cell wide does not answer it.
+ * @property {number} [cell]  where the press landed, for `run-from` and
+ *   `run-cell`
  * @property {string} [stage] which stage, for `ceremony-stage`
  */
 

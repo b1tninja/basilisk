@@ -394,8 +394,17 @@ describe("the run is what hands them over, not a second press", () => {
   });
 
   it("puts what happened on the run line, which is the surface always on screen", () => {
-    expect(HOOK).toMatch(/setRunStatus\(\(prev\) => `\$\{prev\} \$\{narrateOffers\(outcomes\)\}`/);
-    expect(HOOK).toMatch(/setRunStatus\(\(prev\) => `\$\{prev\} \$\{narrateNoSession\(waiting\)\}`/);
+    // Appended to the verdict on screen, and announced *alone*. The two halves
+    // are asserted separately because they can now diverge: a change that
+    // appended the sentence and forgot the announcement would leave a screen
+    // reader with "Done" and no idea a cell had gone out, and a change that
+    // announced the whole rebuilt line would read the verdict out twice.
+    expect(HOOK).toMatch(
+      /const said = narrateOffers\(outcomes\);\r?\n\s*setRunStatus\(\(prev\) => `\$\{prev\} \$\{said\}`\.trim\(\)\);\r?\n\s*announce\(said\);/
+    );
+    expect(HOOK).toMatch(
+      /const said = narrateNoSession\(waiting\);\r?\n\s*setRunStatus\(\(prev\) => `\$\{prev\} \$\{said\}`\.trim\(\)\);\r?\n\s*announce\(said\);/
+    );
   });
 
   it("builds the run from the room as it stands, or there is nothing to hand over", () => {

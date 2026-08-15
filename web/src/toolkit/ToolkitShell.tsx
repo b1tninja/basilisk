@@ -1759,6 +1759,56 @@ export function ToolkitShell() {
   const [activity, setActivity] = useState(() => listActivity());
   useEffect(() => onActivityChange(() => setActivity(listActivity())), []);
 
+  /**
+   * A share arriving on somebody else's machine, said out loud.
+   *
+   * `1dbc950` gave a send an outcome that comes back from the far end —
+   * `sent · unconfirmed`, amended in place to `reached <fingerprint>'s session
+   * 14:07:23` when the ack lands. The record was complete and the announcement
+   * was not: the amend happens seconds after the press, on a row inside a tray
+   * tab, so the only way to learn that a key share arrived was to have the
+   * Activity tab open and be watching it. That is exactly the shape of fact a
+   * reader who cannot see the tray has no other route to.
+   *
+   * A *transition*, never a state: the map starts empty, so nothing that is
+   * already confirmed at mount is announced, and only an id whose receipt was
+   * seen unconfirmed and is now `reached` produces a sentence. Everything else
+   * the log records — Copy, Download, the send itself — is either already on
+   * screen where the person pressed it or is not news, and narrating the whole
+   * log would put this region back in the noise business the ticker was kept
+   * out of.
+   *
+   * **`announce`, and not `narrate`, and this was found the hard way.** The
+   * first version wrote the run status line too, which is what every other
+   * event on this hook does. An ack comes back milliseconds after the send, so
+   * the confirmation landed *on top of* the run's own verdict — a person who
+   * pressed Run on a `quorum.send` cell watched "Done" appear and be replaced
+   * before they could read it, and `placed-journey.e2e.js` caught it in four
+   * places. The visible home of this fact is the Activity row `1dbc950`
+   * amends; what was missing was a voice for it, not a second place to print
+   * it.
+   */
+  const receiptsSeen = useRef(new Map<number, string>());
+  const announce = nb.announce;
+  useEffect(() => {
+    const was = receiptsSeen.current;
+    const now = new Map<number, string>();
+    const landed: string[] = [];
+    for (const e of activity) {
+      const receipt = String(e.receipt || "");
+      now.set(e.id, receipt);
+      const before = was.get(e.id);
+      // `before === undefined` is a row this effect has not seen — the first
+      // pass after mount, or an entry born already confirmed — and neither is
+      // a delivery that happened while somebody was reading this page.
+      if (before !== undefined && before !== receipt && receipt.includes("reached ")) {
+        landed.push(`${e.artifact || e.label} — ${receipt}`);
+      }
+    }
+    receiptsSeen.current = now;
+    if (landed.length) announce(landed.join(" · "));
+  }, [activity, announce]);
+
   const approvalGrants = useMemo(() => {
     void now;
     void approvalAsk;
@@ -2447,6 +2497,45 @@ export function ToolkitShell() {
           </p>
         ) : null}
 
+        {/* **The one live region this application has**, and it is deliberately
+            not wrapped around the paragraph above.
+
+            That paragraph carries two different kinds of sentence. One is the
+            per-cell ticker — `Running cell 3…`, rewritten once per cell — and
+            the other is news: the room moved, a rotation dropped a placement,
+            a cell was handed over or refused, the run failed and here is why.
+            An `aria-live` on the paragraph would announce both, so a twelve
+            cell run would interrupt a reader twelve times with a fact they
+            cannot act on and bury the one announcement that mattered. The
+            hook's `narrate`/`refuse` decide which sentences get here; the
+            ticker calls `setRunStatus` and is not among them.
+
+            Empty-but-present from first paint, which is the part that is easy
+            to get wrong: a live region has to exist *before* its content
+            changes or the first announcement is dropped, so this renders
+            unconditionally rather than alongside the paragraph.
+
+            `polite`, never `assertive`: none of this interrupts a person
+            mid-word, and the two `aria-live` regions on `SessionStart` are
+            inside a sheet that is closed whenever this one is speaking.
+
+            The inner span is re-keyed on `announcement.n` so that the *same*
+            sentence twice — two runs both ending "Done", the same refusal
+            twice — is a real DOM mutation and therefore a real announcement.
+            Without it the second one is byte-identical text and silent.
+
+            `sr-only` and not a hand-rolled clip: the class is in `site.css`
+            and the page runs under `style-src 'self'`, which blocks the style
+            prop React would otherwise write. */}
+        <div
+          className="sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+          data-run-announcer
+        >
+          <span key={nb.announcement.n}>{nb.announcement.text}</span>
+        </div>
+
         {approvalAsk ? (
           <ApprovalBanner
             request={approvalAsk.request}
@@ -2801,6 +2890,56 @@ export function ToolkitShell() {
                           >
                             Run
                           </Button>
+                          {/* **Secondary, and next to Run rather than under a
+                              menu.** `run.js` built `scope` as a capability and
+                              said out loud that whether a per-cell control
+                              should exist was a product decision it would not
+                              make; this is that decision, and it is additive.
+                              Run keeps walking to the end of the notebook,
+                              because that is what every finger in this product
+                              already expects it to do.
+
+                              The label is the whole difference and it is spelt
+                              out rather than hinted at: `Only this cell` beside
+                              `Run` reads correctly the first time, where an
+                              icon or a `Run ¹` would need a tooltip — and a
+                              tooltip reaches neither touch nor most screen
+                              readers, which is the trap `RunBar` carries a
+                              correction for. `aria-label` carries the sentence
+                              those three words abbreviate, because "Only this
+                              cell" read out of its row does not say what it is
+                              only doing.
+
+                              An ordinary button in the header's action group,
+                              so Tab reaches it straight after Run.
+
+                              **Absent rather than refused, and only here.**
+                              Every reason this control could decline for is a
+                              reason Run declines for in the same words —
+                              narrowing a scope changes nothing about whether a
+                              cell can run at all — and Run is always on screen
+                              carrying that sentence. A second button repeating
+                              it would put the identical refusal on the page
+                              twice and announce it twice, which is the defect
+                              `refusal.tsx` grew `reasonId` to prevent. There is
+                              no state in which this is missing and its absence
+                              is the news: Run is right beside it, saying why
+                              nothing here will run. */}
+                          {chain.steps?.length && !needs.length ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              aria-label={`Run only cell ${i}, without the cells below it`}
+                              busy={nb.busy}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                nb.setFocusedCell(i);
+                                void nb.runCellOnly(i);
+                              }}
+                            >
+                              Only this cell
+                            </Button>
+                          ) : null}
                           <Button
                             size="sm"
                             variant="ghost"
@@ -3993,7 +4132,41 @@ export function ToolkitShell() {
                         void nb.shareNotebook().then((r) => {
                           setNotebookShareNote(
                             r.ok
-                              ? `Notebook signed and shared with ${r.sent} peer${r.sent === 1 ? "" : "s"}. A peer with an empty notebook takes it straight away; one with their own work is asked.`
+                              ? // **"shared with 2 peers" was a claim about the
+                                // far end, made out of a fact about this one.**
+                                // `_publishDocument` returns how many channels
+                                // it wrote to, counting every peer whose
+                                // `channel.readyState` reads `open` — and a
+                                // destroyed browser never fires `onclose`, so a
+                                // peer that no longer exists is still counted
+                                // and the sentence said its notebook had been
+                                // shared with them. That is
+                                // `dealer-absent-recovery.e2e.js` finding 6a.
+                                //
+                                // The obvious fix is the one the record cannot
+                                // pay for. `1dbc950` built delivery acks, but
+                                // they are a `quorum.send` mechanism: the
+                                // receiver acks a *chat* frame by content
+                                // digest, `deliveryAckTap` consumes it, and
+                                // `sendReceipt` writes the outcome onto the
+                                // send's Activity entry. A notebook goes out
+                                // through `_publishDocument` as a sealed
+                                // document frame, which nothing acks, and
+                                // `run.record.sent` is a set of offer keys with
+                                // nothing to do with delivery. So "reached 1 of
+                                // 2" is not a sentence this product can
+                                // truthfully write, and writing it would be
+                                // inventing the acknowledgment.
+                                //
+                                // What is left is to stop overclaiming: name
+                                // the wire fact as the wire fact, and carry
+                                // `sendReceipt`'s own word for the rest, in
+                                // `1dbc950`'s spelling. Unconfirmed here is
+                                // permanent and says so — there is no ack
+                                // coming, ever — which is the sender's true
+                                // state of knowledge and the only direction
+                                // this note is allowed to be wrong in.
+                                `Notebook signed and written to ${r.sent} open channel${r.sent === 1 ? "" : "s"} · unconfirmed. Nothing acknowledges a notebook, and a channel stays open here when the browser at the far end is gone, so that is a count of writes and not of arrivals. A peer with an empty notebook takes it straight away; one with their own work is asked.`
                               : r.why || "That notebook could not be shared."
                           );
                         });
@@ -4830,7 +5003,19 @@ export function ToolkitShell() {
                 anything.
               </SheetDescription>
             </SheetHeader>
-            <div className="px-4 pb-4">
+            {/* **Scrolls, which it did not.** `SheetContent` is a full-height
+                flex column with no overflow anywhere in it, so anything past
+                the fold was not merely below the viewport — it was
+                unreachable, by pointer and by keyboard alike. Nobody noticed
+                while the panel was short. It stopped being short the moment
+                the plain-Shamir verdict had to say what it does *not* prove,
+                and the first thing to go over the edge was "Do this by hand
+                instead" — the fold holding the recovery recipe, i.e. the one
+                thing on this panel a custodian actually needs.
+                `min-h-0` is the half that is easy to omit: a flex child's
+                default `min-height: auto` refuses to shrink below its content,
+                so `overflow-y-auto` alone would have scrolled nothing. */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
               <ShareCheck onScanQr={scanCardPhoto} />
             </div>
           </SheetContent>

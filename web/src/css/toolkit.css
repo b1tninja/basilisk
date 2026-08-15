@@ -1677,6 +1677,39 @@ input[type="file"][data-basilisk-file-picker] {
   line-height: 1.6;
 }
 
+/*
+ * Which split dealt the card — the question the panel has to ask because a
+ * BLIP39 mnemonic cannot answer it (`lib/toolkit/share-check.js`).
+ *
+ * A real `fieldset`/`legend`, not a bold span over a row of buttons: it groups
+ * two controls that are one choice, and a legend is the only thing that names
+ * a group to a screen reader without a second `aria-` attribute to keep in
+ * step. The browser default border and padding are cleared because the panel's
+ * own rhythm is the gap between blocks, not a box per block.
+ */
+.share-check-scheme {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.share-check-scheme legend {
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.share-check-scheme small {
+  max-width: 62ch;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+
 .share-check-scan {
   display: flex;
   flex-direction: column;

@@ -157,3 +157,213 @@ describe.runIf(availability.ok)("deleting a notebook cell", () => {
     expect(await cellStatus(page, 0)).toBe("ok");
   });
 });
+
+/**
+ * Running one cell, and telling somebody who cannot see the screen.
+ *
+ * Two changes that share a browser because they share the surface: the cell
+ * header grew a second Run, and the run status line grew a voice. Both are
+ * only true in a rendered page — the scope has always been a field on the run
+ * object, and an `aria-live` attribute is worth nothing until something
+ * actually writes into the element carrying it — so node cannot witness
+ * either.
+ *
+ * One page, no session, the same three distinguishable cells as above.
+ */
+describe.runIf(availability.ok)("running one cell, and saying so out loud", () => {
+  /**
+   * Three cells where the third **reads a slot the second writes**.
+   *
+   * That dependency is the whole reason this set differs from `CELLS` above.
+   * Before a per-cell control existed, cell 2 could only ever be reached by a
+   * run that had already executed cell 1 in the same pass, so "this cell's
+   * inputs are not in slots" was a state the notebook could not be put into by
+   * pressing anything. It can now, and what it says is under test.
+   */
+  const RUNS = [
+    { recipe: "bytes deadbeef | encode hex | out $a", shows: "deadbeef" },
+    { recipe: "bytes cafebabe | encode hex | out $b", shows: "cafebabe" },
+    { recipe: "$b | out $c", shows: "cafebabe" },
+  ];
+
+  /** @type {Awaited<ReturnType<typeof openPeers>>} */
+  let mesh;
+  /** @type {import("playwright").Page} */
+  let page;
+
+  /** What a screen reader would have been handed, whitespace squeezed. */
+  const announced = async (p) =>
+    (await p.locator("[data-run-announcer]").innerText()).replace(/\s+/g, " ").trim();
+
+  beforeAll(async () => {
+    mesh = await openPeers({ count: 1, path: "/toolkit" });
+    page = mesh.peers[0].page;
+    await page.getByRole("button", { name: "Cell", exact: true }).click();
+    await page.getByRole("button", { name: "Cell", exact: true }).click();
+    for (const [i, c] of RUNS.entries()) await writeCell(page, i, c.recipe);
+  }, 120000);
+
+  afterAll(async () => {
+    await mesh?.close();
+  });
+
+  it("offers a second, differently named Run on every runnable cell", async () => {
+    // Named, not iconographic. The assertion is `getByRole` with the accessible
+    // name and then the visible text, because a control whose difference from
+    // the one beside it lives in a `title` is a control most screen readers and
+    // every touch device never learn the difference from.
+    for (const i of [0, 1, 2]) {
+      const only = cell(page, i).getByRole("button", {
+        name: `Run only cell ${i}, without the cells below it`,
+      });
+      await only.waitFor({ state: "visible", timeout: 10000 });
+      expect(await only.innerText()).toBe("Only this cell");
+    }
+    // The live region exists from first paint, before anything has been
+    // written into it. A region created at the moment it first has something
+    // to say is a region whose first announcement is dropped.
+    const region = page.locator("[data-run-announcer]");
+    expect(await region.count()).toBe(1);
+    expect(await region.getAttribute("aria-live")).toBe("polite");
+    expect(await announced(page)).toBe("");
+  });
+
+  it("refuses a cell whose inputs are not in slots, and names it", async () => {
+    // **First, deliberately.** Nothing has run on this page, so `$b` is in no
+    // slot — the state a per-cell run can newly produce, reached here without
+    // clearing anything, so the sentence under test is the refusal and not a
+    // Clear session narration that arrived after it.
+    await cell(page, 2).getByRole("button", { name: /^Run only cell 2/ }).click();
+    await expect.poll(async () => await cellStatus(page, 2), { timeout: 60000 }).toBe("error");
+    await runSettled(page);
+
+    const said = await announced(page);
+    // Named. A reader who cannot see which row went red is told which one did,
+    // and `Cell [2] — …` is `startRun`'s own prefix, the same one on screen.
+    expect(said, `the live region: ${said}`).toMatch(/^Cell \[2\] — /);
+    // And it carries the refusal, not a genre. "Failed" is the status line's
+    // word for this state and names nothing anybody can act on; the sentence
+    // that names the missing slot is the one worth interrupting for.
+    expect(said, `the live region: ${said}`).not.toBe("Failed");
+    expect(said, `the live region: ${said}`).toContain("$b");
+    // Nothing above it was touched — a refusal that had quietly run cell 1 to
+    // satisfy itself would be a different control than the one advertised.
+    expect(await cellStatus(page, 1)).toBe("idle");
+  });
+
+  it("runs that cell and stops, where Run would have walked to the end", async () => {
+    // The reproduction this exists for: pressing Run on cell 1 leaves cells 1
+    // *and* 2 with answers. Both directions are asserted — the cell ran, and
+    // the one under it did not — because a control that runs nothing at all
+    // also satisfies "cell 2 did not run".
+    await cell(page, 1).getByRole("button", { name: /^Run only cell 1/ }).click();
+    await expect.poll(async () => await cellStatus(page, 1), { timeout: 60000 }).toBe("ok");
+    await runSettled(page);
+    expect(await cell(page, 1).innerText(), "the cell that was run has no answer").toContain(
+      RUNS[1].shows
+    );
+    expect(
+      await cellStatus(page, 2),
+      "Only this cell walked on into the cell below it"
+    ).toBe("error");
+
+    // Run itself is untouched — the muscle memory the decision protects.
+    // From the same cell it still carries on downward, and cell 2 now has
+    // what it needs.
+    await cell(page, 1).getByRole("button", { name: "Run", exact: true }).click();
+    await expect.poll(async () => await cellStatus(page, 2), { timeout: 60000 }).toBe("ok");
+    await runSettled(page);
+  });
+
+  it("is reached from Run by one Tab, with no pointer anywhere", async () => {
+    // The whole point of a *secondary* control is that it is one: in the tab
+    // order, and beside the thing it is secondary to rather than somewhere a
+    // keyboard has to hunt for.
+    await cell(page, 1).getByRole("button", { name: "Run", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    expect(
+      await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
+      "Tab from Run did not land on the per-cell control"
+    ).toBe("Run only cell 1, without the cells below it");
+    // And it runs from the keyboard, which is the half an `onClick` alone
+    // would leave undone.
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => await cellStatus(page, 1), { timeout: 60000 }).toBe("ok");
+    await runSettled(page);
+  });
+
+  it("announces the run's outcome and never its per-cell ticker", async () => {
+    // **The assertion that makes this a mechanism rather than an attribute.**
+    // An `aria-live` div nothing writes to is the dead-mechanism defect in
+    // accessibility clothing, so what is pinned is that the element's content
+    // *changes*, and changes to the right thing.
+    //
+    // **Sampled during the run, and this is not a detail.** The first version
+    // of this read the region once the run had settled and asserted the ticker
+    // was not in it — which is true either way, because by then it holds
+    // "Done". Routing `Running cell ${i}…` through `narrate` left that version
+    // green: a screen reader would have been interrupted once per cell and the
+    // final value would have looked identical. A MutationObserver over the
+    // region is the only witness to what was *said*, as opposed to what is
+    // left showing.
+    await page.evaluate(() => {
+      const region = document.querySelector("[data-run-announcer]");
+      const said = [];
+      const push = () => {
+        const t = (region.textContent || "").trim();
+        if (t && said[said.length - 1] !== t) said.push(t);
+      };
+      push();
+      const obs = new MutationObserver(push);
+      obs.observe(region, { childList: true, subtree: true, characterData: true });
+      Object.assign(window, { __said: said, __saidObs: obs });
+    });
+
+    await page.getByRole("button", { name: "Run all" }).click();
+    await expect.poll(async () => await announced(page), { timeout: 120000 }).toBe("Done");
+    await runSettled(page);
+
+    const said = await page.evaluate(() => {
+      window.__saidObs.disconnect();
+      return window.__said;
+    });
+    // It spoke, and the last thing it said is the outcome.
+    expect(said, `the live region said: ${JSON.stringify(said)}`).toContain("Done");
+    // And nothing in the whole sequence was the ticker. Three cells ran; one
+    // interruption per cell is exactly what drowns the announcement that
+    // matters, which is why it is kept out.
+    const transcript = said.join(" · ");
+    expect(transcript, "the per-cell ticker reached the live region").not.toMatch(/Running cell/);
+    expect(transcript, "the run's opening tick reached the live region").not.toMatch(/Running…/);
+    // The line on screen is the *other* half of the split, and it is still
+    // there — silencing the ticker must not have blanked it.
+    const line = page.locator("[data-run-state]").locator("xpath=following-sibling::p[1]");
+    expect((await line.innerText()).trim()).toBe("Done");
+  });
+
+  it("says the same word twice when it happens twice", async () => {
+    // A live region announces on *change*. Two runs both ending "Done" render
+    // byte-identical text, so without the counter the second run is silent —
+    // the failure mode that looks exactly like a working feature. What is
+    // observable from outside is whether the node carrying the text is new.
+    const stamped = () =>
+      page.evaluate(() => {
+        const span = document.querySelector("[data-run-announcer] span");
+        if (!span) return null;
+        // If React re-used the node, the stamp survives; if the key changed
+        // and it remounted, the stamp is gone with the old element.
+        const seen = /** @type {*} */ (span).__seen === true;
+        /** @type {*} */ (span).__seen = true;
+        return seen;
+      });
+    expect(await announced(page)).toBe("Done");
+    expect(await stamped()).toBe(false);
+    await page.getByRole("button", { name: "Run all" }).click();
+    await expect.poll(async () => await announced(page), { timeout: 120000 }).toBe("Done");
+    await runSettled(page);
+    expect(
+      await stamped(),
+      "the second Done re-used the same node, so a screen reader heard nothing"
+    ).toBe(false);
+  });
+});

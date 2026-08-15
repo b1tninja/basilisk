@@ -523,7 +523,7 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
       .poll(async () => await dealer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/signed and shared with 2 peers/);
+      .toMatch(/written to 2 open channels · unconfirmed/);
 
     for (const page of [recoverer, bystander]) {
       // No press: `decideProposal` adopts without asking when there is no local
@@ -612,6 +612,32 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     expect(flat.join(" "), "a confirmed deal still reads unconfirmed").not.toContain(
       "unconfirmed"
     );
+
+    // **And the dealer is told, without having to be looking at this tray.**
+    //
+    // The receipt above is the record and it is only ever *read*. The
+    // confirmation arrives seconds after the press, on a row inside a tab, so
+    // a dealer who cannot see the tray had no route to the one fact that says
+    // a key share got where it was sent. It goes to the polite live region.
+    //
+    // What it must not do is take the run's own line with it, and that is the
+    // second half of this assertion rather than a separate one because the two
+    // are one decision. An ack comes back milliseconds after the send: routing
+    // this through `narrate` — which every other event on the hook uses —
+    // replaced "Done" on screen before a person could read it, in four places
+    // in `placed-journey.e2e.js`. So the confirmation is announced and not
+    // printed: the visible home of this fact is the row above.
+    const said = (await dealer.locator("[data-run-announcer]").innerText()).replace(/\s+/g, "");
+    expect(said, `the live region: ${said}`).toContain("reached");
+    expect(
+      said,
+      `the live region: ${said}`
+    ).toContain(`${L.recoverer}'ssession`);
+    const line = dealer.locator("[data-run-state]").locator("xpath=following-sibling::p[1]");
+    expect(
+      (await line.innerText()).trim(),
+      "the delivery confirmation overwrote the run's own verdict"
+    ).toMatch(/^Done\b/);
   });
 
   /* ── 5. the bystander: takes delivery, and nothing else happens ──────────── */
@@ -754,7 +780,7 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
       .poll(async () => await recoverer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/signed and shared with 2 peers/);
+      .toMatch(/written to 2 open channels · unconfirmed/);
 
     // The proposal is offered where sharing lives — the Connections tray — so
     // each machine's is opened to read it, exactly as a person would.

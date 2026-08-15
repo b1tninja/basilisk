@@ -26,6 +26,7 @@ import {
   attestationReadout,
   attestationVerdict,
   confirmationReadout,
+  peerVerdictBadge,
   parseInviteAudience,
   pasteReadout,
   rosterCounts,
@@ -185,6 +186,81 @@ describe("the readout carries the transport facts a phase name cannot", () => {
     });
     expect(read.why).toBe("Signalling dropped — reconnecting…");
     expect(read.next).toMatch(/Restart the connection/);
+  });
+});
+
+/**
+ * `dealer-absent-recovery.e2e.js` finding 8a — the roster badge.
+ *
+ * The row for a destroyed browser read *verified* beside *failed*, because the
+ * field that retracts key confirmation is cleared by `channel.onclose` and a
+ * destroyed browser never fires one. Both words were true; the pairing put a
+ * historical fact where a reader supplies the present tense.
+ *
+ * These are asserted as sentences rather than as a boolean, for the reason the
+ * file's own header gives about verdict strings: a status enum would let the
+ * pairing quietly come back under a different spelling.
+ */
+describe("a verdict badge says what was confirmed and where the link stands", () => {
+  it("keeps the word plain only while the link is actually carrying something", () => {
+    expect(peerVerdictBadge({ state: "connected", authenticated: true })).toEqual({
+      label: "verified",
+      verified: true,
+      live: true,
+    });
+  });
+
+  it("never lets verified stand alone beside a link that has stopped", () => {
+    for (const state of ["failed", "disconnected"]) {
+      const badge = peerVerdictBadge({ state, authenticated: true });
+      // The history is kept — confirmation was a fact about a key and a
+      // transport dying does not un-prove it — and it is kept *paired*.
+      expect(badge.label).toBe("verified · link down");
+      expect(badge.verified).toBe(true);
+      expect(badge.live).toBe(false);
+      // The shape of the claim, which is `1dbc950`'s: what happened, then
+      // where it stands. A label that was only the second half would have
+      // thrown away a fact the reader is entitled to.
+      expect(badge.label.startsWith("verified")).toBe(true);
+      expect(badge.label).not.toBe("verified");
+    }
+  });
+
+  it("borrows the presence word rather than minting a second vocabulary", () => {
+    // Every non-connected state's second half is `confirmationReadout`'s own
+    // verdict, so the roster and the session strip cannot end up calling one
+    // state two things.
+    for (const state of ["new", "connecting", "closed", "failed", "disconnected"]) {
+      const badge = peerVerdictBadge({ state, authenticated: true });
+      expect(badge.label).toBe(`verified · ${confirmationReadout({ state }).verdict}`);
+    }
+  });
+
+  it("leaves an unconfirmed peer exactly one word, in every state", () => {
+    // There is no history to pair anything with, and `unverified` is already
+    // the whole claim. Pairing it with a link state would read as though the
+    // link were the reason nothing is confirmed.
+    for (const state of ["new", "connecting", "connected", "failed", "disconnected", "closed"]) {
+      expect(peerVerdictBadge({ state, authenticated: false }).label).toBe("unverified");
+    }
+  });
+
+  it("is what the roster actually draws, not a function beside the one it draws", () => {
+    // The dead-mechanism check. `ConnectionsPanel` held its own
+    // `peer.authenticated ? "verified" : "unverified"` inline, and a readout
+    // module that owns the wording is worth nothing if the row still spells it
+    // out for itself.
+    const PANEL = readFileSync(
+      fileURLToPath(new URL("../toolkit/widgets/ConnectionsPanel.tsx", import.meta.url)),
+      "utf8"
+    );
+    expect(PANEL).toMatch(/import \{ peerVerdictBadge \} from "@\/lib\/toolkit\/session-flow\.js"/);
+    expect(PANEL).toMatch(/const verdict = peerVerdictBadge\(peer\)/);
+    expect(PANEL).toMatch(/\{verdict\.label\}/);
+    expect(PANEL).not.toMatch(/\? "verified" : "unverified"/);
+    // `data-verified` stays the confirmation bit alone: it is the history, and
+    // the e2e roster reader is built on it meaning exactly that.
+    expect(PANEL).toMatch(/data-verified=\{verdict\.verified \? "1" : "0"\}/);
   });
 });
 

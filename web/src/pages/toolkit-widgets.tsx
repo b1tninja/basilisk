@@ -3036,10 +3036,21 @@ function ShareCheckStates() {
       <StateLabel>Empty — nothing claimed</StateLabel>
       <ShareCheck key="empty" />
 
+      {/* The same card on both roads, which is the point of drawing them
+          together: nothing about the mnemonic differs, so nothing about the
+          mnemonic can decide which of these two a custodian is looking at.
+          The plain-Shamir one is what a card from the room ceremony reaches,
+          and it is the default for a panel opened with no commitments. */}
       <StateLabel>
-        Share only — well-formed, and the panel says nothing has been checked
+        Header only — a plain Shamir card, told what it can honestly be told
       </StateLabel>
-      <ShareCheck key="share-only" initialShare={a.mnemonics[1]} />
+      <ShareCheck key="header-only" initialShare={a.mnemonics[1]} />
+
+      <StateLabel>
+        Share only — the same card on the verifiable road, waiting for its
+        commitments
+      </StateLabel>
+      <ShareCheck key="share-only" initialShare={a.mnemonics[1]} initialScheme="vss" />
 
       <StateLabel>Commitments only — waiting for a card</StateLabel>
       <ShareCheck key="commitments-only" initialCommitments={a.commitments} />

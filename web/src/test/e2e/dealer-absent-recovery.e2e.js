@@ -58,17 +58,36 @@
  *   what happens between the press and the message arriving is a telephone
  *   call and a walk to another machine. The deal notebook carries no `wait=`
  *   at all now — there is nothing in it that waits.
- * - **6a** — the share note counts a destroyed peer: "shared with 2 peers"
- *   when one of the two is gone, because the dead browser's channel never
- *   closed and still reads open — finding 8a's mechanism reaching a second
- *   surface. Pinned in step 6.
  * - **7a** — the run's record: the gather cell names whose shares rebuilt the
  *   secret, by whole fingerprint, on the cell a person is reading when the
  *   secret comes back.
- * - **8a** — the destroyed browser's row reads "verified" beside "failed",
- *   because the field that retracts a verdict is cleared by a channel close
- *   and a destroyed browser never sends one. Still pinned unfixed: the fix is
- *   a product decision about what a verdict badge claims.
+ *
+ * ## What has been turned over
+ *
+ * Both of the remaining pins were the same product question — *what may a
+ * present-tense claim be made out of?* — and it has been answered once, for
+ * both.
+ *
+ * - **6a, turned over.** The note read "shared with 2 peers" while one of the
+ *   two no longer existed. The obvious repair was the one the record cannot
+ *   pay for: `1dbc950`'s delivery acks are a `quorum.send` mechanism, matched
+ *   by content digest on a *chat* frame and consumed by `deliveryAckTap`, and
+ *   a notebook goes out through `_publishDocument` as a sealed document frame
+ *   that nothing acknowledges — so "reached 1 of 2" would have been an
+ *   invented acknowledgment. What was changed instead is the claim: the
+ *   sentence now names the wire fact as the wire fact and carries
+ *   `sendReceipt`'s own word for the rest, so what a reader is told is
+ *   *written to 2 open channels · unconfirmed*, permanently unconfirmed
+ *   because no ack is ever coming. Asserted in step 6, with the reason it can
+ *   say no more than that.
+ * - **8a, turned over.** The row read *verified* beside *failed*. Both facts
+ *   were true and the pairing was not: confirmation is history — their signed
+ *   signalling proved the key — and a transport dying later does not un-prove
+ *   it, so the word stays. What it may not do is stand alone, where a reader
+ *   supplies the present tense. `peerVerdictBadge` pairs it with where the
+ *   link stands, in `1dbc950`'s shape: *verified · link down*. `data-verified`
+ *   still carries the confirmation bit alone, because that is still exactly
+ *   what it means. Asserted in step 8.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -467,7 +486,7 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
       .poll(async () => await dealer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/signed and shared with 2 peers/);
+      .toMatch(/written to 2 open channels · unconfirmed/);
 
     for (const page of [recoverer, bystander]) {
       await expect
@@ -667,23 +686,44 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
     expect(rcells[1]).toContain(`quorum.recv from=${L.bystander}`);
     expect(rcells[1]).toContain("shares with=$share-2");
 
-    // **FINDING (6a) — the share note counts a destroyed peer.** The sentence
-    // reads "shared with 2 peers" and one of the two no longer exists:
-    // `_publishDocument` writes to confirmed peers with open channels, and the
-    // dealer's channel never closed — `channel.onclose` does not fire for a
-    // destroyed browser, which is finding 8a's mechanism reaching a second
-    // surface. The bytes went into a channel whose other end is gone, and the
-    // person who pressed Share is told a number that includes it. Pinned
-    // rather than fixed for 8a's reason: what a write to a half-dead channel
-    // should claim is the same product decision as what a verdict badge
-    // claims, and it should be made once, for both.
+    // **FINDING (6a), turned over — the count is still 2, and it no longer
+    // claims to be about the far end.**
+    //
+    // `_publishDocument` writes to every confirmed peer whose channel reads
+    // `open`, and the dealer's still does: `channel.onclose` does not fire for
+    // a browser that was destroyed rather than closed down. So the number is
+    // 2 here and one of the two does not exist, and no amount of rewording
+    // changes that — the honest fix is not a better number, it is a sentence
+    // that says what the number counts.
+    //
+    // What it may *not* say is that anything reached anybody. `1dbc950` built
+    // delivery acks and they do not reach this surface: the receiver acks a
+    // chat frame by content digest, `deliveryAckTap` consumes it, and
+    // `sendReceipt` writes the outcome onto a `quorum.send`'s Activity entry.
+    // A notebook is a sealed document frame that nothing acknowledges, and
+    // `run.record.sent` is a set of offer keys with nothing to do with
+    // delivery. "Reached 1 of 2" would have been an invented acknowledgment,
+    // which is the one direction this note is not allowed to be wrong in.
+    //
+    // Both halves are asserted: the wire fact named as a wire fact, and the
+    // word that says it stops there.
     await trayTab(recoverer, "Connections");
     await tray(recoverer).getByRole("button", { name: "Share this notebook" }).click();
     await expect
       .poll(async () => await recoverer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/signed and shared with 2 peers/);
+      .toMatch(/written to 2 open channels · unconfirmed/);
+    const shareNote = await recoverer.locator("[data-notebook-share-note]").innerText();
+    // The old claim, gone rather than reworded around: "shared with" is a
+    // statement about the peer, and this sentence is not entitled to one.
+    expect(shareNote, `the share note: ${shareNote}`).not.toMatch(/shared with \d+ peer/);
+    // And it says why it can never say more, so a reader does not sit waiting
+    // for an `unconfirmed` that is going to flip.
+    expect(shareNote, `the share note: ${shareNote}`).toContain("Nothing acknowledges a notebook");
+    expect(shareNote, `the share note: ${shareNote}`).toContain(
+      "a channel stays open here when the browser at the far end is gone"
+    );
 
     // The bystander has run work to lose, so they are asked — adopting the
     // recovery replaces their notebook and keeps their slots, which is the
@@ -789,32 +829,45 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
         Object.values(settled).map((s) => s.split(" — ")[0]),
         JSON.stringify(settled, null, 1)
       ).not.toContain("error");
-      // **FINDING (8a) — the row for the destroyed browser still says
-      // "verified".**
+      // **FINDING (8a), turned over — the row still says verified, and no
+      // longer says it on its own.**
       //
       // `ConnectionsPanel` argues for keeping connectivity and authentication
       // apart, and the argument is right: "a peer can be fully connected and
       // completely unverified, and conflating the two is how you end up trusting
-      // the wrong end of a working pipe." What is left over is the other
+      // the wrong end of a working pipe." What was left over is the other
       // direction. `data-verified` is `pgpVerified && kcVerified`, and the one
       // place that clears `kcVerified` is `channel.onclose` — which does not run
       // when a browser is destroyed rather than closed down. So the field that
       // was written to retract the verdict when a link dies is not the field
-      // that fires, and the row a person is left reading is the whole
+      // that fires, and the row a person was left reading was the whole
       // fingerprint, then the word **verified**, then the word **failed**.
       //
-      // Nothing acts on the stale bit: `_sendChatFiltered` gates on the channel's
-      // own `readyState`, and `sendAudience` and `recvTimeoutMessage` both
-      // require `state === "connected"` as well. So this is a reading, not a
-      // routing defect — which is why it is pinned rather than fixed, and why
-      // the fix is a product decision about what a verdict badge is claiming.
+      // The fix is not to retract the word, and that is the whole of the
+      // product decision. Confirmation is a fact about a *key*: their signed
+      // signalling proved it and a transcript hash proved the channel was the
+      // one that key was on, and a transport dying afterwards does not un-prove
+      // either. `verified` stays true and `data-verified` still means exactly
+      // what it meant. What it may not do is stand alone, where a reader
+      // supplies the present tense for it — so `peerVerdictBadge` pairs the
+      // history with where the link stands, in the shape `1dbc950` chose for
+      // the same kind of sentence: what happened, then where it stands.
+      //
+      // Nothing acts on the stale bit and nothing ever did: `_sendChatFiltered`
+      // gates on the channel's own `readyState`, and `sendAudience` and
+      // `recvTimeoutMessage` both require `state === "connected"` as well. This
+      // was always a reading defect, and it is the reading that changed.
       const rows = await rosterRows(page);
       const gone = rows.find((r) => r.includes(L.dealer));
       expect(gone, `roster: ${JSON.stringify(rows)}`).toContain("state=failed");
+      // Unmoved: the attribute is the history and the history is still true.
       expect(gone, `roster: ${JSON.stringify(rows)}`).toContain("verified=1");
-      // And the word itself, which is what is actually on the screen — the
-      // attribute could be renamed without the sentence a person reads changing.
-      expect(gone, `roster: ${JSON.stringify(rows)}`).toMatch(/verifiedfailed/);
+      // And the words themselves, which are what is actually on the screen —
+      // the attribute could be renamed without the sentence a person reads
+      // changing. Both directions: the pairing is there, and the bare word
+      // beside a dead link is gone.
+      expect(gone, `roster: ${JSON.stringify(rows)}`).toMatch(/verified·linkdownfailed/);
+      expect(gone, `roster: ${JSON.stringify(rows)}`).not.toMatch(/verifiedfailed/);
       // The timeline that got there, kept on the assertion so a change in how
       // long a departure takes to show is diagnosable rather than merely red.
       expect(

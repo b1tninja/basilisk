@@ -347,7 +347,12 @@ describe("the hook watches the room rather than the button", () => {
     // initiator and leave everybody else holding them, which is the one outcome
     // worse than doing nothing: today the room is wrong together.
     const at = HOOK.indexOf("const removeFromRoom");
-    const body = HOOK.slice(at, HOOK.indexOf("}, []);", at));
+    // Ends at this callback's own dependency list, whatever is in it — it
+    // grew `narrate`/`refuse` when the run line learned to announce, and a
+    // terminator spelled `}, []);` silently ran on to the *next* empty
+    // dependency list hundreds of lines down, swallowing `dropDepartedPlacements`
+    // and failing this on the edits it exists to keep out of `removeFromRoom`.
+    const body = HOOK.slice(at, HOOK.indexOf("\n  }, [", at));
     expect(body).toContain("rotateQuorumRoom([fingerprint])");
     expect(body).not.toContain("unassignDeparted");
     expect(body).not.toContain("setCellPeer");
@@ -369,7 +374,14 @@ describe("the hook watches the room rather than the button", () => {
     // The draft narrates on the session sheet because that is where the press
     // was. Here the reader who most needs the sentence pressed nothing and may
     // have no sheet open at all.
-    expect(HOOK).toMatch(/setRunStatus\(`The room moved and somebody is no longer in it/);
+    //
+    // `narrate`, not `setRunStatus`: a rotation ordered on another machine is
+    // the event a reader who cannot see the roster has no other way to learn,
+    // so it goes to the polite live region as well as to the line. The
+    // distinction is the whole of what `narrate` is for, and a change back to
+    // `setRunStatus` would leave the sentence visible and silent.
+    expect(HOOK).toMatch(/narrate\(`The room moved and somebody is no longer in it/);
+    expect(HOOK).toMatch(/narrate\(`Room moved to epoch/);
   });
 
   it("learns about the move on every member, not only the one that ordered it", () => {

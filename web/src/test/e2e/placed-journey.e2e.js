@@ -726,7 +726,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       .poll(async () => await creator.locator("[data-notebook-share-note]").innerText(), {
         timeout: 20000,
       })
-      .toMatch(/signed and shared with 1 peer/);
+      .toMatch(/written to 1 open channel · unconfirmed/);
 
     // **It arrives and it lands, with no press.** This block used to wait for a
     // proposal card and click "Adopt their notebook", and the comment beside it
@@ -1197,7 +1197,7 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       .poll(async () => await creator.locator("[data-notebook-share-note]").innerText(), {
         timeout: 20000,
       })
-      .toMatch(/signed and shared with 1 peer/);
+      .toMatch(/written to 1 open channel · unconfirmed/);
     await expect
       .poll(async () => await readNotebookSource(joiner), { timeout: 30000, intervals: [250] })
       .toBe(want);

@@ -186,7 +186,11 @@ describe("the control exists, in both places the messages appear", () => {
   });
 
   it("says what it rewrote rather than swapping the text in silence", () => {
-    expect(HOOK).toMatch(/setRunStatus\(\s*`Upgraded:/);
+    // `narrate`, so the rewrite reaches the live region too: a migration that
+    // renamed four steps is a change to the text under the reader's cursor,
+    // and one that only appeared on screen would be silent for exactly the
+    // reader who cannot see it happen.
+    expect(HOOK).toMatch(/narrate\(\s*`Upgraded:/);
   });
 
   it("clears the stale draft, so the box shows what the notebook holds", () => {

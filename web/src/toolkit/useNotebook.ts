@@ -93,6 +93,8 @@ export type ManifestAttestation = import("../lib/toolkit/attest.js").ManifestAtt
 
 /** The reified run — `lib/toolkit/run.js` holds the argument for its shape. */
 export type Run = import("../lib/toolkit/run.js").Run;
+/** Why a run started, as `createRun` takes it. */
+export type RunCause = import("../lib/toolkit/run.js").RunCause;
 
 /** What one cell's last run here read, wrote and received (`kernel.js`). */
 export type CellProvenance = import("../lib/toolkit/kernel.js").CellProvenance;
@@ -552,6 +554,70 @@ export function useNotebook() {
   const [runStatus, setRunStatus] = useState("");
   const [runError, setRunError] = useState("");
   const [busy, setBusy] = useState(false);
+  /**
+   * What a screen reader is told — deliberately a **subset** of what the run
+   * status line says, and the reason it is separate state rather than a live
+   * region wrapped around that line.
+   *
+   * The status line carries two kinds of sentence that happen to share a
+   * paragraph. One is the *ticker*: `Running…`, `Running cell 3…`, rewritten
+   * once per cell for as long as a run lasts. The other is *news*: the room
+   * moved, a peer is no longer in it, a cell was handed over or refused, the
+   * run failed and here is why. A live region around the paragraph would
+   * announce both, and a twelve-cell run would interrupt a reader twelve times
+   * with a fact they cannot act on — drowning the one announcement in the
+   * sequence that mattered. So the ticker writes `runStatus` and nothing else,
+   * and `narrate`/`refuse` below are the only doors into this.
+   *
+   * The counter is not decoration. A live region announces when its contents
+   * *change*, so a second run ending in the same word — two `Done`s, two
+   * identical refusals — would render byte-identical text and be silent the
+   * second time. `ToolkitShell` re-keys the region's child on `n`, which makes
+   * the repeat a real DOM mutation and therefore a real announcement.
+   */
+  const [announcement, setAnnouncement] = useState<{ text: string; n: number }>({
+    text: "",
+    n: 0,
+  });
+  /**
+   * Announce and write nothing visible.
+   *
+   * The narrow door, for the two callers that append to a status line already
+   * on screen: what is *new* is the appended clause, and announcing the whole
+   * rebuilt line would make a reader sit through a verdict they have already
+   * been told before reaching the part that is news.
+   */
+  const announce = useCallback((text: string) => {
+    setAnnouncement((prev) => ({ text, n: prev.n + 1 }));
+  }, []);
+  /**
+   * Say something on the status line *and* to a screen reader.
+   *
+   * Every caller is an event a person either caused or needs to know about:
+   * the room moving, a rotation dropping a placement, an offer's outcome, a
+   * run finishing. Anything that is merely where a run has got to calls
+   * `setRunStatus` directly and is not announced.
+   */
+  const narrate = useCallback(
+    (text: string) => {
+      setRunStatus(text);
+      announce(text);
+    },
+    [announce]
+  );
+  /**
+   * The same for a refusal. Split from `narrate` only because the two write
+   * different state — the shell draws `runError` in the error colour and
+   * prefers it over `runStatus` — and identical because a refusal a sighted
+   * reader gets is a refusal a screen-reader user gets.
+   */
+  const refuse = useCallback(
+    (text: string) => {
+      setRunError(text);
+      announce(text);
+    },
+    [announce]
+  );
   const [runProgress, setRunProgress] = useState<{ cell: number; total: number } | null>(
     null
   );
@@ -1405,7 +1471,7 @@ export function useNotebook() {
     if (!pair) return null;
     const st = stitchPresetPair(pair.forward, pair.reverse);
     if (st.errors?.length) {
-      setRunError(st.errors.join(" · "));
+      refuse(st.errors.join(" · "));
       return null;
     }
     const { ast } = compileRecipe(st.recipe);
@@ -1427,10 +1493,10 @@ export function useNotebook() {
     });
     setTitle(pairTitle);
     const meta = bridgeModeMeta(st.mode, st.bridge);
-    setRunStatus(meta.toast);
+    narrate(meta.toast);
     setRunError("");
     return st;
-  }, []);
+  }, [narrate, refuse]);
 
   const applyCellRecipeText = useCallback((cellIndex: number, text: string) => {
     const { ast, validation } = compileRecipe(text);
@@ -1442,7 +1508,7 @@ export function useNotebook() {
     // construction: there was no way to *be* in the state it describes.
     // Accept it, let it sit there, and let the banner name the problem.
     if (!ast) {
-      setRunError(
+      refuse(
         (validation?.errors || [])
           .map((e: { message?: string }) => e.message || String(e))
           .join(" · ") || "Recipe parse failed"
@@ -1477,7 +1543,7 @@ export function useNotebook() {
     });
     setRunError("");
     return true;
-  }, []);
+  }, [refuse]);
 
   /**
    * Assign a cell to a peer, or take the assignment off.
@@ -1550,14 +1616,14 @@ export function useNotebook() {
       // nothing is indistinguishable from a button that did not work, and the
       // rewrite is exactly the kind of change a reader wants to audit before
       // pressing Run — `migrateRecipe` returns the counts for this.
-      setRunStatus(
+      narrate(
         `Upgraded: ${upgrade.changes
           .map((c) => `${c.from} → ${c.to}${c.count > 1 ? ` ×${c.count}` : ""}`)
           .join(", ")}`
       );
       return upgrade;
     },
-    [chains, applyCellRecipeText]
+    [chains, applyCellRecipeText, narrate]
   );
 
   const cellRecipeSource = useCallback(
@@ -1764,10 +1830,22 @@ export function useNotebook() {
     [quorumState]
   );
 
-  const runFrom = useCallback(
-    async (from: number) => {
+  /**
+   * One press, one run — whatever the press decided the run may touch.
+   *
+   * Split out of `runFrom` when the notebook grew a second control. The loop
+   * below never knew its own bound: it walked `cellsInScope(run.scope, chains)`
+   * and `run.js` had already made the scope a stated field rather than an
+   * implied one, so the *only* thing standing between "run this and everything
+   * under it" and "run exactly this" was that one caller minted one shape of
+   * scope. Nothing about the engine changes here; the two exported callbacks
+   * below hand this different scopes and different causes, and the record says
+   * which press it was.
+   */
+  const startRun = useCallback(
+    async (cause: RunCause, scope: { from: number; to: number }) => {
       if (!compiled.validation?.ok) {
-        setRunError(
+        refuse(
           (compiled.validation?.errors || []).map((e: { message: string }) => e.message).join(" · ") ||
             "Recipe invalid"
         );
@@ -1775,23 +1853,22 @@ export function useNotebook() {
       }
       /**
        * The run, as a thing — `lib/toolkit/run.js` holds the argument. The
-       * cause is this press and where it landed; the scope states the bound
-       * this loop always had (`from` to the end of the notebook) instead of
-       * implying it, and `cellsInScope` is what walks it, so the record and
-       * the loop cannot disagree about what this run was allowed to touch.
-       * Everything below that used to be its own ref — the declined list, the
-       * plan, the sent-offers bound, the sequence number — is a field of this
-       * object now: one identity, so a decline and the plan that declined it,
-       * or an offer and the run that bounds it, can never come from different
-       * runs.
+       * cause is the press and where it landed; the scope is that press's
+       * bound, stated rather than implied, and `cellsInScope` is what walks
+       * it, so the record and the loop cannot disagree about what this run was
+       * allowed to touch. Everything below that used to be its own ref — the
+       * declined list, the plan, the sent-offers bound, the sequence number —
+       * is a field of this object now: one identity, so a decline and the plan
+       * that declined it, or an offer and the run that bounds it, can never
+       * come from different runs.
        */
-      const run = createRun({
-        cause: { kind: "press", press: "run-from", cell: from },
-        scope: { from, to: chains.length - 1 },
-      });
+      const run = createRun({ cause, scope });
       const runnable = cellsInScope(run.scope, chains);
       setBusy(true);
       setRunError("");
+      // `setRunStatus`, never `narrate`: this and `Running cell n…` below are
+      // the ticker, and the ticker is the one thing on this line a screen
+      // reader is deliberately not told. See `announcement`.
       setRunStatus("Running…");
       stopRunRef.current = false;
       // §27d: per-run approval state (request counter, batch grants) starts
@@ -1847,7 +1924,7 @@ export function useNotebook() {
         const bindings = buildBindings();
         for (let n = 0; n < runnable.length; n++) {
           if (stopRunRef.current) {
-            setRunStatus("Stopped");
+            narrate("Stopped");
             return;
           }
           const i = runnable[n];
@@ -1858,25 +1935,34 @@ export function useNotebook() {
           const unmet = unmetForCell(i);
           if (unmet.length) {
             const msg = blockerTextFor(unmet[0]);
+            // This is the *Inputs tray* gate, not the slot gate: `unmetForCell`
+            // asks whether a value the tray supplies is missing, and both Run
+            // controls in the cell header are already absent-or-refused on
+            // exactly this list, so a one-cell run cannot arrive here. A cell
+            // whose inputs are not in *slots* fails in `runCell` below and is
+            // reported as `Cell [i] — …`, which names the cell either way.
             if (n === 0) {
-              setRunError(msg);
+              refuse(msg);
               setRunStatus("Blocked");
               return;
             }
             setKernelEpoch((x) => x + 1);
-            setRunStatus(
+            narrate(
               `Paused before cell [${i}] — ${msg}. Cells above it ran; Run from here once its inputs are in.`
             );
             return;
           }
           setRunProgress({ cell: n + 1, total: runnable.length });
           setRunningCell(i);
+          // The ticker. Silent by design — announcing it would interrupt a
+          // screen reader once per cell for a fact the reader cannot act on,
+          // and the outcome below is the one they came for.
           setRunStatus(`Running cell ${i}…`);
           at = i;
           await kernelRef.current.runCell(i, chains[i], bindings, placement, run);
         }
         setKernelEpoch((n) => n + 1);
-        setRunStatus("Done");
+        narrate("Done");
       } catch (err) {
         setKernelEpoch((n) => n + 1);
         // The cell now carries this message too, and that repetition is the
@@ -1887,7 +1973,7 @@ export function useNotebook() {
         // answers "what happened here". Prefixed, never reworded: the thrown
         // sentence is the part that names the remedy.
         const msg = err instanceof Error ? err.message : String(err);
-        setRunError(at >= 0 ? `Cell [${at}] — ${msg}` : msg);
+        refuse(at >= 0 ? `Cell [${at}] — ${msg}` : msg);
         setRunStatus("Failed");
       } finally {
         setBusy(false);
@@ -1921,7 +2007,7 @@ export function useNotebook() {
             run.plan ?? undefined
           );
           if (waiting.length) {
-            setRunStatus(
+            narrate(
               `Stopped — nothing was handed over. ${waiting.length === 1 ? "Cell" : "Cells"} ` +
                 `${waiting.map((o) => o.cell).join(", ")} ${
                   waiting.length === 1 ? "is" : "are"
@@ -1954,7 +2040,42 @@ export function useNotebook() {
     // `source` is not listed because it is `serializeRecipe(chains)` and cannot
     // move without `chains` moving; adding it would be a second name for a
     // dependency already here.
-    [buildBindings, chains, compiled.validation, handoffWho, unmetForCell]
+    [buildBindings, chains, compiled.validation, handoffWho, narrate, refuse, unmetForCell]
+  );
+
+  /**
+   * Run this cell and everything under it — the notebook's Run, unchanged.
+   *
+   * Kept as its own name and its own shape because it is the muscle memory:
+   * the header button on every cell, the run bar's *Run from [n]*, and Run all
+   * at index 0 all still mean "from here to the end of the notebook".
+   */
+  const runFrom = useCallback(
+    (from: number) =>
+      startRun({ kind: "press", press: "run-from", cell: from }, {
+        from,
+        to: chains.length - 1,
+      }),
+    [chains.length, startRun]
+  );
+
+  /**
+   * Run exactly one cell — the consumer `run.js` said it was not going to
+   * invent.
+   *
+   * `scope` was built as a capability with no control behind it, and the module
+   * note was explicit that "whether a per-cell button should exist is a product
+   * decision this module does not make". It exists now, and this is the whole
+   * of what it took: a scope both of whose ends are the same cell. No engine
+   * semantics are added — the same loop, the same gate, the same record —
+   * which is exactly why this is safe as a *secondary* control rather than a
+   * replacement. What differs is the record: the cause says `run-cell`, so a
+   * receipt can tell a one-cell run apart from a walk that happened to have
+   * one cell left in it.
+   */
+  const runCellOnly = useCallback(
+    (cell: number) => startRun({ kind: "press", press: "run-cell", cell }, { from: cell, to: cell }),
+    [startRun]
   );
 
   /**
@@ -2127,9 +2248,9 @@ export function useNotebook() {
     boundRecipientsRef.current = [];
     setSessionTick((n) => n + 1);
     setKernelEpoch((n) => n + 1);
-    setRunStatus("Cleared sensitive data");
+    narrate("Cleared sensitive data");
     setRunError("");
-  }, []);
+  }, [narrate]);
 
   const updateToolkitPrefs = useCallback((patch: Partial<ToolkitPrefs>) => {
     setToolkitPrefsState(setToolkitPrefs(patch));
@@ -2224,14 +2345,14 @@ export function useNotebook() {
         // The transport's own sentence. It names the room, the audience or the
         // key it refused, and paraphrasing it here would be this hook giving a
         // second account of a failure it did not observe.
-        setRunError(err instanceof Error ? err.message : String(err));
+        refuse(err instanceof Error ? err.message : String(err));
         return false;
       } finally {
         setBusy(false);
         setRunStatus("");
       }
     },
-    [gpgPassphrase]
+    [gpgPassphrase, refuse]
   );
 
   /**
@@ -2252,14 +2373,14 @@ export function useNotebook() {
   const removeFromRoom = useCallback(async (fingerprint: string) => {
     try {
       const out = await rotateQuorumRoom([fingerprint]);
-      setRunStatus(`Room moved to epoch ${out.epoch} — ${out.audience.length} keys remain`);
+      narrate(`Room moved to epoch ${out.epoch} — ${out.audience.length} keys remain`);
       return { ok: true as const };
     } catch (err) {
       const why = err instanceof Error ? err.message : String(err);
-      setRunError(why);
+      refuse(why);
       return { ok: false as const, why };
     }
-  }, []);
+  }, [narrate, refuse]);
 
   /**
    * The audience the placements in this notebook were written against.
@@ -2360,14 +2481,19 @@ export function useNotebook() {
       // region inside a closed sheet announces to nobody. `upgradeCellRecipe`
       // narrates its own header rewrite in the same place for the same reason.
       //
+      // `narrate`, not `setRunStatus`: for two commits this comment cited a
+      // live region the shell did not have, and a rotation ordered on another
+      // machine is precisely the event a reader who cannot see the roster has
+      // no other way to learn. The region exists now — see `announcement`.
+      //
       // Silent when nothing moved, so `removeFromRoom`'s own line survives the
       // ordinary case and a rotation that disturbed no placement is not
       // reported as one that did.
       if (note) {
-        setRunStatus(`The room moved and somebody is no longer in it. ${note}`);
+        narrate(`The room moved and somebody is no longer in it. ${note}`);
       }
     },
-    [setCellPeer]
+    [narrate, setCellPeer]
   );
 
   /**
@@ -2558,7 +2684,7 @@ export function useNotebook() {
     (p: { from: string; title: string; source: string }) => {
       const { ast } = compileRecipe(p.source);
       if (!ast) {
-        setRunError(
+        refuse(
           `The notebook ${formatFingerprint(p.from)} sent does not parse in this ` +
             "build, so there is nothing to adopt. Nothing here was changed — ask " +
             "them which version they are running."
@@ -2574,7 +2700,7 @@ export function useNotebook() {
       clearProposedNotebook();
       return true;
     },
-    [loadRecipeText]
+    [loadRecipeText, refuse]
   );
 
   /**
@@ -2951,7 +3077,13 @@ export function useNotebook() {
       noteOffers(run, aside.map((o) => ({ cell: o.cell, peer: o.peer, state: "aside" as const })));
       if (!waiting.length) return;
       if (!getLiveSession()) {
-        setRunStatus((prev) => `${prev} ${narrateNoSession(waiting)}`.trim());
+        // Appended to the run's own verdict on screen, announced on its own:
+        // "Done" has already been announced by the time this lands, and
+        // re-reading it in front of the news would make a reader wait through
+        // a word they have had to hear again for the sentence that is new.
+        const said = narrateNoSession(waiting);
+        setRunStatus((prev) => `${prev} ${said}`.trim());
+        announce(said);
         return;
       }
       const outcomes: { cell: number; peer: string; ok: boolean; why?: string }[] = [];
@@ -2973,9 +3105,13 @@ export function useNotebook() {
           why: o.ok ? undefined : o.why,
         }))
       );
-      setRunStatus((prev) => `${prev} ${narrateOffers(outcomes)}`.trim());
+      // Announced on its own, for the reason the no-session branch above
+      // gives: the verdict this is appended to has already been said.
+      const said = narrateOffers(outcomes);
+      setRunStatus((prev) => `${prev} ${said}`.trim());
+      announce(said);
     },
-    [noteOffers, offerCell]
+    [announce, noteOffers, offerCell]
   );
 
   useEffect(() => {
@@ -3118,17 +3254,17 @@ export function useNotebook() {
   const copyShareLink = useCallback(async () => {
     const result = hashForNotebook(source);
     if (result.ok === false) {
-      setRunStatus(result.reason || "Cannot share this recipe in a link");
+      narrate(result.reason || "Cannot share this recipe in a link");
       return;
     }
     await navigator.clipboard.writeText(toolkitShareUrl(result.hash));
-    setRunStatus("Share link copied");
-  }, [source]);
+    narrate("Share link copied");
+  }, [narrate, source]);
 
   const copyRecipe = useCallback(async () => {
     await navigator.clipboard.writeText(source);
-    setRunStatus("Recipe copied");
-  }, [source]);
+    narrate("Recipe copied");
+  }, [narrate, source]);
 
   const unlockKey = useCallback(
     async (fpr: string) => {
@@ -3281,6 +3417,11 @@ export function useNotebook() {
     filteredOps,
     runStatus,
     runError,
+    // What the polite live region holds. `text` is a subset of what the status
+    // line says — never the per-cell ticker — and `n` is what makes a repeat
+    // of the same sentence a fresh announcement rather than a silent no-op.
+    announcement,
+    announce,
     busy,
     runProgress,
     stopRun,
@@ -3341,6 +3482,7 @@ export function useNotebook() {
     appendRecipeCell,
     deleteCell,
     runFrom,
+    runCellOnly,
     clearSensitive,
     resetNotebook,
     copyShareLink,
