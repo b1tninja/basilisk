@@ -152,7 +152,7 @@ describe("a key unlocked in My Keys reaches the decrypt", () => {
       kernel.runCell(0, compiled.ast.chains[0], {
         inputs: { gpg: { armoredMessages: [s.armoredMessage] } },
       })
-    ).rejects.toThrow(/still need a browser-unlockable private key/);
+    ).rejects.toThrow(/need a private key this browser can open, and none is unlocked/);
     kernel.destroy();
   });
 

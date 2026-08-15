@@ -186,13 +186,22 @@ describe("toolkit recover / shares", () => {
       .map((a) => a.content);
     expect(ciphertexts.length).toBe(3);
 
+    // The decrypt yields plaintexts and `shares` collects them. `count=all` is
+    // what makes the tip a bundle, and it is readable in the text before the
+    // run — the composition the doc string always claimed and never had.
     const recover = compileRecipe(
-      "gpg.decrypt | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
+      "gpg.decrypt count=all | shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
     expect(recover.validation.ok).toBe(true);
-    expect(recover.validation.inputNeeds).toEqual(
-      expect.arrayContaining(["gpg", "shares"])
+    // `shares` folds the piped bundle in — it must not be told it is throwing
+    // the decrypted shares away. (The recipe ends at `pem` with no `out`, so
+    // the trailing-value warning is expected and is not what this pins.)
+    expect(recover.validation.warnings.map((w) => w.message).join(" ")).not.toMatch(
+      /discards prior pipeline value/
     );
+    // Only the ciphertext panel: decrypting is not collecting, so this recipe
+    // no longer asks for share rows it would not have read.
+    expect(recover.validation.inputNeeds).toEqual(["gpg"]);
     const out = await runRecipe(recover.ast, {
       inputs: {
         gpg: {
@@ -206,7 +215,7 @@ describe("toolkit recover / shares", () => {
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");
   }, 90_000);
 
-  it("hybrid: one in-browser decrypt + one externally-decrypted mnemonic", async () => {
+  it("externally decrypted mnemonics reach recovery through shares, not through gpg.decrypt", async () => {
     const { privateKey: pgpPriv, publicKey } = await generateKey({
       type: "ecc",
       curve: "curve25519",
@@ -235,19 +244,44 @@ describe("toolkit recover / shares", () => {
     const externalMnemonic = String(external.data).trim();
     expect(validateShareMnemonic(externalMnemonic).ok).toBe(true);
 
+    // `gpg.decrypt` used to merge the share rows into its own output, so one
+    // ciphertext plus one externally decrypted mnemonic recombined in a single
+    // cell. That merge was the coupling: it is what made a decrypt emit shares
+    // and what made the tip's type depend on what the plaintext said. Decrypt
+    // now reads only the ciphertext panel, so this set is one share short of
+    // the threshold and the run refuses rather than quietly recovering.
+    const mixed = compileRecipe(
+      "gpg.decrypt count=all | shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
+    );
+    expect(mixed.validation.ok).toBe(true);
+    await expect(
+      runRecipe(mixed.ast, {
+        inputs: {
+          gpg: {
+            armoredMessages: [ciphertexts[2]],
+            privateKeyArmored: pgpPriv.armor(),
+            passphrase: "",
+          },
+          shares: { mnemonics: [externalMnemonic] },
+        },
+      })
+    ).rejects.toThrow();
+
+    // The road that is left, and the one `CUSTODIAN_RECOVERY` already takes:
+    // a mnemonic decrypted with gpg goes in Inputs → shares, where the step
+    // whose job is collecting mnemonics reads it. This is the remedy the
+    // key-refusal names, so it has to work.
+    const external2 = await decrypt({
+      message: await readMessage({ armoredMessage: ciphertexts[2] }),
+      decryptionKeys: pgpPriv,
+      config: { allowInsecureDecryptionWithSigningKeys: true },
+    });
     const recover = compileRecipe(
-      "gpg.decrypt | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
+      "shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem"
     );
     const out = await runRecipe(recover.ast, {
       inputs: {
-        gpg: {
-          armoredMessages: [ciphertexts[2]],
-          privateKeyArmored: pgpPriv.armor(),
-          passphrase: "",
-        },
-        shares: {
-          mnemonics: [externalMnemonic],
-        },
+        shares: { mnemonics: [externalMnemonic, String(external2.data).trim()] },
       },
     });
     expect(out[0].content).toContain("BEGIN PRIVATE KEY");

@@ -518,8 +518,18 @@ export function inferSourceType(name, params = {}) {
     case "shares": {
       return typeOf("shares", { kind: "mnemonic" });
     }
-    case "gpg.decrypt":
-      return typeOf("shares", { kind: "mnemonic" });
+    case "gpg.decrypt": {
+      // Plaintext. What a decryption produces is whatever was encrypted, and
+      // the step cannot know what that is — so it claims the opaque type that
+      // says exactly that. It used to claim `shares/mnemonic`, which made
+      // every decrypted letter a share bundle to every step downstream.
+      // `count` picks the shape on the same rule as `quorum.recv` / `qr.scan`;
+      // must agree with the step's `effectiveIo`.
+      const count = String(params.count ?? "1").trim().toLowerCase();
+      if (count === "1") return typeOf("text", { kind: "opaque" });
+      const n = count === "all" ? undefined : Number(count) || undefined;
+      return typeOf("bundle", n ? { length: n } : {});
+    }
     case "webauthn.caps":
     case "webauthn.get":
       return typeOf("text", { kind: "opaque" });

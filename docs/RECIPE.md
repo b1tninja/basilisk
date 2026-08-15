@@ -899,7 +899,7 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private
 | `foreach` | Map body over a sequence. Optional `:items` / `:values` / `:keys`. |
 | `scatter` | Deal a shares collection to the room: one body run per (share, member) pair, in canonical audience order. `to=room` only. Pair verbs `seal to=each` / `send to=each` read the pair whole; `:key` / `:value` project it. |
 | `peek` | Side inspect snapshot; stem unchanged. |
-| `at` | Same as `[n]` / `[n:m]` — share index or slice. When the share count is stated in the text (`sss.split 2/3` stamps `length: 3`, `blip39` carries it), an index or slice past it refuses at compile: `at 5` of a 3-share split selects nothing. A set counted only at run time (`shares`, `gpg.decrypt`) is not checked. |
+| `at` | Same as `[n]` / `[n:m]` — share index or slice. When the share count is stated in the text (`sss.split 2/3` stamps `length: 3`, `blip39` carries it), an index or slice past it refuses at compile: `at 5` of a 3-share split selects nothing. A set counted only at run time (`shares`) is not checked. |
 | `in` | Source: load a prior `out` slot by `$label` or 1-based index (also written bare as `$label`). |
 | `encode` / `decode` | Base-alphabet conjugate (`encode hex` / `decode base64`). |
 | `out` | Emit a tile, register a slot, pass the value through. After `$x` / `in $x`, bare `out` inherits `$x`. |

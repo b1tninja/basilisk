@@ -304,18 +304,51 @@ describe("validation", () => {
   });
 
   it("parses gpg.decrypt", () => {
-    const { ast, errors } = parseRecipe("gpg.decrypt | blip39 -d | sss.combine | encode hex");
+    const { ast, errors } = parseRecipe(
+      "gpg.decrypt count=all | shares | blip39 -d | sss.combine | encode hex"
+    );
     expect(errors).toEqual([]);
     expect(ast.steps[0].name).toBe("gpg.decrypt");
-    expect(serializeRecipe(ast)).toContain("gpg.decrypt");
+    expect(serializeRecipe(ast)).toContain("gpg.decrypt count=all");
   });
 
-  it("decrypt recipes request gpg + shares panels for hybrid recovery", () => {
-    const { validation } = compileRecipe("gpg.decrypt | blip39 -d | sss.combine | encode hex");
+  it("a decrypt asks for the ciphertext panel and nothing else", () => {
+    // It used to ask for the share rows too, because it used to read them.
+    // A panel a step will not read must not appear on it: the reader would
+    // paste mnemonics into a decrypt and watch them be ignored.
+    const { validation } = compileRecipe("gpg.decrypt | out $plain");
     expect(validation.ok).toBe(true);
-    expect(validation.inputNeeds).toEqual(
-      expect.arrayContaining(["gpg", "shares"])
+    expect(validation.warnings).toEqual([]);
+    expect(validation.inputNeeds).toEqual(["gpg"]);
+  });
+
+  it("a plain decrypt yields opaque text — the tip says nothing about shares", () => {
+    // The defect this pins: a bare `gpg.decrypt` claimed `shares/mnemonic`, so
+    // decrypting a letter warned the reader to append `sss.combine`, and every
+    // downstream step saw a share bundle. The regression would be silent
+    // otherwise — the plaintext still came out, it was just the wrong type.
+    const { validation } = compileRecipe("gpg.decrypt");
+    expect(validation.ok).toBe(true);
+    expect(validation.warnings.map((w) => w.message).join(" ")).not.toMatch(
+      /shares|mnemonic|sss\.combine/i
     );
+    expect(validation.warnings.map((w) => w.message).join(" ")).toMatch(
+      /Trailing text\/opaque/
+    );
+  });
+
+  it("count= moves the tip between text and bundle, and only count= does", () => {
+    // Deterministic before the run: the shape is a property of the text, never
+    // of what the plaintext turned out to be.
+    expect(
+      compileRecipe("gpg.decrypt | blip39 -d").validation.errors.map((e) => e.message)
+    ).not.toEqual([]);
+    expect(compileRecipe("gpg.decrypt count=all | shares").validation.ok).toBe(true);
+    expect(compileRecipe("gpg.decrypt count=2 | shares").validation.ok).toBe(true);
+    // A single message is not a collection, so `shares` has nothing to fold.
+    expect(
+      compileRecipe("gpg.decrypt | shares").validation.ok
+    ).toBe(true);
   });
 
   it("accepts rebuild-p256 preset", () => {

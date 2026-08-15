@@ -71,7 +71,10 @@ export const MESSAGING_STARTERS = {
   },
   decrypt: {
     title: "Decrypt message",
-    recipe: "gpg.decrypt",
+    // Named, not bare. `gpg.decrypt` yields the plaintext, and a plaintext
+    // nobody names is a trailing value the compiler warns about — the starter
+    // must not hand a first-time reader a warning to read.
+    recipe: "gpg.decrypt | out $plain",
   },
   symencrypt: {
     title: "Password encrypt",

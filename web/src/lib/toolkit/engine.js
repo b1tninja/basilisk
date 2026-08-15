@@ -38,7 +38,6 @@ import {
   encodeShareSet,
   formatSetId,
   readShareHeader,
-  validateShareMnemonic,
 } from "../slip39/blip39.js";
 import { combineRawShares, splitRawShares } from "../slip39/slip39.js";
 import {
@@ -1549,7 +1548,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       };
     }
     case "gpg.decrypt":
-      return decryptGpgSource(bindings, artifacts);
+      return decryptGpgSource(bindings, step, artifacts);
     case "export": {
       // Projected `key` tip selects the half; which= only applies to full keypairs.
       const tipWhich =
@@ -4115,16 +4114,27 @@ function looksLikePgpMessage(text) {
 }
 
 /**
- * Normalize and accept a BLIP39 mnemonic if the checksum validates.
- * @param {string} text
- * @returns {string|null}
+ * `gpg.decrypt count=` at run time: `1`, a positive integer, or `all`.
+ *
+ * Read here as well as in `effectiveIo` because the two answer different
+ * questions — the compiler asks what shape the tip will be, this asks how many
+ * messages the panel is allowed to hold. They must agree on the boundary, and
+ * the boundary is only ever "is it 1".
+ *
+ * @param {*} raw
+ * @returns {number|"all"}
  */
-function asShareMnemonic(text) {
-  const normalized = String(text || "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!normalized) return null;
-  return validateShareMnemonic(normalized).ok ? normalized : null;
+function resolveDecryptCount(raw) {
+  const text = String(raw ?? "1").trim().toLowerCase();
+  if (!text || text === "1") return 1;
+  if (text === "all") return "all";
+  const n = Number(text);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error(
+      `gpg.decrypt count=${text}: count is 1, a positive whole number, or all.`
+    );
+  }
+  return n;
 }
 
 /**
@@ -4517,28 +4527,36 @@ async function resolveGpgDetachedSignature(bindings, refOrText) {
 }
 
 /**
- * Decrypt OpenPGP-wrapped shares and/or accept already-plaintext mnemonics.
- * Merges share-panel mnemonics (e.g. decrypted externally via Kleopatra/gpg)
- * with in-browser decrypt results — browsers cannot use OpenPGP smartcards /
- * YubiKey GPG applets, so hybrid recovery is the supported path.
+ * Decrypt OpenPGP ciphertext and emit the plaintext.
+ *
+ * Decrypting a message and reading a set of secret shares are two verbs, and
+ * this used to be both: it ran every plaintext through the BLIP39 checksum,
+ * merged in mnemonics pasted into the *share* rows, and emitted `shares`. That
+ * made the tip's type depend on what the plaintext turned out to say, which is
+ * the one thing an output type may not do — and it made decrypting an ordinary
+ * letter inexpressible, because the value handed downstream was a share bundle
+ * whatever the letter said. A plaintext that happens to be mnemonics is now
+ * read by the step whose job that is: `gpg.decrypt count=all | shares`.
+ *
+ * Browsers cannot reach OpenPGP smartcards / YubiKey GPG applets, so shares
+ * decrypted externally still have a road in — the `shares` collector's own
+ * tray, which is the road `CUSTODIAN_RECOVERY` already takes.
+ *
  * @param {RuntimeBindings} bindings
+ * @param {import("./recipe.js").RecipeStep} step
  * @param {ToolkitArtifact[]} _artifacts
  * @returns {Promise<PipelineValue>}
  */
-async function decryptGpgSource(bindings, _artifacts) {
+async function decryptGpgSource(bindings, step, _artifacts) {
   void _artifacts;
   const gpg = bindings.inputs?.gpg;
-  const external = (bindings.inputs?.shares?.mnemonics || [])
-    .map((m) => asShareMnemonic(String(m)))
-    .filter(Boolean);
   const chunks = gpg?.armoredMessages || [];
+  const want = resolveDecryptCount(step?.params?.count);
 
   /** @type {string[]} */
   const ciphertexts = [];
-  /** @type {string[]} */
-  const mnemonics = [...external];
-  /** @type {string[]} */
-  const problems = [];
+  /** @type {number} */
+  let notArmor = 0;
 
   for (const raw of chunks) {
     const text = String(raw || "").trim();
@@ -4547,19 +4565,37 @@ async function decryptGpgSource(bindings, _artifacts) {
       ciphertexts.push(text);
       continue;
     }
-    const mnemonic = asShareMnemonic(text);
-    if (mnemonic) {
-      mnemonics.push(mnemonic);
-      continue;
-    }
-    problems.push(
-      "A pasted block was neither an OpenPGP message nor a valid BLIP39 mnemonic"
-    );
+    notArmor += 1;
   }
 
-  if (!ciphertexts.length && !mnemonics.length) {
+  if (!ciphertexts.length) {
+    // Two states, and they are different mistakes: an empty panel, and a panel
+    // holding something that is not armor. Naming which one is in force is the
+    // whole point — the old sentence asked for "OpenPGP-encrypted shares
+    // and/or already-decrypted BLIP39 mnemonics (share rows)", which named a
+    // remedy that no longer decrypts anything and never described this step.
     throw new Error(
-      "Paste OpenPGP-encrypted shares and/or already-decrypted BLIP39 mnemonics (share rows)."
+      notArmor
+        ? `gpg.decrypt: ${notArmor} pasted block(s), and none is an OpenPGP message — ` +
+            "armor begins with -----BEGIN PGP MESSAGE-----."
+        : "gpg.decrypt: no ciphertext — paste an OpenPGP message into Inputs → OpenPGP."
+    );
+  }
+  if (notArmor) {
+    throw new Error(
+      `gpg.decrypt: ${notArmor} of ${ciphertexts.length + notArmor} pasted block(s) ` +
+        "is not an OpenPGP message. This step decrypts armor; a mnemonic already in " +
+        "the clear belongs in Inputs → shares, which `shares` reads."
+    );
+  }
+  if (want !== "all" && ciphertexts.length !== want) {
+    // The count is in the recipe text and the panel is not, so the text is what
+    // gets corrected — and the correction is a spelling the reader can type.
+    throw new Error(
+      `gpg.decrypt count=${want}: the panel holds ${ciphertexts.length} OpenPGP message(s). ` +
+        (ciphertexts.length > want
+          ? `Write count=${ciphertexts.length} or count=all to take them all as a bundle.`
+          : `Write count=${ciphertexts.length}, or paste the missing message(s).`)
     );
   }
 
@@ -4584,101 +4620,94 @@ async function decryptGpgSource(bindings, _artifacts) {
   /** @type {import("openpgp").PrivateKey[]} */
   let privateKeys = [];
   try {
-    if (ciphertexts.length) {
-      if (gpg?.privateKeyArmored) {
-        let bound = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
-        if (!bound.isDecrypted()) {
-          bound = await decryptKey({
-            privateKey: bound,
-            passphrase: gpg.passphrase || "",
-          });
-        }
-        privateKeys = [bound];
-      } else {
-        const { sessionGet, sessionList } = await import("../vault-session.js");
-        for (const entry of sessionList()) {
-          const armored = sessionGet(entry.fingerprint);
-          if (!armored) continue;
-          try {
-            const candidate = await readPrivateKey({ armoredKey: armored });
-            // Only keys that are actually open. The vault holds ssh and raw
-            // material too, and neither reads as an OpenPGP private key.
-            if (candidate.isDecrypted()) privateKeys.push(candidate);
-          } catch (_) {
-            /* not an OpenPGP private key — skip it rather than fail the run */
-          }
-        }
+    if (gpg?.privateKeyArmored) {
+      let bound = await readPrivateKey({ armoredKey: gpg.privateKeyArmored });
+      if (!bound.isDecrypted()) {
+        bound = await decryptKey({
+          privateKey: bound,
+          passphrase: gpg.passphrase || "",
+        });
       }
-      if (!privateKeys.length) {
-        throw new Error(
-          `${ciphertexts.length} OpenPGP message(s) still need a browser-unlockable private key. ` +
-            `Unlock the key in My Keys, or bind one — YubiKey/OpenPGP smartcards are not available to the browser, so decrypt those shares in Kleopatra/gpg and paste the mnemonics into the share rows.`
-        );
-      }
-      for (const armored of ciphertexts) {
+      privateKeys = [bound];
+    } else {
+      const { sessionGet, sessionList } = await import("../vault-session.js");
+      for (const entry of sessionList()) {
+        const armored = sessionGet(entry.fingerprint);
+        if (!armored) continue;
         try {
-          const result = await openpgpDecrypt({
-            message: await readMessage({ armoredMessage: armored }),
-            // openpgp picks the key whose id matches the message; handing it
-            // every unlocked key is how "which of my keys is this for" gets
-            // answered without asking the person to say.
-            decryptionKeys: privateKeys,
-            config: { allowInsecureDecryptionWithSigningKeys: true },
-          });
-          const plaintext =
-            typeof result.data === "string"
-              ? result.data
-              : new TextDecoder().decode(result.data);
-          const mnemonic = asShareMnemonic(plaintext) || String(plaintext).trim();
-          if (mnemonic) mnemonics.push(mnemonic);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          problems.push(`Decrypt failed: ${msg}`);
+          const candidate = await readPrivateKey({ armoredKey: armored });
+          // Only keys that are actually open. The vault holds ssh and raw
+          // material too, and neither reads as an OpenPGP private key.
+          if (candidate.isDecrypted()) privateKeys.push(candidate);
+        } catch (_) {
+          /* not an OpenPGP private key — skip it rather than fail the run */
         }
       }
+    }
+    if (!privateKeys.length) {
+      // The old sentence ended by telling the reader to "decrypt those shares
+      // in Kleopatra/gpg and paste the mnemonics into the share rows" — a
+      // remedy this step can no longer perform, on a panel it no longer reads.
+      // What is true is that no key here can open these messages.
+      throw new Error(
+        `gpg.decrypt: ${ciphertexts.length} OpenPGP message(s) need a private key this ` +
+          "browser can open, and none is unlocked. Unlock the key in My Keys, or bind " +
+          "one with key=$slot. OpenPGP smartcards / YubiKey applets are not reachable " +
+          "from a page, so a message only a card can open has to be decrypted with gpg."
+      );
     }
 
     /** @type {string[]} */
-    const unique = [];
-    /** @type {Set<string>} */
-    const seen = new Set();
-    for (const m of mnemonics) {
-      const key = String(m).replace(/\s+/g, " ").trim();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      unique.push(key);
-    }
-
-    if (!unique.length) {
-      const detail = problems.length ? ` (${problems.join("; ")})` : "";
-      throw new Error(`No share mnemonics recovered${detail}`);
-    }
-
-    /** @type {Uint8Array|null} */
-    let envelope = null;
-    if (gpg?.envelopeB64) {
-      envelope = base64ToBytes(String(gpg.envelopeB64).replace(/\s+/g, ""));
-    } else if (bindings.inputs?.shares?.envelopeB64) {
-      envelope = base64ToBytes(
-        String(bindings.inputs.shares.envelopeB64).replace(/\s+/g, "")
+    const plaintexts = [];
+    for (const armored of ciphertexts) {
+      // A message that will not decrypt refuses the run. The old code pushed
+      // the reason onto a `decryptNotes` array that nothing ever read and
+      // carried on, so a run could report success having decrypted none of
+      // what it was handed. It matters more now than it did: with `count=`,
+      // the number of parts is part of the type the compiler already showed
+      // the reader, and a quietly dropped message would falsify it.
+      let result;
+      try {
+        result = await openpgpDecrypt({
+          message: await readMessage({ armoredMessage: armored }),
+          // openpgp picks the key whose id matches the message; handing it
+          // every unlocked key is how "which of my keys is this for" gets
+          // answered without asking the person to say.
+          decryptionKeys: privateKeys,
+          config: { allowInsecureDecryptionWithSigningKeys: true },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `gpg.decrypt: message ${plaintexts.length + 1} of ${ciphertexts.length} ` +
+            `did not decrypt — ${msg}`
+        );
+      }
+      plaintexts.push(
+        typeof result.data === "string"
+          ? result.data
+          : new TextDecoder().decode(result.data)
       );
     }
+
+    // Sensitive either way: what was encrypted was worth encrypting, and this
+    // step has no way to know whether the plaintext is a letter or a share —
+    // which is the whole reason it stopped claiming to know.
+    if (want === 1) {
+      return { type: "text", data: plaintexts[0], meta: { sensitive: true } };
+    }
+    // `count=all` stays a bundle even when one message arrived: the tip's type
+    // was settled at compile time by the text, and a shape that collapsed on a
+    // count only the run knows would be the same defect in a new place.
+    const parts = plaintexts.map((text) => ({
+      type: "text",
+      data: text,
+      meta: { sensitive: true },
+    }));
     return {
-      type: "shares",
-      data: {
-        encoding: "mnemonic",
-        mnemonics: unique,
-        envelope,
-        threshold: 0,
-        shares: unique.length,
-        enveloped: !!envelope,
-      },
-      meta: {
-        sensitive: true,
-        envelope,
-        passphrase: bindings.inputs?.shares?.passphrase || "",
-        decryptNotes: problems,
-      },
+      type: "bundle",
+      data: { parts, count: parts.length },
+      meta: { kind: "gpg-decrypt", count: parts.length, sensitive: true },
     };
   } finally {
     // Every key this run opened, not just the last one. A session key is a

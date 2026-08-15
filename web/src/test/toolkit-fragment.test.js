@@ -41,7 +41,7 @@ describe("parseToolkitHash", () => {
       starter: "symencrypt",
     });
     expect(MESSAGING_STARTERS.encrypt.recipe).toContain("gpg.encrypt");
-    expect(MESSAGING_STARTERS.decrypt.recipe).toBe("gpg.decrypt");
+    expect(MESSAGING_STARTERS.decrypt.recipe).toBe("gpg.decrypt | out $plain");
     expect(MESSAGING_STARTERS.symencrypt.recipe).toContain(
       "gpg.symencrypt mode=passphrase"
     );
@@ -402,7 +402,10 @@ describe("the address bar tracks the shareable thing", () => {
     // seed is an input, not part of the recipe text, so editing one is no
     // reason to drop the other.
     const next = hashForToolkitState({
-      recipe: "gpg.decrypt | out $plain",
+      // Not the starter's own text — `#decrypt` is `gpg.decrypt | out $plain`,
+      // and a recipe equal to the starter collapses back to `#decrypt`, which
+      // would test the wrong branch. This is the starter after an edit.
+      recipe: "gpg.decrypt | out $letter",
       currentHash: "#decrypt&ct=Zm9vYmFy",
     });
     expect(next.write && next.hash).toMatch(/&ct=Zm9vYmFy$/);

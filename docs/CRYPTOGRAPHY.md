@@ -207,7 +207,7 @@ Source of truth: `web/src/lib/toolkit/registry.js` + `engine.js` + `step-names.j
 | `file.read` | Done | File System Access picker (or `<input type=file>`); text-ish → `text`, else `bytes`; filename/MIME in meta |
 | `clipboard.read` | Done | `navigator.clipboard.readText` behind the UI's per-run permission gate |
 | `age.keygen` | Done | age X25519 identity (`AGE-SECRET-KEY-1…`) — `age-keygen` |
-| `gpg.decrypt` | Done | OpenPGP.js decrypt → share set |
+| `gpg.decrypt` | Done | OpenPGP.js decrypt → plaintext (`count=all` for a bundle; `shares` collects mnemonics) |
 
 ### Transforms — keys & encoding
 

@@ -391,17 +391,23 @@ describe("the recovery cell can be written without leaving the language", () => 
     expect(errorsFor(src)).toEqual([]);
   });
 
-  it("still refuses the spelling that would discard the envelope", () => {
+  it("still discards a piped envelope, and now refuses further downstream", () => {
     // `gpg.decrypt` is a *source* with no `collects`, so `in $sealed |
     // gpg.decrypt` throws the envelope away and reads the Inputs tray instead.
-    // That is the defect `dc5d7cb` fixed for `shares` and did not fix here, and
-    // it is pinned as the state that is true rather than asserted away: this
-    // compiles clean today, which is the problem.
-    const src =
-      `"x" | out $sealed\n\nin $sealed | gpg.decrypt | blip39 -d | sss.combine | out $secret`;
-    expect(errorsFor(src)).toEqual([]);
+    // That is the defect `dc5d7cb` fixed for `shares` and has still not been
+    // fixed here — pinned as the state that is true rather than asserted away.
     expect(getStep("gpg.decrypt").collects).toBeUndefined();
     expect(getStep("shares").collects).toEqual(["text", "bundle"]);
+
+    // What has changed is what happens next. This spelling used to compile
+    // clean, because a decrypt claimed `shares` and `blip39 -d` was happy to
+    // take it. A decrypt now yields plaintext, so the mnemonics have to be
+    // collected before they can be decoded, and the compiler says so. The
+    // discarded envelope is still silent; the type error is not.
+    const src =
+      `"x" | out $sealed\n\nin $sealed | gpg.decrypt | blip39 -d | sss.combine | out $secret`;
+    const errors = errorsFor(src);
+    expect(errors.join(" ")).toMatch(/blip39.*expects shares, got text/);
   });
 });
 

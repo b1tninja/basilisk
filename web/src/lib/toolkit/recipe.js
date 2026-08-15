@@ -2382,7 +2382,17 @@ export function validateRecipe(ast) {
     }
 
     if (spec.kind === "source") {
-      if (i > 0 && current.base !== "none") {
+      // A source that declares `collects` and accepts what is on the pipe does
+      // not discard it — it folds it in, which is the whole reason `collects`
+      // exists. Warning anyway would have told the reader of the documented
+      // `quorum.recv count=2 | shares` idiom that their shares were being
+      // thrown away, which is the opposite of what that step does. A type the
+      // step does *not* collect needs no warning either: `resolveStepType`
+      // refuses it outright a few lines below, and an error already saying the
+      // value "would be thrown away" does not want a warning agreeing with it.
+      const folds =
+        Array.isArray(spec.collects) && spec.collects.includes(current.base);
+      if (i > 0 && current.base !== "none" && !folds) {
         warnings.push(
           stepWarning(
             step,
@@ -3163,9 +3173,9 @@ run.receipt | gpg.sign | out $receipt`,
     pair: "quorum-gpg",
     title: "Decrypt GPG shares → rebuild key",
     blurb:
-      "Decrypt OpenPGP-wrapped shares in-browser and/or paste mnemonics already decrypted externally (e.g. Kleopatra/gpg + YubiKey), then blip39.decode | sss.combine and rebuild the P-256 PEM from the scalar.",
+      "Decrypt every OpenPGP-wrapped share in the panel (`count=all`), collect the plaintexts with `shares`, then blip39.decode | sss.combine and rebuild the P-256 PEM from the scalar. Mnemonics already decrypted externally (Kleopatra/gpg + YubiKey) go in Inputs → shares, which `shares` reads on its own.",
     recipe:
-      "gpg.decrypt | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out $private",
+      "gpg.decrypt count=all | shares | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out $private",
   },
   {
     id: "pem-envelope-split",
@@ -3279,8 +3289,8 @@ rtc.quality | out $quality`,
     group: "OpenPGP",
     title: "OpenPGP decrypt",
     blurb:
-      "Decrypt armored ciphertext from the Inputs panel (`gpg.decrypt`) — same recipe as the `#decrypt` messaging starter. Bind a private key or unlock My Keys when prompted.",
-    recipe: "gpg.decrypt",
+      "Decrypt armored ciphertext from the Inputs panel and name the plaintext — same recipe as the `#decrypt` messaging starter. Bind a private key or unlock My Keys when prompted.",
+    recipe: "gpg.decrypt | out $plain",
   },
   {
     id: "gpg-sign-verify",

@@ -230,3 +230,116 @@ in $msg | gpg.symdecrypt mode=passphrase passphrase=$pw | utf8 | out $pt`);
     ).toBe(true);
   });
 });
+
+/**
+ * Decrypting an ordinary message.
+ *
+ * There was no test for this, which is how the defect shipped. `gpg.decrypt`
+ * declared `output: "shares"` and ran every plaintext through the BLIP39
+ * checksum, falling back to the raw text when it failed — so a letter still
+ * came out of the pipe and the CLI's own round-trip passed. What was wrong was
+ * the *type*: the tip was a share bundle, `gpg.decrypt` alone warned the reader
+ * to append `sss.combine`, and `gpg.decrypt | out $msg` bound `$msg` as
+ * `shares/mnemonic` to everything downstream. Nothing asserted the type, so
+ * nothing caught it.
+ */
+describe("gpg.decrypt yields plaintext", () => {
+  /** A message encrypted to a fresh key, with the key to open it. */
+  async function sealed(text) {
+    const { privateKey, publicKey } = await generateKey({
+      type: "ecc",
+      curve: "curve25519",
+      userIDs: [{ name: "Reader", email: "reader@example.com" }],
+      format: "object",
+    });
+    const { encrypt, createMessage } = await import("openpgp");
+    const armoredMessage = await encrypt({
+      message: await createMessage({ text }),
+      encryptionKeys: publicKey,
+    });
+    return { armoredMessage: String(armoredMessage), privateKeyArmored: privateKey.armor() };
+  }
+
+  it("decrypts an ordinary letter — no mnemonic anywhere in the value", async () => {
+    // Prose, deliberately: not a mnemonic, not decodable as one, and the thing
+    // a person most often decrypts.
+    const letter = "Meet me at the usual place on Thursday. Burn this.";
+    const s = await sealed(letter);
+    const { ast, validation } = compileRecipe("gpg.decrypt | out $plain");
+    expect(validation.ok).toBe(true);
+    expect(validation.warnings).toEqual([]);
+
+    const arts = await runRecipe(ast, {
+      inputs: {
+        gpg: {
+          armoredMessages: [s.armoredMessage],
+          privateKeyArmored: s.privateKeyArmored,
+          passphrase: "",
+        },
+      },
+    });
+    const plain = arts.find((a) => /plain/i.test(a.filename || a.label || ""));
+    expect(String(plain?.content || "")).toBe(letter);
+  }, 60_000);
+
+  it("binds the slot as text, not as a share set", async () => {
+    // The regression that has teeth: a downstream step reads the slot's type,
+    // and `shares` there meant a letter could not be handed to anything that
+    // takes text. `utf8` accepts text and refuses shares, so it is the cheapest
+    // honest witness that the tip is what it says.
+    const s = await sealed("plain words");
+    const { ast, validation } = compileRecipe(
+      "gpg.decrypt | out $plain\n\nin $plain | utf8 | encode hex | out $hex"
+    );
+    expect(validation.ok).toBe(true);
+    const arts = await runRecipe(ast, {
+      inputs: {
+        gpg: {
+          armoredMessages: [s.armoredMessage],
+          privateKeyArmored: s.privateKeyArmored,
+          passphrase: "",
+        },
+      },
+    });
+    const hex = arts.find((a) => /hex/i.test(a.filename || a.label || ""));
+    expect(String(hex?.content || "")).toBe(
+      Buffer.from("plain words", "utf8").toString("hex")
+    );
+  }, 60_000);
+
+  it("refuses a second message rather than silently taking one", async () => {
+    // `count=1` is a claim about the panel, and two messages falsify it. The
+    // old code merged everything it was given into one share set, so a reader
+    // who pasted two letters got a value describing neither.
+    const a = await sealed("first letter");
+    const b = await sealed("second letter");
+    const { ast } = compileRecipe("gpg.decrypt | out $plain");
+    await expect(
+      runRecipe(ast, {
+        inputs: {
+          gpg: {
+            armoredMessages: [a.armoredMessage, b.armoredMessage],
+            privateKeyArmored: a.privateKeyArmored,
+            passphrase: "",
+          },
+        },
+      })
+    ).rejects.toThrow(/panel holds 2 OpenPGP message\(s\).*count=all/s);
+  }, 60_000);
+
+  it("refuses a pasted block that is not armor, and does not call it a share", async () => {
+    const s = await sealed("hi");
+    const { ast } = compileRecipe("gpg.decrypt | out $plain");
+    await expect(
+      runRecipe(ast, {
+        inputs: {
+          gpg: {
+            armoredMessages: [s.armoredMessage, "not armor at all"],
+            privateKeyArmored: s.privateKeyArmored,
+            passphrase: "",
+          },
+        },
+      })
+    ).rejects.toThrow(/is not an OpenPGP message/);
+  }, 60_000);
+});

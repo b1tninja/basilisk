@@ -110,12 +110,27 @@ describe("every param that requires a value contributes an input need", () => {
 });
 
 describe("no input need appears that a declaration does not account for", () => {
-  /** Re-derive one step's panels from raw registry fields only. */
-  function fromDeclarations(step) {
+  /**
+   * Re-derive one step's panels from raw registry fields only.
+   *
+   * `whenInput:` is the one guard this cannot evaluate: it asks what type is
+   * arriving through the pipe, and the whole point of re-deriving from raw
+   * fields is to do it without the type walker under test. A step that opens a
+   * chain has nothing piped in, and `whenInput` is required to include "none"
+   * (`recipe.js` refuses one that does not), so at position 0 the guard always
+   * holds. Anywhere else the incoming type is unknown here, and claiming the
+   * panel is required would be a guess — `gpg.decrypt count=all | shares` is
+   * the shipped case, where a bundle arrives and the tray stays shut.
+   *
+   * @param {*} step
+   * @param {boolean} isFirst  step opens its chain, so nothing is piped in
+   */
+  function fromDeclarations(step, isFirst) {
     const spec = getStep(step.name);
     if (!spec) return [];
     const out = [];
     for (const d of stepInputDeclarations(spec.unresolvedInputs)) {
+      if (d.whenInput && !isFirst) continue;
       const holds = Object.entries(d.when || {}).every(([k, v]) =>
         Array.isArray(v)
           ? v.includes(String(step.params?.[k] ?? ""))
@@ -134,12 +149,18 @@ describe("no input need appears that a declaration does not account for", () => 
     return out;
   }
 
-  function walk(steps, into) {
-    for (const s of steps || []) {
-      for (const n of fromDeclarations(s)) into.add(n);
-      walk(s.body, into);
-      for (const br of s.branches || []) walk(br.body, into);
-    }
+  /**
+   * @param {*} steps
+   * @param {Set<string>} into
+   * @param {boolean} [nested]  inside a `foreach` / `tee` body, where even the
+   *   first step is fed the stem — so no step in one opens a chain
+   */
+  function walk(steps, into, nested = false) {
+    (steps || []).forEach((s, i) => {
+      for (const n of fromDeclarations(s, !nested && i === 0)) into.add(n);
+      walk(s.body, into, true);
+      for (const br of s.branches || []) walk(br.body, into, true);
+    });
   }
 
   // Presets are the recipes people actually load; the per-op sweep is what

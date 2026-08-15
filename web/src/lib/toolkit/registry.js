@@ -872,16 +872,35 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "pubkey",
     conjugateOf: "gpg.encrypt",
-    doc: "Decrypt OpenPGP ciphertext at run time and/or accept already-plaintext BLIP39 mnemonics. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | blip39 -d | sss.combine | …`.",
+    doc: "Decrypt OpenPGP ciphertext at run time and emit the plaintext. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | out $plain`. A plaintext that happens to be BLIP39 mnemonics is read by the steps that read mnemonics: `gpg.decrypt count=all | shares | blip39 -d | sss.combine | …`.",
     input: "none",
-    output: "shares",
+    output: "text",
     entropy: "none",
-    // Two panels, not one: the ciphertext, and share rows for mnemonics
-    // already decrypted outside the browser (Kleopatra / gpg / YubiKey —
-    // OpenPGP cards are not reachable from JS). The second used to be pushed
-    // by hand in the validator, where the tool card could not see it.
-    unresolvedInputs: ["gpg", "shares"],
-    params: [],
+    // One panel: the ciphertext. This step used to also declare the share rows,
+    // because it used to *be* a share reader — it merged externally decrypted
+    // mnemonics into its own output. Decrypting is not collecting, and the
+    // collector already exists: `shares` reads that tray when the recipe names
+    // nothing else, which is the road `CUSTODIAN_RECOVERY` takes.
+    unresolvedInputs: ["gpg"],
+    params: [
+      {
+        name: "count",
+        type: "string",
+        default: "1",
+        doc: "How many messages the panel holds: 1 (text), a number, or `all` (bundle, for `foreach` / `shares`)",
+      },
+    ],
+    effectiveIo(params) {
+      // The same count-driven shape `quorum.recv` established and `qr.scan`
+      // reuses: one message stays `text`, so the ordinary decrypt — the
+      // commonest thing this product does — needs no unwrap, and several
+      // become a `bundle` that `foreach` and `shares` already walk. The type
+      // varies with a *parameter*, which the checker reads before the run;
+      // varying it with what the plaintext turned out to say is the thing that
+      // is not allowed, and is exactly what declaring `shares` here did.
+      const count = String(params?.count ?? "1").trim().toLowerCase();
+      return { input: "none", output: count === "1" ? "text" : "bundle" };
+    },
   },
   {
     name: "export",
