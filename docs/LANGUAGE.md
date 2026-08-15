@@ -360,34 +360,120 @@ A bare `scatter` meaning "apply the rest of the chain per pair" would ask it, an
 would stop exactly where item 4 stopped. The body is therefore not a stylistic
 choice; it is what keeps this pass out of that territory.
 
-#### What is still missing, and it is not the zip
+#### The body does not name the pair's member, because a pair is a value
 
-The body has to name the pair's member somewhere, and every step that takes a
-recipient takes it as a **parameter** — `gpg.encrypt to=`, `quorum.send to=`.
-That is the same wall `room-ceremony.js` hit. Pairing the two lists does not
-knock it down; it moves it one step in. Three spellings, none free:
+An earlier draft of this section stopped here, on how the body should *spell*
+the recipient — `to=:key`, an omitted `to=`, or a per-iteration slot. All three
+accept a premise the language's own principles reject: that the recipient must
+be spelled in the body at all. Every step that takes a recipient takes it as a
+**parameter**, and that is the wall — so the resolution is verbs that do not.
 
-- **`to=:key`** — the projection in a param value, written above. `:key` and
-  `:value` are legal today as *steps* inside a `foreach :items` body and nowhere
-  else, so this makes them legal in a second grammatical position. It is the
-  only one of the three that reads.
-- **An omitted `to=` inside a `scatter` body**, meaning "this pair's member".
-  This is principle 4's exact failure mode — a security-relevant parameter
-  carried by an absence — and worse than the general case, because `to=`'s
-  absence already means something else: the recipients picked in the Run binder.
-- **A per-iteration slot**, which needs no new grammar at all and is legal
-  today, `to=` being `slot: true, slotOf: ["recipients", "openpgp-key", "text"]`.
-  It costs a `tee`, a projection and a slot per iteration to say one word, and
-  nobody would read it twice.
+**A pair is a value, and a pair-consuming verb reads both halves.** That is
+principle 3 applied to the pair itself: multiplicity belongs to values, not to
+syntax, and so does correspondence. Inside a `scatter` body the pipe carries
+the pair; two verbs consume it whole:
 
-Choosing between them is a decision about the language rather than about this
-feature, and it is where this section stops.
+- **`seal`** — encrypt the pair's payload to the pair's member. Output:
+  ciphertext, fixed. `gpg.encrypt mode=combined` with the `to=` supplied by the
+  value rather than the text.
+- **`send`** — deliver the pair's payload to the pair's member over the
+  session, as `quorum.send` does, addressed by the value.
+
+```text
+@me
+random 32 | split 2/3 | words | scatter
+  - seal | out $sealed | publish
+```
+
+No new grammar position. No `to=` whose absence means something. And the
+neighbouring warning does not apply: an omitted parameter carrying meaning is
+principle 4's failure because an *absence* decides a security property, but
+here nothing is absent — the recipient is half the input, exactly as
+`sss.combine` never names which shares because the shares *are* the input.
+Outside a `scatter` body there is no pair, so `seal` and `send` refuse at
+compile time, naming that state: "seal reads the pair a scatter hands it, and
+there is no scatter here."
+
+For everything else, the body reuses the vocabulary `foreach :items` already
+owns: `:key` and `:value` project a member of the item the loop is holding, and
+a scatter body is holding a pair. `- :value | digest sha-256 | out $d` needs no
+new rule — it is the same two steps in the same grammatical position they have
+always occupied. A payload-taking step fed a whole pair type-refuses, which is
+what makes the projection discoverable rather than optional-and-forgotten.
+
+#### The slot-free deal, which this buys and the parked spellings did not
+
+```text
+@me
+random 32 | split 2/3 | words | scatter
+  - seal | out $sealed | publish
+```
+
+Walk what this leaves behind on the dealer's machine: the master never enters a
+slot (already true, and until now an accident of how the recipe was written),
+and now **the shares never enter one either** — split, sealed, published, gone.
+The three-browser ceremony's highest-ranked finding was that the dealer keeps
+every share in a revealable `$set` with nothing on any screen saying to delete
+it, making a 2-of-3 a 1-of-1 until somebody remembers. Under this form the
+hazard is not warned about; it is **unconstructable**. The published artifact
+set is the deal's record, each holder decrypts only their own envelope, and the
+dealer's own share comes back to them the same way everyone else's does —
+sealed to their key, because a dealer deals to the whole table.
+
+That is the test the pair-aware form passes and the `to=:key` spelling only
+ties: both can seal a set, but only a design in which the shares flow *through*
+the body without stopping makes "the dealer retained nothing" a property of the
+text rather than of somebody's diligence.
+
+### A ceremony and its reversal are two agreements, so they are two notebooks
+
+The generated ceremony writes the deal and the recovery into one notebook, and
+the dealer-absent e2e proved what that costs: `runFrom(i)` walks to the end,
+the dealer's return cell sits below the split, so **the one press that deals
+the secret also gives the dealer's share back** — and `quorum.recv count=1`
+takes whichever message arrived first, so every later recovery silently
+preferred the dealer's. The spec had to *delete a cell* to construct a 2-of-3
+whose dealer had really given up its share. The picker's phase labels
+("Dealing — run once, together" / "Recovering — run when the secret is wanted
+back") are doctrine with no mechanism: nothing in the product can run one
+phase.
+
+The parked framing was a choice between two mechanisms — stop writing the
+return cell, or grow a run-one-phase control. This document's first principle
+picks a third reading: **the text is the agreement, and these are two
+agreements.** A deal and its reversal are made at different times, by different
+sets of people (the recoverer's whole premise is that the dealer may be gone),
+under different threat models. One notebook digesting to one manifest makes
+them one commitment, which is exactly the confusion the e2e observed from the
+outside.
+
+So the deal notebook contains the deal and nothing else. Under the pair-aware
+form above it is one cell, and there is nothing below it for a run to walk
+into. Recovery is **generated at recovery time**, the way the deal was
+generated at deal time — the picker-first pattern that dissolved the original
+chicken-and-egg. And it can be: a share's BLIP39 header carries threshold,
+share count, index and set id, which is how the "Check a share…" panel already
+answers `share 2 of 3 · any 2 recombine · set 465E` from one mnemonic, offline.
+A recover generator asks who is contributing, reads everything else off the
+shares themselves, and writes the gather. Dealer-absent recovery stops being an
+achievement that requires editing the notebook and becomes the default shape —
+the recovering quorum writes its own agreement, listing exactly the
+contributors it has.
+
+What this retires: the dealer's return cell (finding 1a), the phase labels
+whose phases share one press (5a), and the 30-minute gather sitting armed in a
+notebook that may not be run for years. What it does not change: the deal
+notebook still travels to every member, still digests into the manifest both
+ends compare, and still names the quorum in its text.
 
 ### Vocabulary
 
 `sss.split` → `split`, `blip39` → `words`, `quorum.send` → `send`. The dotted
 namespaces are doing real work; the acronyms are the jargon. Old names stay as
-aliases.
+aliases — and `send` is the same verb in both grammatical positions: with
+`to=` it is `quorum.send` as it always was; bare inside a `scatter` body it
+consumes the pair; bare anywhere else it refuses, naming the missing recipient
+rather than borrowing one from a binder.
 
 ### Comments survive serialization
 
@@ -448,8 +534,13 @@ Order of work, bug fixes first:
 5. **The share count becomes a `length` refinement** on the `shares` type,
    stamped by `sss.split` and carried through `blip39` and `at`. Small, and
    nothing below can refuse a count mismatch at plan time without it.
-6. `scatter` / `gather`. The `@*` rule is already landed — see above — so what
-   this now waits on is one decision: how the body names the pair's member.
+6. `scatter` with pair-aware `seal` / `send`. The `@*` rule is already landed,
+   and the body-naming question is resolved above — a pair is a value, and the
+   verbs that consume one read both halves. `gather` follows once the published
+   set exists to gather from.
+7. **The recover generator** — recovery written at recovery time from the
+   shares' own headers, and the deal notebook reduced to the deal. Retires the
+   dealer's return cell and the phase labels one press cannot honour.
 
 ## What gated all of it — **met**
 
