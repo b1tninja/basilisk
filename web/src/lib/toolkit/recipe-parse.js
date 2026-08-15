@@ -627,6 +627,15 @@ class Parser {
     this.legacyChainHeader = false;
     /** A `$label` was read as a slot where the position allows only a slot. */
     this.sawLegacySlotSigil = false;
+    /**
+     * How many `scatter` bodies enclose the current position — the one piece
+     * of context `parseStage` needs that the grammar alone cannot give it:
+     * `send` is the pair verb inside a scatter body and `quorum.send`'s
+     * narrower spelling everywhere else, and the token is the last place the
+     * distinction exists (the AST carries whichever name won). A depth rather
+     * than a flag only for honesty about re-entry; nesting itself is refused.
+     */
+    this.scatterBodyDepth = 0;
     /** A chain began with `@label`, which this grammar reads as a peer. */
     this.sawReservedChainHeader = false;
     /**
@@ -1279,6 +1288,33 @@ class Parser {
     if (canon === "foreach") {
       return this.parseForeachBlock(nameStart, parentIndent);
     }
+    if (canon === "scatter") {
+      return this.parseScatterBlock(name, nameStart, parentIndent);
+    }
+    // `send` is two verbs and the body decides which. Inside a `scatter` body
+    // the pipe carries a (share, member) pair and `send` is the pair verb —
+    // the registry step this token already resolved to. Everywhere else there
+    // is no pair, and the token converges on `quorum.send` exactly as the old
+    // alias did, keeping its one asymmetry: bare `send` refuses, naming the
+    // missing recipient, where bare `quorum.send` broadcasts — an absent
+    // recipient deciding "everyone" is an absence deciding a security
+    // property, which the short verb never inherits. Routed here because this
+    // is the only place both the spelling and the body context are known.
+    if (canon === "send" && !this.scatterBodyDepth) {
+      const step = this.parseApply("quorum.send", name, nameStart);
+      if (!String(step.params?.to ?? "").trim()) {
+        this.errors.push({
+          message:
+            "`send` names no recipient — write `send <fingerprint>` (or " +
+            "`to=<fingerprint>`) so the text says who is handed the value. " +
+            "To broadcast to every verified peer, write `quorum.send`, whose " +
+            "empty `to=` is documented to mean that.",
+          start: nameStart,
+          end: this.pos,
+        });
+      }
+      return step;
+    }
 
     const step = this.parseApply(canon, name, nameStart);
     if (alt?.expectedKeyBits) {
@@ -1286,28 +1322,6 @@ class Parser {
     }
     if (alt?.oaepHash) {
       step.params = { ...step.params, hash: alt.oaepHash };
-    }
-    // Bare `send` refuses; bare `quorum.send` broadcasts. The alias is
-    // *narrower* than the name it resolves to, on purpose: an absent
-    // recipient deciding "everyone" is an absence deciding a security
-    // property, which the short verb never inherits. Checked here because
-    // this is the last place the spelling the author typed still exists —
-    // the AST carries only `quorum.send`, so `validateRecipe` could not
-    // tell the two apart without a field invented to carry the difference.
-    if (
-      canon === "quorum.send" &&
-      lower === "send" &&
-      !String(step.params?.to ?? "").trim()
-    ) {
-      this.errors.push({
-        message:
-          "`send` names no recipient — write `send <fingerprint>` (or " +
-          "`to=<fingerprint>`) so the text says who is handed the value. " +
-          "To broadcast to every verified peer, write `quorum.send`, whose " +
-          "empty `to=` is documented to mean that.",
-        start: nameStart,
-        end: this.pos,
-      });
     }
     return step;
   }
@@ -1630,6 +1644,68 @@ class Parser {
   }
 
   /**
+   * `scatter [to=room]` with its one-line body.
+   *
+   * The params come first — `parseApply` reads `to=room` and fills the
+   * default for the bare sugar form, so `scatter` and `scatter to=room` are
+   * one AST and the serializer always writes the destination (the param is
+   * `serialize: "always"`; principle 5, abbreviated in, canonical out). Then
+   * the body, parsed with the depth counter up so `send` inside it resolves
+   * to the pair verb rather than to `quorum.send`.
+   *
+   * The body rule is `foreach`'s: one `- ` line, run once per pair, with a
+   * selector-opening line folded into a leading `select` step. Whether the
+   * one line is present, and whether `to=` names anything but the room, are
+   * `validateRecipe`'s questions — the grammar's job ends at the shape.
+   *
+   * @param {string} rawName
+   * @param {number} start
+   * @param {number} parentIndent
+   * @returns {RecipeStep}
+   */
+  parseScatterBlock(rawName, start, parentIndent) {
+    const step = this.parseApply("scatter", rawName, start);
+    this.scatterBodyDepth++;
+    let body;
+    try {
+      body = this.parseBody(parentIndent, "scatter");
+    } finally {
+      this.scatterBodyDepth--;
+    }
+
+    // A selector-opening line projects the pair before the rest runs — the
+    // same fold `foreach` makes, so `- :value | digest sha-256 | out $d` is
+    // the same two steps in the same grammatical position it has always
+    // occupied.
+    /** @type {RecipeStep[]} */
+    const listBody = [...body.listBody];
+    for (const br of body.branches) {
+      listBody.push(
+        {
+          name: "select",
+          params: { selector: br.selector || `:${br.member}` },
+          start: br.start || start,
+          end: br.end || this.pos,
+        },
+        ...br.body
+      );
+    }
+    if (!listBody.length) {
+      this.errors.push({
+        message:
+          "scatter requires a body — one indented `- seal to=each | …` line, run once per (share, member) pair",
+        start,
+        end: this.pos,
+      });
+    }
+
+    step.body = listBody;
+    step.end = this.pos;
+    if (body.brace) step.bodyForm = "brace";
+    return step;
+  }
+
+  /**
    * A `-` line is one thing, and which thing it is depends only on the block
    * it hangs under — never on how many neighbours it has.
    *
@@ -1643,7 +1719,7 @@ class Parser {
    * place the distinction is decidable, and both body forms (`{ … }` and
    * indented) route through it.
    * @param {number} parentIndent
-   * @param {"tee"|"foreach"} kind
+   * @param {"tee"|"foreach"|"scatter"} kind
    * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
    */
   parseBody(parentIndent, kind) {
@@ -1660,7 +1736,7 @@ class Parser {
   }
 
   /**
-   * @param {"tee"|"foreach"} kind
+   * @param {"tee"|"foreach"|"scatter"} kind
    * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
    */
   parseBraceBody(kind) {
@@ -1757,7 +1833,7 @@ class Parser {
 
   /**
    * @param {number} parentIndent
-   * @param {"tee"|"foreach"} kind
+   * @param {"tee"|"foreach"|"scatter"} kind
    * @returns {{ listBody: RecipeStep[], branches: TeeBranch[], brace: boolean }}
    */
   parseIndentBody(parentIndent, kind) {
@@ -1870,7 +1946,7 @@ class Parser {
    *
    * @param {RecipeStep[]} listBody
    * @param {TeeBranch[]} branches
-   * @param {"tee"|"foreach"} kind
+   * @param {"tee"|"foreach"|"scatter"} kind
    */
   parseBranchLineInto(listBody, branches, kind) {
     const start = this.pos;
@@ -1955,16 +2031,19 @@ class Parser {
     // parsePipeline stops at non-pipe; good. But it could parse across newlines inside?
     // Our parseStage for blocks could nest — rejected for foreach/tee inside body via validate.
 
-    if (kind === "foreach") {
+    if (kind === "foreach" || kind === "scatter") {
       // `foreach` has one body and cannot have two: the loop threads each
       // item's value through the body and hands the result back, so there is
       // no second thing for a second line to be. Rather than quietly glue the
       // lines together — the same silence this pass removed from `tee` — say
-      // that a body is already there and name the join that works.
+      // that a body is already there and name the join that works. `scatter`
+      // is the same shape with a second list, so the same rule reaches it.
       if (listBody.length || branches.length) {
         this.errors.push({
           message:
-            "foreach already has its body on the line above — a loop body is one `- ` line; join the steps with `|` (`- inspect | out $share`)",
+            kind === "scatter"
+              ? "scatter already has its body on the line above — the body is one `- ` line, run once per pair; join the steps with `|` (`- seal to=each | out $sealed`)"
+              : "foreach already has its body on the line above — a loop body is one `- ` line; join the steps with `|` (`- inspect | out $share`)",
           start,
           end: this.pos,
         });
@@ -2015,7 +2094,7 @@ class Parser {
 
     // Reject nested block openers inside branch pipelines at parse time
     for (const s of pipe) {
-      if (s.name === "foreach" || s.name === "tee") {
+      if (s.name === "foreach" || s.name === "tee" || s.name === "scatter") {
         this.errors.push({
           message: `Nested ${s.name} is not supported inside a list body in v1`,
           start: s.start,
@@ -2046,6 +2125,11 @@ class Parser {
         ch === "\n" ||
         ch === "|" ||
         ch === "}" ||
+        // A `{` opens a brace body (`scatter to=room { - … }`), which is the
+        // caller's to read — breaking here leaves it where a block parser can
+        // see it, and on a step with no body the pipeline loop still refuses
+        // it as the unexpected character it always was.
+        ch === "{" ||
         ch === "#"
       ) {
         break;

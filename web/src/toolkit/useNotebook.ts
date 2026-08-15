@@ -1086,9 +1086,9 @@ export function useNotebook() {
       opName: string,
       opts?: { decode?: boolean; params?: RecipeParams; at?: number }
     ) => {
-      // Nested tee/foreach is rejected by the parser (RECIPE.md, v1). The
-      // shelf already hides them for nested carets; this catches drag-drops.
-      if (opName === "tee" || opName === "foreach") return;
+      // Nested tee/foreach/scatter is rejected by the parser (RECIPE.md, v1).
+      // The shelf already hides them for nested carets; this catches drag-drops.
+      if (opName === "tee" || opName === "foreach" || opName === "scatter") return;
       const step = makeStep(opName, opts);
       if (!step) return;
       const next = stepsAt(cell).map((s, i) => {

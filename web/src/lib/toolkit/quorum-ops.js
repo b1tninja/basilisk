@@ -1693,6 +1693,29 @@ export function createExchangeTransport(op = "dkg.run") {
   };
 }
 
+/**
+ * The room a `scatter to=room` deals into, read off the live exchange.
+ *
+ * `members` is the audience in canonical order — the exact list
+ * `deriveRoomMaterial` digested into the room id, held by both machines with
+ * nothing carried between them, which is what makes the pairing derived
+ * rather than chosen. `self` is this machine's fingerprint (the pair that
+ * never crosses a wire), and `unverified` is every *other* member not
+ * currently connected and key-confirmed — the same two facts `quorum.send`'s
+ * own gate reads (`sendAudience`), so the engine's refusal and the
+ * Connections tray cannot disagree about who is missing.
+ *
+ * @returns {{ members: string[], self: string, unverified: string[] }}
+ */
+export function scatterRoom() {
+  const ex = requireExchange("scatter to=room");
+  const members = [...(ex.state.audience || [])];
+  const self = String(ex.state.self || "").toUpperCase();
+  const verified = new Set(sendAudience(ex, ""));
+  const unverified = members.filter((f) => f !== self && !verified.has(f));
+  return { members, self, unverified };
+}
+
 /** @param {string} op */
 function requireExchange(op) {
   if (!current || current.cancelled) {

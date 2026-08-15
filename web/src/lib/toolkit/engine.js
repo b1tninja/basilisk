@@ -441,54 +441,198 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
       continue;
     }
 
+    /**
+     * A body `out $x` runs once per iteration, and `$x` is written once in
+     * the text — so the label binds *once*, after the loop, to a bundle of
+     * every iteration's value. Last-write-wins would silently lose all but
+     * one share; refusing the second iteration as a duplicate would break
+     * the shipped `slip39-split` preset; a bundle keeps everything and is
+     * the shape `shares` already collects (`$share | shares with=$late`).
+     *
+     * Each iteration's value still lands in the indexed order, said out
+     * loud via `registerIndexed` — that is what the bare `shares` fallback
+     * sweeps and what numeric `in N` reads. The registry used to infer this
+     * from `meta.shareIndex` and swallow the label doing so; now the
+     * syntactic shape decides, and the label is always real.
+     *
+     * A factory because two loops iterate a body — `foreach` over one list
+     * and `scatter` over a zip of two — and the slot semantics of a body
+     * `out` must be one rule, not one per loop.
+     * @param {string} loopKind  `foreach-out` (scatter reuses it: what a slot
+     *   holds is "a per-iteration bundle", not which verb looped)
+     */
+    const makeBodyOutCollector = (loopKind) => {
+      /** @type {Map<string, PipelineValue[]>} */
+      const bodyOuts = new Map();
+      return {
+        /**
+         * @param {import("./recipe.js").RecipeStep} step
+         * @param {PipelineValue|null} itemVal
+         */
+        note(step, itemVal) {
+          if (step.name !== "out" || !itemVal) return;
+          const nameRef = String(step.params?.name || DEFAULT_OUT_SLOT);
+          registry.registerIndexed?.(itemVal);
+          const list = bodyOuts.get(nameRef);
+          if (list) list.push(clonePipelineValue(itemVal));
+          else bodyOuts.set(nameRef, [clonePipelineValue(itemVal)]);
+        },
+        bind() {
+          for (const [nameRef, parts] of bodyOuts) {
+            registerSlot(
+              nameRef,
+              {
+                type: "bundle",
+                data: { parts, count: parts.length },
+                meta: {
+                  kind: loopKind,
+                  count: parts.length,
+                  sensitive: parts.some((p) => !!p?.meta?.sensitive),
+                },
+              },
+              preexisting
+            );
+          }
+        },
+      };
+    };
+
+    if (node.kind === "scatter") {
+      lastStepEmitted = false;
+      // The room is the live exchange's, never the recipe's: the audience the
+      // room id digests is the one list both machines already agree about, so
+      // the pairing is derived here and chosen nowhere. No exchange, no room —
+      // `scatterRoom` refuses with the same sentence `quorum.send` would.
+      const q = await import("./quorum-ops.js");
+      const room = q.scatterRoom();
+      if (room.unverified.length) {
+        // The one mistake this ceremony cannot take back — a share handed to
+        // a peer whose key confirmation has not completed — so the deal does
+        // not start. Whole fingerprints: the record of who was refused a
+        // share is no place to print part of a key.
+        throw new Error(
+          `scatter to=room: ${room.unverified.join(", ")} ` +
+            `${room.unverified.length === 1 ? "is" : "are"} in this room's ` +
+            `audience and not key-confirmed on this exchange. A share handed ` +
+            `to an unverified member cannot be taken back, so the deal waits ` +
+            `until every member is connected and verified — the Connections ` +
+            `tray says who is missing.`
+        );
+      }
+
+      /**
+       * The first list: one payload per share, in index order.
+       * @type {PipelineValue[]}
+       */
+      const payloads = [];
+      let threshold = 0;
+      if (value?.type === "shares") {
+        threshold = Number(value.data.threshold) || 0;
+        const rawItems = value.data.raw;
+        const mnemonicItems = value.data.mnemonics;
+        const useRaw = Array.isArray(rawItems) && rawItems.length > 0;
+        const items = useRaw ? rawItems : mnemonicItems || [];
+        for (let i = 0; i < items.length; i++) {
+          const shareIndex = useRaw
+            ? /** @type {{ index: number, data: Uint8Array }} */ (items[i])
+                .index || i + 1
+            : i + 1;
+          payloads.push(
+            useRaw
+              ? {
+                  type: "bytes",
+                  data: /** @type {{ index: number, data: Uint8Array }} */ (
+                    items[i]
+                  ).data,
+                  meta: {
+                    shareIndex,
+                    shareCount: items.length,
+                    threshold,
+                    sensitive: true,
+                  },
+                }
+              : {
+                  type: "text",
+                  data: /** @type {string} */ (items[i]),
+                  meta: {
+                    shareIndex,
+                    shareCount: items.length,
+                    threshold,
+                    sensitive: true,
+                  },
+                }
+          );
+        }
+      } else if (value?.type === "bundle") {
+        const inParts = Array.isArray(value.data?.parts) ? value.data.parts : [];
+        for (const part of inParts) payloads.push(part);
+      } else {
+        throw new Error("scatter requires shares or a bundle");
+      }
+
+      // The count refusal, naming both numbers. `planRun` already refuses a
+      // statically known mismatch before the run; this is the run-time half,
+      // for counts only the run knows — and the honest backstop, since a
+      // member can leave between the notebook being written and this cell
+      // being run.
+      if (payloads.length !== room.members.length) {
+        throw new Error(
+          `scatter to=room: ${payloads.length} share${
+            payloads.length === 1 ? "" : "s"
+          } against a room of ${room.members.length} member${
+            room.members.length === 1 ? "" : "s"
+          } — share i goes to member i in canonical audience order, so the ` +
+            `two counts must agree. Change the split so N is ` +
+            `${room.members.length}, or change who is in the room.`
+        );
+      }
+
+      const outs = makeBodyOutCollector("foreach-out");
+      /** @type {PipelineValue[]} */
+      const parts = [];
+      for (let i = 0; i < payloads.length; i++) {
+        // The pair, as a value: the member is the key, the share the value —
+        // `foreach :items`' own shape, so `:key` / `:value` project it with
+        // no new rule. `meta.member` is what the pair verbs read.
+        /** @type {PipelineValue} */
+        let itemVal = {
+          type: "item",
+          data: { key: room.members[i], value: payloads[i] },
+          meta: {
+            shareIndex: payloads[i]?.meta?.shareIndex || i + 1,
+            shareCount: payloads.length,
+            threshold,
+            member: room.members[i],
+            sensitive: true,
+          },
+        };
+        for (const step of node.body) {
+          const before = artifacts.length;
+          itemVal = await execStep(step, itemVal, bindings, artifacts, i);
+          stampNew(before, node.step);
+          for (let ai = before; ai < artifacts.length; ai++) {
+            artifacts[ai].stepName = step.name;
+          }
+          outs.note(step, itemVal);
+        }
+        if (itemVal) parts.push(itemVal);
+      }
+      outs.bind();
+      // A bundle of per-pair tips — `foreach`'s answer, fixed by the step name.
+      value = {
+        type: "bundle",
+        data: { parts, count: parts.length },
+        meta: { kind: "scatter", count: parts.length },
+      };
+      continue;
+    }
+
     if (node.kind === "foreach") {
       lastStepEmitted = false;
 
-      /**
-       * A body `out $x` runs once per iteration, and `$x` is written once in
-       * the text — so the label binds *once*, after the loop, to a bundle of
-       * every iteration's value. Last-write-wins would silently lose all but
-       * one share; refusing the second iteration as a duplicate would break
-       * the shipped `slip39-split` preset; a bundle keeps everything and is
-       * the shape `shares` already collects (`$share | shares with=$late`).
-       *
-       * Each iteration's value still lands in the indexed order, said out
-       * loud via `registerIndexed` — that is what the bare `shares` fallback
-       * sweeps and what numeric `in N` reads. The registry used to infer this
-       * from `meta.shareIndex` and swallow the label doing so; now the
-       * syntactic shape decides, and the label is always real.
-       * @type {Map<string, PipelineValue[]>}
-       */
-      const bodyOuts = new Map();
-      /**
-       * @param {import("./recipe.js").RecipeStep} step
-       * @param {PipelineValue|null} itemVal
-       */
-      const noteBodyOut = (step, itemVal) => {
-        if (step.name !== "out" || !itemVal) return;
-        const nameRef = String(step.params?.name || DEFAULT_OUT_SLOT);
-        registry.registerIndexed?.(itemVal);
-        const list = bodyOuts.get(nameRef);
-        if (list) list.push(clonePipelineValue(itemVal));
-        else bodyOuts.set(nameRef, [clonePipelineValue(itemVal)]);
-      };
-      const bindBodyOuts = () => {
-        for (const [nameRef, parts] of bodyOuts) {
-          registerSlot(
-            nameRef,
-            {
-              type: "bundle",
-              data: { parts, count: parts.length },
-              meta: {
-                kind: "foreach-out",
-                count: parts.length,
-                sensitive: parts.some((p) => !!p?.meta?.sensitive),
-              },
-            },
-            preexisting
-          );
-        }
-      };
+      const foreachOuts = makeBodyOutCollector("foreach-out");
+      const noteBodyOut = (step, itemVal) => foreachOuts.note(step, itemVal);
+      const bindBodyOuts = () => foreachOuts.bind();
 
       // A bundle is already a list of pipeline values, so iterating it needs
       // none of the share-specific unpacking below — run the body per part and
@@ -704,6 +848,7 @@ function expandPlan(steps) {
   /** @type {Array<
    *   | { kind: "step", step: import("./recipe.js").RecipeStep }
    *   | { kind: "foreach", body: import("./recipe.js").RecipeStep[], step: import("./recipe.js").RecipeStep }
+   *   | { kind: "scatter", body: import("./recipe.js").RecipeStep[], step: import("./recipe.js").RecipeStep }
    *   | { kind: "tee", body: import("./recipe.js").RecipeStep[], branches?: *, step: import("./recipe.js").RecipeStep }
    * >} */
   const plan = [];
@@ -716,6 +861,15 @@ function expandPlan(steps) {
         );
       }
       plan.push({ kind: "foreach", body: s.body, step: s });
+      continue;
+    }
+    if (s.name === "scatter") {
+      if (!s.body?.length) {
+        throw new Error(
+          "scatter requires a body — one indented `- seal to=each | …` line"
+        );
+      }
+      plan.push({ kind: "scatter", body: s.body, step: s });
       continue;
     }
     if (
@@ -801,6 +955,33 @@ export function projectSelector(value, selector) {
     );
   }
   throw new Error(`Unknown selector ":${m}"`);
+}
+
+/**
+ * The pair a pair verb consumes, or the refusal that it is not one.
+ *
+ * A scatter pair is an `item` whose key is a whole member fingerprint —
+ * `foreach :items` produces items too, keyed by share index, and the compiler
+ * already refuses the pair verbs outside a scatter body; this is the same
+ * boundary said at run time, for values that did not come through the
+ * compiler.
+ *
+ * @param {PipelineValue|null} value
+ * @param {string} verb  `seal` or `send`
+ * @returns {{ member: string, payload: PipelineValue }}
+ */
+function requireScatterPair(value, verb) {
+  const member = String(value?.meta?.member || "").toUpperCase();
+  const payload =
+    value?.type === "item" && value.data && typeof value.data === "object"
+      ? /** @type {PipelineValue} */ (value.data.value)
+      : null;
+  if (!payload || !/^(?:[0-9A-F]{40}|[0-9A-F]{64})$/.test(member)) {
+    throw new Error(
+      `${verb} reads the pair a scatter hands it, and there is no scatter here`
+    );
+  }
+  return { member, payload };
 }
 
 /**
@@ -2404,6 +2585,54 @@ async function execStepBody(step, value, bindings, artifacts) {
         data: parts.join("\n"),
         meta: { ...value.meta, sensitive: false, openPgpInspect: true },
       };
+    }
+    case "seal": {
+      // `gpg.encrypt mode=combined` addressed by the pair — one delegation,
+      // so what `seal` performs can never drift from the encryption its own
+      // doc names. `policy` is irrelevant here (the recipient is a whole
+      // fingerprint, never an email), and the payload carries `shareIndex`,
+      // so the artifact keeps the `Share N (GPG)` labelling and traits the
+      // foreach-era fan-out established.
+      const pair = requireScatterPair(value, "seal");
+      const to = String(step.params?.to ?? "each").trim();
+      const member =
+        to.toLowerCase() === "each"
+          ? pair.member
+          : to.toUpperCase().replace(/[^0-9A-F]/g, "");
+      return execStepBody(
+        {
+          name: "gpg.encrypt",
+          params: { to: member, mode: "combined" },
+          start: step.start,
+          end: step.end,
+        },
+        pair.payload,
+        bindings,
+        artifacts
+      );
+    }
+    case "send": {
+      // `quorum.send` addressed by the pair. The pair whose member is this
+      // machine never reaches a wire: a dealer deals to the whole table,
+      // themselves included, and "mine" is the one that never crossed one —
+      // the payload simply passes through, exactly what the tip records for
+      // every other pair (execQuorumSend passes its value through too).
+      const pair = requireScatterPair(value, "send");
+      if (pair.payload.type !== "text") {
+        throw new Error(
+          "send: the exchange carries text, and this pair's payload is " +
+            `${pair.payload.type} — encode the shares (blip39) before scatter, ` +
+            "or seal them instead."
+        );
+      }
+      const to = String(step.params?.to ?? "each").trim();
+      const member =
+        to.toLowerCase() === "each"
+          ? pair.member
+          : to.toUpperCase().replace(/[^0-9A-F]/g, "");
+      const q = await import("./quorum-ops.js");
+      if (member === q.scatterRoom().self) return pair.payload;
+      return q.execQuorumSend(pair.payload, { to: member });
     }
     case "gpg.encrypt": {
       if (!value || (value.type !== "text" && value.type !== "bytes")) {

@@ -2477,6 +2477,42 @@ export const STEPS = [
     params: [],
   },
   {
+    name: "scatter",
+    kind: "flow",
+    toolbox: "flow",
+    shelf: "control",
+    flowControl: true,
+    /**
+     * ## The room's plural — a zip, narrowed on purpose
+     *
+     * `foreach` with a second list: N shares against the N members of the live
+     * room, one body run per pair. The second list is **derived, never named**
+     * — `to=room` is the audience in canonical order (ascending whole
+     * fingerprint, deduped: `canonicalAudience`'s order, the list the room id
+     * is a digest of), so two machines cannot disagree about who is second
+     * because neither of them is deciding anything. That is why `to=` accepts
+     * only the reserved word `room`: a fingerprint here would be a *choice* of
+     * pairing, and a chosen pairing is the failure nothing in the product
+     * would report (`peersSha` commits to the set, never the order).
+     *
+     * The body's pipe carries the pair; `seal` / `send` consume it whole, and
+     * `:key` / `:value` project it exactly as a `foreach :items` body would.
+     */
+    doc: "Deal a shares collection to the room: one body run per (share, member) pair, share i to member i in canonical audience order — derived on both machines, chosen by neither. `to=room` is the only recipient (a reserved word naming the derivation). The body is one `- ` line; `seal to=each` / `send to=each` read the pair whole, `:key` / `:value` project it. Refuses when the share count and the room size disagree, and when any room member is unverified. Example: `random 32 | sss.split 2/3 | blip39 | scatter to=room` / `- seal to=each | out $sealed | publish`.",
+    input: "shares",
+    output: "bundle",
+    entropy: "none",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        default: "room",
+        serialize: "always",
+        doc: "`room` — the audience in canonical order. A derivation, not a choice: no other value is accepted.",
+      },
+    ],
+  },
+  {
     name: "at",
     kind: "transform",
     toolbox: "sss",
@@ -2757,6 +2793,44 @@ export const STEPS = [
     effectiveIo(params) {
       return { input: "text", output: gpgEncryptOutput(params).base };
     },
+  },
+  {
+    name: "seal",
+    kind: "sink",
+    toolbox: "openpgp",
+    shelf: "pubkey",
+    /**
+     * ## A pair-consuming verb — the recipient is half the input
+     *
+     * `gpg.encrypt mode=combined` with the `to=` supplied by the value rather
+     * than chosen by the text: inside a `scatter` body the pipe carries a
+     * (share, member) pair, and `seal to=each` encrypts the pair's payload to
+     * the pair's member. `each` is a reserved word naming that derivation —
+     * it can never name a person, which is the point: the pairing is derived
+     * on both machines and chosen by neither. A constant `to=<fingerprint>`
+     * stays writable and means what it says — every share sealed to that one
+     * key — visibly different from `to=each` rather than differing by an
+     * absence.
+     *
+     * Outside a scatter body there is no pair, so this step refuses at
+     * compile time, naming that state.
+     */
+    doc: "Encrypt a scatter pair's payload to the pair's member (`gpg.encrypt mode=combined` addressed by the value): `- seal to=each | out $sealed | publish`. Output is one armored OpenPGP message, piped on as text. `to=<fingerprint>` seals every share to that one key instead. Only valid inside a `scatter` body — the pair is the input.",
+    input: "item",
+    output: "text",
+    entropy: "keying",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        default: "each",
+        serialize: "always",
+        doc: "`each` — this pair's member (a derivation, never a person) — or one whole fingerprint for every share to that key",
+      },
+    ],
+    overloads: [
+      { when: { base: "item" }, output: { base: "text", kind: "armored", encoding: "openpgp" } },
+    ],
   },
   {
     name: "gpg.sign",
@@ -4983,16 +5057,16 @@ export const STEPS = [
     kind: "transform",
     toolbox: "quorum",
     shelf: "channel",
-    // Parse-only, and *narrower* than the name it aliases: bare `send`
+    // `send` used to sit in `aliases` here. It is a registry step of its own
+    // now — the pair-consuming verb a `scatter` body holds — so the routing
+    // moved to `parseStage`, the only place that knows whether a body is in
+    // scope: outside a scatter body the spelling still converges on
+    // `quorum.send`, still *narrower* than the name it reaches (bare `send`
     // refuses at parse, naming the missing recipient, where bare
-    // `quorum.send` broadcasts. An absent recipient deciding "everyone" is
+    // `quorum.send` broadcasts — an absent recipient deciding "everyone" is
     // exactly the absence-decides-a-security-property shape principle 4
-    // forbids, so the short verb never inherits it — and that asymmetry is
-    // also why `send` can never be the canonical spelling (a broadcast
-    // serialized as `send` would be canonical text that refuses to parse).
-    // The refusal lives in `parseStage`, the only place the spelling is
-    // still known. See the note on `sss.split`'s `aliases`.
-    aliases: ["send"],
+    // forbids, and also why `send` could never be the canonical spelling of
+    // a broadcast). Inside a scatter body the token is the pair verb.
     doc: "Write the pipeline text to the exchange's data channels (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run — for a channel with no exchange behind it, use `peer.send`.",
     input: "text",
     output: "text",
@@ -5047,6 +5121,42 @@ export const STEPS = [
       const count = String(params?.count ?? "1").trim().toLowerCase();
       return { input: "none", output: count === "1" ? "text" : "bundle" };
     },
+  },
+  {
+    name: "send",
+    kind: "transform",
+    toolbox: "quorum",
+    shelf: "channel",
+    /**
+     * ## `seal`'s sibling — deliver the pair's payload over the session
+     *
+     * `quorum.send` addressed by the pair's member: inside a `scatter` body
+     * the pipe carries a (share, member) pair, and `send to=each` writes the
+     * payload to that member's channel. The pair whose member is this machine
+     * never crosses a wire — a dealer deals to the whole table, themselves
+     * included, and "mine" is the one that stays.
+     *
+     * Only a step inside a scatter body: outside one there is no pair, and
+     * the bare token `send` on a stem still converges on `quorum.send` (see
+     * the note there). Mnemonic payloads only — the channel carries text, so
+     * scatter raw shares through `blip39` first.
+     */
+    doc: "Deliver a scatter pair's payload to the pair's member over the exchange (`quorum.send` addressed by the value): `- send to=each`. The member that is this machine keeps its share locally — it never crosses a wire. `to=<fingerprint>` sends every share to that one peer instead. Only valid inside a `scatter` body — the pair is the input.",
+    input: "item",
+    output: "text",
+    entropy: "none",
+    params: [
+      {
+        name: "to",
+        type: "string",
+        default: "each",
+        serialize: "always",
+        doc: "`each` — this pair's member (a derivation, never a person) — or one whole fingerprint for every share to that peer",
+      },
+    ],
+    overloads: [
+      { when: { base: "item", kind: "mnemonic" }, output: { base: "text", kind: "mnemonic" } },
+    ],
   },
 ];
 

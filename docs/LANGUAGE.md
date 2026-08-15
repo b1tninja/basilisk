@@ -528,8 +528,10 @@ names read now (`words -d` and `words.decode` included) and converge on the
 namespaced canonical through `serializeRecipe` — and `send` is narrower than
 the name it aliases: with `to=` it is `quorum.send` as it always was; bare it
 refuses, naming the missing recipient rather than borrowing one from a binder.
-(When a scatter body exists, bare `send` gains its pair position there — that
-is a later pass, and the refusal today does not mention it.)
+(Inside a `scatter` body, bare `send` now has its pair position — it is the
+pair verb there, sugar for `send to=each`. The stem refusal keeps naming the
+recipient, the thing missing *there*, rather than pointing into a body the
+author is not writing.)
 
 This section used to frame the short names as the *canonical* spelling. The
 sweep said no, twice over:
@@ -618,12 +620,17 @@ Order of work, bug fixes first:
    refinement has a reader from the day it exists. `vss.split` does not stamp
    it yet — the fraction and the stamp both went to `sss.split` first, and
    vss follows when its spelling does.
-6. `scatter` with pair-aware `seal` / `send`. The `@*` rule is already landed,
-   and the body-naming question is resolved above — a pair is a value, and the
-   verbs that consume one read both halves, **while the canonical text spells
-   every destination**: `scatter to=room`, `seal to=each`, with the bare forms
-   as input sugar. `gather` follows once the published set exists to gather
-   from, and takes `from=room` for the same reason.
+6. `scatter` with pair-aware `seal` / `send` — **done, `gather` deferred**.
+   The `@*` rule is already landed, and the body-naming question is resolved
+   above — a pair is a value, and the verbs that consume one read both
+   halves, **while the canonical text spells every destination**:
+   `scatter to=room`, `seal to=each`, with the bare forms as input sugar.
+   Landed exactly as designed: the pairing is `canonicalAudience`'s order
+   read off the live exchange, the count mismatch refuses at plan time when
+   N is in the text and at run time otherwise, an unverified member stops
+   the deal, and `to=each` outside a body refuses naming the state.
+   `gather` follows once the published set exists to gather from, and takes
+   `from=room` for the same reason.
 7. **The recover generator** — recovery written at recovery time from the
    shares' own headers, and the deal notebook reduced to the deal. Retires the
    dealer's return cell and the phase labels one press cannot honour.

@@ -1891,6 +1891,7 @@ export function stepAcceptsRefined(spec, from) {
 
   if (POLYMORPHIC_STEPS.has(spec.name)) return true;
   if (spec.name === "foreach") return current.base === "shares" || current.base === "bundle";
+  if (spec.name === "scatter") return current.base === "shares" || current.base === "bundle";
   if (spec.name === "export") {
     return current.base === "keypair" || current.base === "key";
   }
@@ -2309,6 +2310,35 @@ export function walkPipelineTypes(steps, deps, slotTypes = new Map()) {
             : step.body?.length
               ? undefined
               : "foreach requires a body",
+        body: bodyEdges,
+      });
+      continue;
+    }
+    if (step.name === "scatter") {
+      // `foreach`'s shape with a second list: the body holds the pair, typed
+      // as the item `foreach :items` would hand it. The input edge keeps its
+      // `length` refinement, which is what lets `planRun` compare the share
+      // count against the roster before anything runs.
+      const pairType = typeOf("item", { kind: input.kind || "mnemonic" });
+      const bodyEdges = step.body?.length
+        ? walkBodyTypes(step.body, pairType, deps, slotTypes)
+        : [];
+      const collection = input.base === "shares" || input.base === "bundle";
+      current = typeOf(
+        "bundle",
+        typeof input.length === "number" ? { length: input.length } : {}
+      );
+      edges.push({
+        index: i,
+        name: step.name,
+        input,
+        output: { ...current },
+        ok: collection && !!step.body?.length,
+        error: !collection
+          ? `"scatter" expects a collection (shares or bundle), got ${formatType(input)}`
+          : step.body?.length
+            ? undefined
+            : "scatter requires a body",
         body: bodyEdges,
       });
       continue;

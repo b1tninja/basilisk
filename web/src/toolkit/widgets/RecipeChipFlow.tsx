@@ -47,7 +47,7 @@ export type ChipStemView = {
   step: ChipStepView;
   hasNest: boolean;
   /** Which container op this is — drives the nest chrome (anchor chip, ghosts). */
-  nestKind?: "tee" | "foreach";
+  nestKind?: "tee" | "foreach" | "scatter";
   /**
    * Fitting selector ghosts for a new tee branch, from the closed projector
    * table (suggest.js selectorGhostsFor) — already fit-checked upstream.
@@ -627,6 +627,7 @@ export function RecipeChipFlow({
       activeGap.cell === cell;
     if (
       stem.nestKind === "foreach" ||
+      stem.nestKind === "scatter" ||
       (stem.body && stem.body.length) ||
       bodyTargeted ||
       (!(stem.branches || []).length && !armedHere && stem.nestKind !== "tee")
@@ -642,14 +643,18 @@ export function RecipeChipFlow({
           <span className="cell-recipe-indent-dash" aria-hidden>
             -
           </span>
-          {stem.nestKind === "foreach" ? (
+          {stem.nestKind === "foreach" || stem.nestKind === "scatter" ? (
             // The loop body's anchor — branches get a selector chip to hang
             // on; a body otherwise starts with nothing but the dash (46c).
             <SuggestChip
-              label="↻ each item"
+              label={stem.nestKind === "scatter" ? "↻ each pair" : "↻ each item"}
               variant="selector"
               className="cell-recipe-branch-hit"
-              title="Loop body — runs once per item"
+              title={
+                stem.nestKind === "scatter"
+                  ? "Scatter body — runs once per (share, member) pair"
+                  : "Loop body — runs once per item"
+              }
               onClick={() =>
                 onGap({
                   cell,
@@ -664,7 +669,7 @@ export function RecipeChipFlow({
             steps={stem.body || []}
             base={{ cell, stem: i, branch: null }}
             nested
-            scopeLabel={stem.nestKind === "foreach" ? "loop body" : "branch"}
+            scopeLabel={stem.nestKind === "tee" ? "branch" : "loop body"}
             selected={selected}
             activeGap={activeGap}
             onSelect={onSelect}

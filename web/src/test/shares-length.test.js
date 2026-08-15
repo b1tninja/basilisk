@@ -7,8 +7,8 @@
  * through the retype in both directions, and `at` consumes it: an index past
  * the split refuses at compile time. The consumer is wired in the same pass as
  * the producer because a refinement nothing reads is this repo's signature
- * defect — and the plan-time `scatter` count check this enables is a *future*
- * consumer, deliberately not built here.
+ * defect — and the plan-time `scatter` count check this enables is built now
+ * (`planRun`'s `scatter-count` refusal; see scatter.test.js).
  */
 import { describe, expect, it } from "vitest";
 import { compileRecipe } from "../lib/toolkit/recipe.js";

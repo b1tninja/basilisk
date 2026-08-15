@@ -970,7 +970,7 @@ function serializeChainSteps(steps, opts = {}) {
 
   for (const step of steps) {
     const hasListBody =
-      (step.name === "tee" || step.name === "foreach") &&
+      (step.name === "tee" || step.name === "foreach" || step.name === "scatter") &&
       Array.isArray(step.body) &&
       step.body.length > 0;
     const hasBranches =
@@ -1302,6 +1302,7 @@ export function projectTypeForMember(current, memberOrSelector) {
  *   warnings: RecipeWarning[],
  *   stepIndex: number,
  *   inForeach: boolean,
+ *   inScatter?: boolean,
  *   collectionLength?: number,
  *   source?: string,
  * }} ctx
@@ -1344,6 +1345,7 @@ function validateBodySteps(body, startType, ctx) {
     if (
       step.name === "foreach" ||
       step.name === "tee" ||
+      step.name === "scatter" ||
       step.name === "merge"
     ) {
       ctx.errors.push({
@@ -1353,6 +1355,43 @@ function validateBodySteps(body, startType, ctx) {
         stepIndex: ctx.stepIndex,
       });
       continue;
+    }
+    // The pair verbs read both halves of the pair a scatter body is holding,
+    // so outside one there is nothing for them to read — a tee or foreach
+    // body reaches this refusal too, which is what keeps `seal` from riding
+    // in on `foreach :items` (the item there is index/share, not a member).
+    if ((step.name === "seal" || step.name === "send") && !ctx.inScatter) {
+      ctx.errors.push({
+        message: noPairHere(step.name),
+        start: step.start,
+        end: step.end,
+        stepIndex: ctx.stepIndex,
+      });
+      continue;
+    }
+    if (step.name === "seal" || step.name === "send") {
+      const bad = pairRecipientError(step);
+      if (bad) {
+        ctx.errors.push({
+          message: bad,
+          start: step.start,
+          end: step.end,
+          stepIndex: ctx.stepIndex,
+        });
+        continue;
+      }
+    }
+    {
+      const reserved = reservedRecipientError(step, !!ctx.inScatter);
+      if (reserved) {
+        ctx.errors.push({
+          message: reserved,
+          start: step.start,
+          end: step.end,
+          stepIndex: ctx.stepIndex,
+        });
+        continue;
+      }
     }
     if (step.name === "select") {
       const projected = projectTypeForMember(
@@ -1446,7 +1485,10 @@ function validateBodySteps(body, startType, ctx) {
       }
       slotTypesByIndex.push({ ...current });
     }
-    if (ctx.inForeach && spec.kind === "sink") {
+    // `seal` is a sink whose output the next step consumes (the armored
+    // message pipes on), so the mnemonic-continues fiction below — which
+    // exists for `gpg.encrypt mode=separate` bodies — must not overwrite it.
+    if (ctx.inForeach && !ctx.inScatter && spec.kind === "sink") {
       current = typeOf("text", { kind: "mnemonic" });
     }
   }
@@ -1634,6 +1676,106 @@ export const COPY_NOT_A_QUORUM =
   "A threshold of 1 means any single share recovers the secret on its own — that is a copy, not a quorum.";
 
 /**
+ * A pair verb met where no pair exists.
+ *
+ * The sentence is `LANGUAGE.md`'s own, and it names the state rather than a
+ * remedy that cannot be performed: the pair is the input, and only a
+ * `scatter` body holds one.
+ * @param {string} name  `seal` or `send`
+ * @returns {string}
+ */
+function noPairHere(name) {
+  return (
+    `\`${name} to=each\` reads the pair a scatter hands it, and there is no ` +
+    `scatter here — the pair verbs live in a \`scatter to=room\` body ` +
+    `(\`- ${name} to=each | …\`).`
+  );
+}
+
+/**
+ * `room` and `each` are reserved words in recipient position, naming
+ * derivations — never people — so a step whose `to=` is a *choice* must not
+ * read one as an address. Without this rule `gpg.encrypt to=each` would ride
+ * to run time and fail as an email lookup for a person called "each", which
+ * is a state nobody is in.
+ *
+ * Checked case-insensitively so `to=Each` is told about the reserved word
+ * rather than being read as a fingerprint it is not.
+ *
+ * @param {RecipeStep} step  a `quorum.send` or `gpg.encrypt` step
+ * @param {boolean} inScatter  whether a scatter body encloses it
+ * @returns {string|null}
+ */
+function reservedRecipientError(step, inScatter) {
+  if (step.name !== "quorum.send" && step.name !== "gpg.encrypt") return null;
+  const raw = String(step.params?.to ?? "").trim();
+  const word = raw.toLowerCase();
+  const pairVerb = step.name === "gpg.encrypt" ? "seal" : "send";
+  if (word === "each") {
+    // Outside a body the remedy names the pair *verb*, not this step —
+    // `- quorum.send to=each` would itself refuse, and a refusal must never
+    // name a remedy that cannot be performed.
+    if (!inScatter) return noPairHere(pairVerb);
+    return (
+      `\`${step.name} to=each\`: \`each\` is this pair's member, and the verb ` +
+      `that reads the pair is \`${pairVerb}\` — write \`- ${pairVerb} to=each\`` +
+      (pairVerb === "seal"
+        ? " (it is gpg.encrypt mode=combined addressed by the pair)."
+        : " (it is quorum.send addressed by the pair).")
+    );
+  }
+  if (word === "room") {
+    return (
+      `\`${step.name} to=room\`: \`room\` is a reserved word in recipient ` +
+      `position — it names the audience derivation \`scatter to=room\` reads. ` +
+      (step.name === "quorum.send"
+        ? "`quorum.send to=` takes one peer's fingerprint, and an empty `to=` already broadcasts to every verified peer."
+        : "`gpg.encrypt to=` takes a `$slot`, `fpr:…`, or an email.")
+    );
+  }
+  return null;
+}
+
+/**
+ * The `to=` a pair verb carries: `each`, or one whole fingerprint.
+ *
+ * Anything between is refused here, at compile, with the two rules this
+ * module already enforces elsewhere: a reserved word is spelled exactly, and
+ * a fingerprint is never partial — a suffix names more than one key.
+ * @param {RecipeStep} step  a `seal` or `send` step inside a scatter body
+ * @returns {string|null}
+ */
+function pairRecipientError(step) {
+  const raw = String(step.params?.to ?? "each").trim();
+  if (raw === "each") return null;
+  const word = raw.toLowerCase();
+  if (word === "each") {
+    return `\`${step.name} to=${raw}\`: the reserved word is written \`each\`.`;
+  }
+  if (word === "room") {
+    return (
+      `\`${step.name} to=room\`: \`room\` is the whole audience, which is ` +
+      `\`scatter to=\`'s recipient — a pair verb addresses this pair's ` +
+      `member. Write \`to=each\`, or one whole fingerprint to address every ` +
+      `share to that key.`
+    );
+  }
+  if (/^[0-9A-Fa-f]+$/.test(raw)) {
+    if (raw.length === 40 || raw.length === 64) return null;
+    return (
+      `\`${step.name} to=${raw}\` is ${raw.length} hex characters, which is ` +
+      `part of a key rather than a key — a suffix of a fingerprint names ` +
+      `more than one key. Write the whole fingerprint (40 characters for ` +
+      `v4, 64 for v6), or \`each\` for this pair's member.`
+    );
+  }
+  return (
+    `\`${step.name} to=\` takes \`each\` (this pair's member) or one whole ` +
+    `fingerprint — not "${raw}".`
+  );
+}
+
+/**
  * Validate a parsed AST against the registry (types, scopes, params).
  * @param {RecipeAst} ast
  * @returns {ValidationResult}
@@ -1700,6 +1842,31 @@ export function validateRecipe(ast) {
         stepIndex,
       });
       continue;
+    }
+
+    // A pair verb on the stem: the stem never holds a pair, only a `scatter`
+    // body does. (`send` on a stem normally re-reads as `quorum.send` at
+    // parse; this also covers a hand-built AST.)
+    if (step.name === "seal" || step.name === "send") {
+      errors.push({
+        message: noPairHere(step.name),
+        start: step.start,
+        end: step.end,
+        stepIndex,
+      });
+      continue;
+    }
+    {
+      const reserved = reservedRecipientError(step, false);
+      if (reserved) {
+        errors.push({
+          message: reserved,
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+        continue;
+      }
     }
 
     // Param checks
@@ -1929,6 +2096,85 @@ export function validateRecipe(ast) {
         if (!inputNeeds.includes(need)) inputNeeds.push(need);
       }
       current = typeOf("bundle");
+      continue;
+    }
+
+    if (step.name === "scatter") {
+      // The same collection rule as `foreach` — scatter is that loop with a
+      // second list, and the second list is the room's.
+      if (current.base !== "shares" && current.base !== "bundle") {
+        errors.push({
+          message: `scatter requires a collection (shares or bundle) — got ${formatType(current)}. Add sss.split, blip39, shares, or quorum.recv count=all before scatter.`,
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+      }
+      // The second list is derived, never named. A fingerprint here would
+      // *choose* the pairing, and the pairing must never be chosen —
+      // `peersSha` commits to the room as a set, so a chosen order is the
+      // divergence nothing downstream can see. The constant-recipient want is
+      // real and has its spelling: on the body's verb, where it addresses
+      // every pair the same way instead of reordering them.
+      const to = String(step.params?.to ?? "room").trim();
+      if (to !== "room") {
+        errors.push({
+          message:
+            `\`scatter to=\` names a derivation, not a choice — the only ` +
+            `recipient is \`room\`, the audience in canonical order` +
+            (to.toLowerCase() === "room"
+              ? ` (written \`room\`, exactly).`
+              : `. A fingerprint here would choose the pairing, which must ` +
+                `stay derived; to address every share to one key, put the ` +
+                `constant on the body's verb: \`- seal to=<fingerprint>\`.`),
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+      }
+      if (!step.body?.length) {
+        errors.push({
+          message:
+            "scatter requires a body — one indented `- seal to=each | …` line, run once per (share, member) pair",
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+        current = typeOf("bundle");
+        continue;
+      }
+      // The body holds the pair: `:key` is the member (text), `:value` the
+      // share — `foreach :items`'s own vocabulary, which is why the item type
+      // is reused rather than a new base invented for one body form.
+      const pairType = typeOf("item", { kind: current.kind || "mnemonic" });
+      const bodyVal = validateBodySteps(step.body, pairType, {
+        errors,
+        warnings,
+        stepIndex,
+        inForeach: true,
+        inScatter: true,
+        // A body `out`'s bundle slot is one part per pair, and the pair count
+        // is the share count when the text states it.
+        collectionLength:
+          typeof current.length === "number" ? current.length : undefined,
+        slotTypes,
+        slotTypesByIndex,
+        source: ast.source,
+      });
+      if (bodyVal.encryptInBody) {
+        foreachGpg = true;
+        gpgSlots = Math.max(gpgSlots, sharesCount || 1);
+      }
+      for (const need of bodyVal.inputNeeds) {
+        if (!inputNeeds.includes(need)) inputNeeds.push(need);
+      }
+      // A bundle of per-pair tips, fixed by the step name — and its count is
+      // the collection's, so the length refinement rides through when the
+      // text states it.
+      current = typeOf(
+        "bundle",
+        typeof current.length === "number" ? { length: current.length } : {}
+      );
       continue;
     }
 

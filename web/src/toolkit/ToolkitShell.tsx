@@ -800,7 +800,7 @@ export function ToolkitShell() {
   >(null);
   /** Inserting a container auto-focuses its own first body gap (turn 46b). */
   const focusNestAfterInsert = (cell: number, name: string, stem: number) => {
-    if (name === "tee" || name === "foreach") {
+    if (name === "tee" || name === "foreach" || name === "scatter") {
       setPendingInsert({ cell, stem, branch: null, body: 0 });
     }
   };
@@ -2141,7 +2141,8 @@ export function ToolkitShell() {
     () =>
       nestedInsert || armedBranch
         ? nb.filteredOps.filter(
-            (s: { name: string }) => s.name !== "tee" && s.name !== "foreach"
+            (s: { name: string }) =>
+              s.name !== "tee" && s.name !== "foreach" && s.name !== "scatter"
           )
         : nb.filteredOps,
     [nb.filteredOps, nestedInsert, armedBranch]
@@ -3004,7 +3005,9 @@ export function ToolkitShell() {
                               // and ghost affordances instead of masquerading
                               // as a linear op (turn 46).
                               const isNest =
-                                s.name === "tee" || s.name === "foreach";
+                                s.name === "tee" ||
+                                s.name === "foreach" ||
+                                s.name === "scatter";
                               return {
                                 step: {
                                   name: s.name,
@@ -3014,7 +3017,7 @@ export function ToolkitShell() {
                                 },
                                 hasNest: isNest,
                                 nestKind: isNest
-                                  ? (s.name as "tee" | "foreach")
+                                  ? (s.name as "tee" | "foreach" | "scatter")
                                   : undefined,
                                 nestAdd:
                                   s.name === "tee"

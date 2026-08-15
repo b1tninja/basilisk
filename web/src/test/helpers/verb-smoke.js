@@ -1447,6 +1447,25 @@ input | quorum.send | out $sent`,
       mode: "compile",
       skipReason: "needs WebRTC mesh + a live peer",
     },
+    {
+      // The room's plural: one body run per (share, member) pair, the pair
+      // verbs reading both halves. Compile-only for `quorum.send`'s reason —
+      // the room the pairing derives from is the live exchange's audience —
+      // and the *pairing itself* is exercised for real in `scatter-deal.
+      // test.js` over a stubbed session, plus the two-browser ceremony e2e.
+      id: "scatter.seal.send.compile",
+      recipe: `gpg.genkey email="quorum-smoke@example.com" | out $me
+
+quorum.offer to="${"A".repeat(40)},${"B".repeat(40)}" key=$me wait=5000 | out $session
+
+random 32 | sss.split 2/2 | blip39 | scatter to=room
+  - seal to=each | out $sealed
+
+random 32 | sss.split 2/2 | blip39 | scatter to=room
+  - send to=each`,
+      mode: "compile",
+      skipReason: "needs WebRTC mesh + a live peer",
+    },
 
     // ── WebRTC primitives (§23a/23b/29a/29d/30d) — every one needs a real
     // RTCPeerConnection (and several a live exchange), so all compile-only.

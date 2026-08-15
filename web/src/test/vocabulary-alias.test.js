@@ -77,9 +77,10 @@ describe("bare send refuses, naming the missing recipient", () => {
     const msg = msgs.join(" ");
     expect(msg).toContain("`send` names no recipient");
     expect(msg).toContain("to=<fingerprint>");
-    // The refusal names the state that is true *today*. `scatter` does not
-    // exist; a refusal pointing at it would name a remedy that cannot be
-    // performed.
+    // The refusal names the thing missing *here* — the recipient. `scatter`
+    // exists now and bare `send` has its pair position inside its body, but a
+    // stem `send` has no pair either way, so pointing at a body the author is
+    // not writing would still be advice past the actual gap.
     expect(msg.toLowerCase()).not.toContain("scatter");
   });
 

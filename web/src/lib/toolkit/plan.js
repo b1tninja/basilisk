@@ -192,7 +192,7 @@ import { normalizeFingerprintInput } from "../pgp/verify-fpr.js";
  * @property {string} expected
  * @property {string} actual
  * @property {number} cell
- * @property {"two-owners"|"unknown-peer"|"publish-secret"|"keying-in-mirror"|"unreadable"|"uncompiled"} reason
+ * @property {"two-owners"|"unknown-peer"|"publish-secret"|"keying-in-mirror"|"unreadable"|"uncompiled"|"scatter-count"} reason
  * @property {string} message   the sentence a person reads, naming the remedy
  * @property {number} [start]
  * @property {number} [end]
@@ -428,18 +428,41 @@ export function planChains(compiled) {
  * @returns {Map<string, import("./types.js").RefinedType>}
  */
 function typesOf(chains) {
+  return typesAndEdgesOf(chains).types;
+}
+
+/**
+ * `typesOf`, keeping each chain's step edges as well.
+ *
+ * The edges carry the one plan-time fact the slot map cannot: the refined
+ * type *entering* a step. `planRun` reads a `scatter` edge's input `length` —
+ * the share count `sss.split K/N` stamped and `blip39` carried — to compare
+ * against the roster before anything runs. One walk, both answers, so the
+ * count checked and the types placed against cannot come from two walks that
+ * disagree.
+ *
+ * @param {import("./recipe.js").RecipeChain[]} chains
+ * @returns {{ types: Map<string, import("./types.js").RefinedType>,
+ *   edgesByChain: Array<Array<{ name: string, input: import("./types.js").RefinedType }>> }}
+ */
+function typesAndEdgesOf(chains) {
   /** @type {Map<string, import("./types.js").RefinedType>} */
   const types = new Map();
+  /** @type {Array<Array<{ name: string, input: import("./types.js").RefinedType }>>} */
+  const edgesByChain = [];
   for (const chain of chains) {
     try {
-      walkPipelineTypes(chain?.steps || [], { getStep }, types);
+      edgesByChain.push(
+        walkPipelineTypes(chain?.steps || [], { getStep }, types).edges
+      );
     } catch (_) {
       // A chain the type walk cannot finish still has an owner for whatever it
       // writes. Placement is a question about headers and slot names, and it
       // must not become unanswerable because a type could not be resolved.
+      edgesByChain.push([]);
     }
   }
-  return types;
+  return { types, edgesByChain };
 }
 
 /**
@@ -468,7 +491,7 @@ export function slotTypes(compiled) {
 function slotOrigins(chains) {
   // Types first, over the whole notebook: the walk registers each chain's `out`
   // slots as it goes, and a chain below may read them.
-  const types = typesOf(chains);
+  const { types, edgesByChain } = typesAndEdgesOf(chains);
   /** @type {Map<string, { cell: number, peer: string, published: boolean }>} */
   const owners = new Map();
   for (let i = 0; i < chains.length; i++) {
@@ -487,7 +510,7 @@ function slotOrigins(chains) {
       owners.set(label, { cell: i, peer, published: published.has(label) });
     }
   }
-  return { owners, types };
+  return { owners, types, edgesByChain };
 }
 
 /**
@@ -693,7 +716,7 @@ export function planRun(compiled, opts = {}) {
     return plan;
   }
 
-  const { owners, types } = slotOrigins(chains);
+  const { owners, types, edgesByChain } = slotOrigins(chains);
 
   for (let i = 0; i < chains.length; i++) {
     const chain = chains[i];
@@ -866,6 +889,38 @@ export function planRun(compiled, opts = {}) {
           "fingerprint it is; rename the cell's peer, or add " +
           `\`${PEER_SIGIL}${peer}\` to the roster before running.`
       );
+    }
+
+    // `scatter to=room` deals one share per room member, share i to member i
+    // in canonical audience order — so a share count the text states must
+    // equal the roster's size, and the audience is known *here*, before the
+    // run (`planRun` holds the roster; the engine only meets the room after
+    // the split has already drawn a secret). The split's N and the room's
+    // size are two independently authored numbers — `sss.split`'s
+    // `serialize: "always"` keeps N in the text on purpose, so a mismatch is
+    // a recipe a person can write and a refusal is the honest answer. A
+    // count only the run knows (an unstamped bundle) refuses at run instead.
+    if (bound) {
+      const roomSize = byLabel.size;
+      for (const edge of edgesByChain[i] || []) {
+        if (edge?.name !== "scatter") continue;
+        const shareCount =
+          typeof edge.input?.length === "number" ? edge.input.length : null;
+        if (shareCount == null || roomSize < 1 || shareCount === roomSize) continue;
+        refuse(
+          anchor,
+          "scatter",
+          `${roomSize} shares — one per room member`,
+          `${shareCount} shares`,
+          "scatter-count",
+          `Cell ${i} scatters ${shareCount} share${shareCount === 1 ? "" : "s"} ` +
+            `into a room of ${roomSize} member${roomSize === 1 ? "" : "s"} — ` +
+            `share i goes to member i in canonical audience order, so the two ` +
+            `counts must agree. The split's N and the room's size are written ` +
+            `independently: change the split so N is ${roomSize}, or change ` +
+            `who is in the room, before this can deal.`
+        );
+      }
     }
 
     // `publish` moves the named `out` artifacts into the room. What may move

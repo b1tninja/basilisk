@@ -48,7 +48,7 @@ in $share-1 | qr
 
 - A recipe is one or more **chains** separated by blank lines.
 - Within a chain: flat `|` stem; a newline between stem lines is the same as `|`.
-- Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
+- Blocks: `tee` / `foreach` / `scatter` take a **body** (braces `{ … }` or indented `-` lines).
 - **One `-` line is one branch, always.** Under `tee`, every line forks the stem — opening with a projection (`- public | …`) or without one (`- encode hex | out $a`, which forks the whole value). Lines are never joined: a branch of several steps is written along its own line with `|`. `foreach` has exactly **one** body line, because the loop threads each item through it and there is no second thing a second line could be; a second `- ` there is refused.
 - Keypair halves are **steps**: `public` / `private` (`:public` / `:private` still read and canonicalize to them). Item and loop projections keep their colon (`:value`, `foreach :items`). Dot (`.`) is reserved for namespaced ops (`gpg.encrypt`, `sss.split`) — never for members.
 - Slots: `out $label` registers a live pipeline value — always, whatever the value carries (a share selected with `at N` / `[n]` included); load with bare `$label` (preferred) or `in $label` / `in 1`. Inside a `foreach` body, `out $label` binds the label once, to a bundle of every iteration's value. `$kp | out` re-emits as `$kp`.
@@ -846,6 +846,43 @@ into: the item's value threads through the body and comes back out, so a second
 
 Nested `tee` / `foreach` inside a body is rejected in v1.
 
+### `scatter`
+
+`foreach` with a second list: the live room. One body run per (share, member)
+pair — share *i* to member *i* in **canonical audience order** (ascending whole
+fingerprint, deduped: the list the room id is a digest of), so the pairing is
+derived on both machines and chosen by neither. `to=room` is the only
+recipient; `room` and `each` are reserved words in recipient position, naming
+derivations, never people.
+
+```text
+random 32 | sss.split 2/3 | blip39.encode | scatter to=room
+  - seal to=each | out $sealed
+```
+
+(Canonical spelling. `split 2/3 | words | scatter` with `- seal | out $sealed`
+beneath is the authoring sugar that converges on it. In a placed notebook the
+deal cell ends `… | out $sealed | publish` under its dealer's `@` header, and
+the published set is the deal's record.)
+
+The body's pipe carries the pair. Two verbs consume it whole — `seal to=each`
+(gpg.encrypt `mode=combined` addressed by the pair's member; output one
+armored message, piped on as text) and `send to=each` (`quorum.send`
+addressed by the pair's member; the pair whose member is this machine never
+crosses a wire). A constant `to=<fingerprint>` on either verb addresses every
+share to that one key — visibly different from `to=each` rather than
+differing by an absence. For everything else the body reuses `foreach
+:items`' vocabulary: `:key` is the member, `:value` the share.
+
+Refusals: `to=each` outside a scatter body (there is no pair there); any
+`scatter to=` that is not `room`; a share count that is not the room's size —
+at **plan time** when the count is in the text (`sss.split K/N` states N, the
+plan holds the roster), at run time otherwise; and a room where any member is
+unverified, because a share handed to an unconfirmed key cannot be taken
+back. One `- ` line, as `foreach`; the tip is a `bundle` of per-pair tips.
+
+`gather` (the holders' half) is a later pass.
+
 ### `peek`
 
 Side inspect snapshot; stem unchanged. Prefer this over an empty `tee`.
@@ -860,6 +897,7 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private
 |---------|------|
 | `tee` | Side pipelines on clone/projection; stem unchanged. **Requires** a body. |
 | `foreach` | Map body over a sequence. Optional `:items` / `:values` / `:keys`. |
+| `scatter` | Deal a shares collection to the room: one body run per (share, member) pair, in canonical audience order. `to=room` only. Pair verbs `seal to=each` / `send to=each` read the pair whole; `:key` / `:value` project it. |
 | `peek` | Side inspect snapshot; stem unchanged. |
 | `at` | Same as `[n]` / `[n:m]` — share index or slice. When the share count is stated in the text (`sss.split 2/3` stamps `length: 3`, `blip39` carries it), an index or slice past it refuses at compile: `at 5` of a 3-share split selects nothing. A set counted only at run time (`shares`, `gpg.decrypt`) is not checked. |
 | `in` | Source: load a prior `out` slot by `$label` or 1-based index (also written bare as `$label`). |
