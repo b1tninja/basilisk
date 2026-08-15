@@ -33,6 +33,7 @@ import { digestText } from "./receipt.js";
 
 /**
  * @typedef {object} ActivityEntry
+ * @property {number} id            Session-unique handle, for amending the receipt
  * @property {number} at            Wall clock, for display only
  * @property {string} action        Action id ("copy", "key.copyPublicLine")
  * @property {string} label         Human label as the button showed it
@@ -45,6 +46,12 @@ import { digestText } from "./receipt.js";
 
 /** @type {ActivityEntry[]} */
 let entries = [];
+/**
+ * Monotonic and never reset — `clearActivity` empties the list but does not
+ * rewind this, so an amend aimed at a cleared entry finds nothing rather than
+ * finding a stranger that inherited its number.
+ */
+let nextId = 1;
 /** @type {Set<() => void>} */
 const listeners = new Set();
 
@@ -96,12 +103,19 @@ export function activityCount() {
  * `Already in My Keys`, where every other field of the entry is identical and
  * the receipt is the only record that the action changed something.
  *
+ * Returns the entry's id — the handle `amendActivityReceipt` takes — or `null`
+ * when recording itself failed, so a caller holding `null` amends nothing
+ * rather than amending entry zero.
+ *
  * @param {{ action: string, label: string, artifact: string,
  *           tier: string, content?: string, detail?: string, receipt?: string }} evt
+ * @returns {Promise<number|null>}
  */
 export async function recordActivity(evt) {
   try {
+    const id = nextId++;
     entries.push({
+      id,
       at: Date.now(),
       action: String(evt.action || ""),
       label: String(evt.label || ""),
@@ -112,8 +126,47 @@ export async function recordActivity(evt) {
       ...(evt.receipt ? { receipt: String(evt.receipt) } : {}),
     });
     notify();
+    return id;
   } catch (_) {
     /* see above */
+    return null;
+  }
+}
+
+/**
+ * Replace one entry's receipt — the only field an amend may touch.
+ *
+ * The receipt exists for facts that are the action's *outcome*, and one
+ * producer learns its outcome late: `quorum.send` finds out that a payload
+ * reached the far session only when the acknowledgment comes back, seconds
+ * after the entry was written. That fact belongs on the send's own entry —
+ * the ack moved nothing on this machine, so a second entry would log an action
+ * that never happened here — and updating in place is also what keeps the
+ * unconfirmed state honest: the entry says "unconfirmed" exactly until the
+ * confirmation exists, rather than forever because its record was frozen.
+ *
+ * Everything else in an entry — action, label, artifact, tier, digest, detail,
+ * the clock — is what happened at the time and stays written. An amend surface
+ * wide enough to rewrite those would let later knowledge edit history, which
+ * is the opposite of minutes.
+ *
+ * Never throws, for `recordActivity`'s reason. Returns whether an entry was
+ * found — an amend against a cleared log is a no-op, not an error, because
+ * clearing is a user act that outranks a late ack.
+ *
+ * @param {number|null} id
+ * @param {string} receipt
+ * @returns {boolean}
+ */
+export function amendActivityReceipt(id, receipt) {
+  try {
+    const entry = entries.find((e) => e.id === id);
+    if (!entry) return false;
+    entry.receipt = String(receipt || "");
+    notify();
+    return true;
+  } catch (_) {
+    return false;
   }
 }
 

@@ -579,13 +579,14 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
 
     // **FINDING (4a) — what "the dealer keeps one share" actually looks like.**
     // The dealer's Slots tab holds `$expected` and `$set`, and `$set` is *every
-    // share*: the generator deliberately writes no `$mine`, because a selected
-    // share carrying `meta.shareIndex` is diverted into `slotsByIndex` and never
-    // becomes a named slot. The consequence a person meets is that the machine
-    // which was told to keep one share is visibly holding all three, in a slot
-    // it can reveal, with nothing on screen saying that two of them have been
-    // dealt away and this copy should go. A 2-of-3 whose dealer keeps the whole
-    // set is a 1-of-1 until somebody deletes it, and no control here says so.
+    // share*: the generator deliberately writes no `$mine` — an `out $mine`
+    // would bind today (the registry's `meta.shareIndex` divert is gone), but
+    // it would only add a second copy of share 1 beside the full set. The
+    // consequence a person meets is unchanged: the machine that was told to
+    // keep one share is visibly holding all three, in a slot it can reveal,
+    // with nothing on screen saying that two of them have been dealt away and
+    // this copy should go. A 2-of-3 whose dealer keeps the whole set is a
+    // 1-of-1 until somebody deletes it, and no control here says so.
     //
     // Pinned rather than fixed, because fixing it is a product decision about
     // what the ceremony should write, not a test's to make. A fix has to come
@@ -597,6 +598,41 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     expectedDigest = await reveal(dealer, 0, "expected");
     expect(expectedDigest, "the split wrote no digest of the master").toMatch(
       /^[0-9a-f]{64}$/
+    );
+
+    // **The deal is confirmed by the holders' sessions, not by their cells.**
+    // Neither holder has pressed Run — their receive cells are still idle on
+    // the two other screens — and the dealer's Activity entries already read
+    // `reached <fpr>'s session`, because the ack fires when the receiving
+    // exchange takes the payload into its inbox, not when a cell reads it.
+    // That boundary is the claim: a send that still said `sent · unconfirmed`
+    // here would be waiting on the wrong fact, and one that needed the far
+    // cell to run would be overstating what anybody knows.
+    expect(await cellStatus(recoverer, 3)).toBe("idle");
+    expect(await cellStatus(bystander, 4)).toBe("idle");
+    await trayTab(dealer, "Activity");
+    const receipts = tray(dealer).locator("[data-activity-log] .activity-receipt");
+    await expect
+      .poll(
+        async () =>
+          (await receipts.allInnerTexts()).filter((t) => t.includes("reached")).length,
+        { timeout: 30000 }
+      )
+      .toBe(3);
+    // Whole fingerprints — read with the whitespace squeezed out because the
+    // 40-hex key wraps in the tray — and no send left half-claimed: three
+    // sends, three confirmations, none still owed.
+    const flat = (await receipts.allInnerTexts()).map((t) => t.replace(/\s+/g, ""));
+    expect(
+      flat.filter((t) => t.includes(`reached${L.recoverer}'ssession`)),
+      `receipts: ${JSON.stringify(flat)}`
+    ).toHaveLength(2); // shares 2 and 1 both went to the recoverer
+    expect(
+      flat.filter((t) => t.includes(`reached${L.bystander}'ssession`)),
+      `receipts: ${JSON.stringify(flat)}`
+    ).toHaveLength(1); // share 3
+    expect(flat.join(" "), "a confirmed deal still reads unconfirmed").not.toContain(
+      "unconfirmed"
     );
   });
 

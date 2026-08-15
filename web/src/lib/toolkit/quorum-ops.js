@@ -16,7 +16,12 @@
  * @module lib/toolkit/quorum-ops
  */
 
-import { recordActivity } from "./activity-log.js";
+import {
+  amendActivityReceipt,
+  formatActivityTime,
+  recordActivity,
+} from "./activity-log.js";
+import { digestText } from "./receipt.js";
 import { NotebookSession } from "../notebook/session.js";
 import { iceServersOrDefault } from "../webrtc/ice.js";
 import { deriveRoomId, canonicalAudience } from "../notebook/room.js";
@@ -71,6 +76,8 @@ const IDLE_STATE = Object.freeze({
  *   inbox: { from: string, text: string, ts: number }[],
  *   delivered: number,
  *   recvWaiters: ((msg: { from: string, text: string, ts: number } | null) => void)[],
+ *   sends: SendRecord[],
+ *   ackSeen: Set<string>,
  *   cancelled: boolean,
  *   ownKeyElsewhere: boolean,
  *   viaByFpr: Map<string, string>,
@@ -78,6 +85,33 @@ const IDLE_STATE = Object.freeze({
  * } | null}
  */
 let current = null;
+
+/**
+ * One `quorum.send`, remembered until its delivery is confirmed (§36).
+ *
+ * Exchange-scoped like the inbox, and for the same reason: an ack can only
+ * arrive on the exchange the send left on, so a record that outlived it would
+ * be waiting for a wire that no longer exists. The *activity entry* is what
+ * survives — this is only the correlation state that lets an ack find it.
+ *
+ * Unbounded on purpose where `attested` is capped: every element here is a
+ * local user's own send, so a peer cannot grow it, and evicting the oldest
+ * would silently orphan the ack for exactly the send a slow room is still
+ * confirming.
+ *
+ * @typedef {object} SendRecord
+ * @property {string} digest    full sha256 of the sent text — what an ack names
+ * @property {string[]} expected  who the roster said this went to, whole fprs
+ * @property {Map<string, number>} delivered  fpr → when its ack arrived (local clock)
+ * @property {number|null} activityId  the send's activity entry, once recorded
+ */
+
+/**
+ * The wire word for a delivery acknowledgment. A protocol frame like
+ * `DKG_COMMIT`, never inbox material: the sender's tap consumes it and the
+ * receiver's `quorum.recv` never sees it.
+ */
+const DELIVERY_ACK = "quorum-ack";
 
 /**
  * What a room says when a second session turns up holding this session's key.
@@ -381,6 +415,12 @@ export function closeQuorumExchange(reason = "closed") {
   }
   ex.inbox.length = 0;
   ex.handoffs.length = 0;
+  // Only the correlation state goes — the activity entries stay, reading
+  // whatever was confirmed by the time the room closed. An ack cannot arrive
+  // on a closed exchange, so an entry still unconfirmed here is one this
+  // session will honestly never resolve.
+  ex.sends.length = 0;
+  ex.ackSeen.clear();
   // The proposal goes with the room it was made in. Kept past the close it would
   // invite adopting a notebook from a session that no longer exists, against a
   // roster that no longer names anybody.
@@ -734,6 +774,12 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       const waiter = ex.recvWaiters.shift();
       if (waiter) waiter(msg);
       else ex.inbox.push(msg);
+      // After the hand-off above, never before: the ack's claim is "this
+      // session has it", and here is the first line where that is true. Both
+      // branches earn it — queued for a future `quorum.recv` and handed to a
+      // waiting one are the same fact to the sender, a payload their machine
+      // no longer solely holds.
+      void acknowledgeDelivery(ex, msg);
     },
     onRoster: (peers) => {
       const ex = current;
@@ -837,6 +883,10 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     recvWaiters: [],
     /** Ordinary chat messages this exchange has carried — see `onChat`. */
     delivered: 0,
+    /** Sends awaiting their delivery ack — see `SendRecord`. */
+    sends: [],
+    /** Ack dedupe, `from sha ts` — see `deliveryAckTap` on replays. */
+    ackSeen: new Set(),
     handoffs: [],
     /**
      * The notebook a peer last proposed — one slot, see `getProposedNotebook`.
@@ -853,6 +903,10 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     taps: [],
   };
   const ex = current;
+  // First in the tap order, ahead of any DKG transport this exchange later
+  // grows: an ack must be consumed before anything else can mistake it for
+  // traffic, and before `onChat` counts it as a message the room carried.
+  ex.taps.push(deliveryAckTap(ex));
   emitState();
 
   try {
@@ -1060,6 +1114,134 @@ function sendAudience(ex, toFilter) {
 }
 
 /**
+ * The send entry's receipt — where this send *stands*, named exactly.
+ *
+ * "Reached their session" is the whole of the claim, chosen against the two
+ * neighbouring ones it must not be mistaken for. It is more than "written to
+ * a channel", which is the wire fact `detail` already carries and which says
+ * nothing about arrival; it is less than "their cell read it", which nobody
+ * here knows and which this copy must never imply — the ack fires when the
+ * receiving exchange queues the payload for `quorum.recv` (or hands it to one
+ * already waiting), and whether a cell ever reads it is the far machine's run,
+ * not this record. There is deliberately no second ack for the read: a dealer
+ * has no remedy for "delivered and unread" beyond asking, so a fact that
+ * prompts nothing earns no line.
+ *
+ * Until an ack exists the receipt says `sent · unconfirmed`, and absence is
+ * all it takes to say it: no timeout ever flips this to a failure state,
+ * because "no ack yet" is the one thing this end actually knows, and a holder
+ * on the old code — or behind a slow relay — sends the same silence as a
+ * crashed one. Unconfirmed never reads as confirmed; the converse costs a
+ * reader nothing.
+ *
+ * The clock on each confirmation is this machine's, at the moment the ack
+ * arrived — the moment the *sender learned*, which is the only instant in the
+ * exchange this log can honestly timestamp.
+ *
+ * @param {SendRecord} record
+ * @returns {string}
+ */
+function sendReceipt(record) {
+  if (!record.delivered.size) return "sent · unconfirmed";
+  const parts = [];
+  for (const [fpr, at] of record.delivered) {
+    parts.push(`reached ${fpr}'s session ${formatActivityTime(at)}`);
+  }
+  // Whole fingerprints on the unconfirmed side too: a partial broadcast is
+  // answered by going and asking somebody, and this names who.
+  for (const fpr of record.expected) {
+    if (!record.delivered.has(fpr)) parts.push(`${fpr} unconfirmed`);
+  }
+  return parts.join(" · ");
+}
+
+/**
+ * The tap that hears delivery acks — registered on every exchange at open,
+ * ahead of any DKG tap, so an ack is protocol chatter end to end: consumed
+ * here, never counted by `ex.delivered`, never queued for `quorum.recv`.
+ *
+ * An ack is matched by `(sender, sha256 of the text)` against the oldest send
+ * of that text this peer has not yet confirmed — oldest first so two sends of
+ * one value confirm in the order they left. Three kinds of arrival change
+ * nothing, each on purpose:
+ *
+ * - **A duplicate** (same peer, same digest, same message timestamp) is
+ *   dropped before matching, so a replayed ack cannot confirm a *second* send
+ *   of the same text on the strength of one delivery. The cost is the corner
+ *   where two sends of identical text to one peer land in the same
+ *   millisecond and the second stays unconfirmed — wrong in the only
+ *   direction this record is allowed to be wrong in.
+ * - **An ack for a send never made** — no record holds its digest — is line
+ *   noise and is ignored without a surface: a refusal would hand any peer a
+ *   way to put errors on this screen by inventing acks.
+ * - **A confirmation that repeats** (peer already in `delivered`) does not
+ *   move the recorded time. First ack wins, as an attestation's `claimedAt`
+ *   does, so nobody can walk a delivery timestamp forward.
+ *
+ * @param {NonNullable<typeof current>} ex
+ * @returns {(msg: { from: string, text: string, ts?: number }) => boolean}
+ */
+function deliveryAckTap(ex) {
+  return (msg) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(msg?.text ?? ""));
+    } catch {
+      return false; // ordinary chat — leave it for quorum.recv
+    }
+    if (!parsed || parsed.t !== DELIVERY_ACK) return false;
+    const sha = String(parsed.sha || "");
+    const from = String(msg.from || "").toUpperCase();
+    const seen = `${from} ${sha} ${Number(parsed.ts) || 0}`;
+    if (sha && !ex.ackSeen.has(seen)) {
+      ex.ackSeen.add(seen);
+      const record = ex.sends.find(
+        (s) => s.digest === sha && !s.delivered.has(from)
+      );
+      if (record) {
+        record.delivered.set(from, Date.now());
+        // `activityId` can still be null here — the ack outran `noteSend`'s
+        // own entry. Nothing is lost: `noteSend` re-reads the record after the
+        // entry exists and folds this confirmation in.
+        amendActivityReceipt(record.activityId, sendReceipt(record));
+      }
+    }
+    return true; // ack-shaped frames are protocol chatter, whatever they matched
+  };
+}
+
+/**
+ * Tell the sender their payload is in this session's hands.
+ *
+ * Called only after `onChat` has queued the message (or handed it to a
+ * waiting `quorum.recv`), so the claim the ack carries is already true when
+ * it leaves. It names the message by content digest rather than by any id on
+ * the wire because the chat frame carries none, and growing one would change
+ * what `quorum.recv` hands every existing recipe — the digest is computable
+ * on both ends from bytes both already hold, and reveals nothing the sender
+ * does not know.
+ *
+ * Best-effort, and silence on failure is correct: an unsent ack leaves the
+ * far entry reading `sent · unconfirmed`, which is exactly the sender's state
+ * of knowledge.
+ *
+ * @param {NonNullable<typeof current>} ex
+ * @param {{ from: string, text: string, ts: number }} msg
+ */
+async function acknowledgeDelivery(ex, msg) {
+  try {
+    const sha = await digestText(msg.text);
+    if (current !== ex || ex.cancelled) return;
+    await ex.session.sendChatTo(
+      msg.from,
+      JSON.stringify({ v: 1, t: DELIVERY_ACK, sha, ts: msg.ts })
+    );
+  } catch (_) {
+    /* see above — absence of an ack is itself the honest report */
+  }
+}
+
+/**
  * Write one Activity entry for a send that has already happened (§36).
  *
  * ## Why a sender gets a record and not a copy
@@ -1107,14 +1289,27 @@ function sendAudience(ex, toFilter) {
  * `sendChatTo` throws rather than reaching nobody quietly — recording a refusal
  * as a delivery is the one direction this log must never be wrong in.
  *
+ * ## The receipt is where the send *stands*, and it starts unconfirmed
+ *
+ * `detail` records what this machine did — the channels written, the roster's
+ * names — and none of that is arrival. The receipt carries the one fact that
+ * comes back from the other side: see `sendReceipt` for the exact claim and
+ * `deliveryAckTap` for how it gets here. It is written as `sent · unconfirmed`
+ * in the same breath as the entry, so there is no instant in which the entry
+ * exists and reads as anything stronger than the wire fact.
+ *
  * @param {NonNullable<typeof current>} ex
  * @param {{ to: string, wrote: number, text: string,
- *   value: { type?: string, meta?: Record<string, unknown> } }} sent
+ *   value: { type?: string, meta?: Record<string, unknown> },
+ *   record: SendRecord }} sent
  */
-async function noteSend(ex, { to, wrote, text, value }) {
+async function noteSend(ex, { to, wrote, text, value, record }) {
   const named = sendAudience(ex, to.replace(/\s+/g, "").toUpperCase());
+  // Who the acks are owed from, by the roster's account — read here, after
+  // the send, off the same snapshot the names below are printed from.
+  record.expected = named;
   const peers = `${wrote} peer${wrote === 1 ? "" : "s"}`;
-  await recordActivity({
+  record.activityId = await recordActivity({
     action: "quorum.send",
     label: "Sent over the session",
     // What a dealer is actually asking about. A selected share carries its own
@@ -1131,10 +1326,35 @@ async function noteSend(ex, { to, wrote, text, value }) {
     // Hashed by `recordActivity` and dropped — the entry keeps 16 hex
     // characters of digest and never the text.
     content: text,
+    receipt: sendReceipt(record),
     detail: `room ${ex.state.room} · written to ${peers}${
       named.length ? ` · ${named.join(" · ")}` : ""
     }`,
   });
+  // A fast peer's ack can land between the wire write and the entry existing
+  // — the tap marks the record and amends an id that is still null. Re-read
+  // the record now that the id is real, so an early confirmation is folded in
+  // rather than lost to the race.
+  if (record.delivered.size) {
+    amendActivityReceipt(record.activityId, sendReceipt(record));
+  }
+}
+
+/**
+ * Forget a send that never happened.
+ *
+ * A record with no wire write behind it must not stay matchable: a later send
+ * of the same text would put a real record behind it in the list, and the
+ * ack for *that* delivery would confirm this ghost first — an entry-less
+ * record, so the confirmation would vanish and the real send read unconfirmed
+ * forever.
+ *
+ * @param {NonNullable<typeof current>} ex
+ * @param {SendRecord} record
+ */
+function dropSend(ex, record) {
+  const at = ex.sends.indexOf(record);
+  if (at >= 0) ex.sends.splice(at, 1);
 }
 
 /**
@@ -1147,12 +1367,31 @@ export async function execQuorumSend(value, params) {
       ? String(value.data)
       : new TextDecoder().decode(/** @type {Uint8Array} */ (value?.data));
   const to = String(params?.to || "").trim();
+  // The record exists before the wire write, deliberately: the ack races the
+  // bookkeeping — a same-machine test's round trip is microtasks — and a tap
+  // that fires before the record exists would read a genuine confirmation as
+  // line noise. The entry is still only written after the send returns; a
+  // record is not a log line.
+  /** @type {SendRecord} */
+  const record = {
+    digest: await digestText(text),
+    expected: [],
+    delivered: new Map(),
+    activityId: null,
+  };
+  ex.sends.push(record);
   // Addressed sends throw when no verified peer matches, rather than quietly
   // reaching nobody — see NotebookSession.sendChatTo.
-  const wrote = to
-    ? await ex.session.sendChatTo(to, text)
-    : await ex.session.sendChat(text);
-  await noteSend(ex, { to, wrote, text, value });
+  let wrote;
+  try {
+    wrote = to
+      ? await ex.session.sendChatTo(to, text)
+      : await ex.session.sendChat(text);
+  } catch (err) {
+    dropSend(ex, record);
+    throw err;
+  }
+  await noteSend(ex, { to, wrote, text, value, record });
   return value;
 }
 

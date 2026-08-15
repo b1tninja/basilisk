@@ -859,6 +859,178 @@ describe("quorum.send", () => {
   });
 });
 
+/* ── the delivery receipt ──────────────────────────────────────────────────
+ *
+ * "Written to 1 peer" is the wire's fact and says nothing about arrival: the
+ * holder's inbox is in-memory and exchange-scoped, so a tab that crashed
+ * between the write and the read has lost the share and nothing told the
+ * dealer. The receiving exchange now acknowledges the moment a payload is in
+ * its hands — queued for `quorum.recv`, or handed to one already waiting —
+ * and the sender's entry carries where the send *stands*: `sent · unconfirmed`
+ * until the ack, `reached <fpr>'s session <time>` after it. "Reached their
+ * session" is deliberately the whole claim; whether a cell ever reads it is
+ * the far machine's run.
+ */
+describe("quorum.send learns whether it arrived", () => {
+  /** The ack a receiving exchange emits for `text` — see `acknowledgeDelivery`. */
+  const ackFor = async (text, ts = 1700000000000) =>
+    JSON.stringify({ v: 1, t: "quorum-ack", sha: await digestText(text), ts });
+
+  /** Poll a condition across the microtask/timer hops an ack takes. */
+  const eventually = async (check) => {
+    for (let i = 0; i < 100 && !check(); i += 1) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(check()).toBe(true);
+  };
+
+  it("starts every send at sent · unconfirmed, never looking delivered", async () => {
+    activity.clearActivity();
+    await open();
+    await q.execQuorumSend({ type: "text", data: "the share" }, { to: FPR_B });
+    const [entry] = activity.listActivity();
+    expect(entry.receipt).toBe("sent · unconfirmed");
+    // Neither surface claims arrival anywhere: the wire fact stays in detail.
+    expect(JSON.stringify(entry)).not.toMatch(/reached|delivered/);
+  });
+
+  it("flips the same entry when the holder's session acknowledges", async () => {
+    activity.clearActivity();
+    const { session } = await open();
+    await q.execQuorumSend({ type: "text", data: "the share" }, { to: FPR_B });
+    session.chat(FPR_B, await ackFor("the share"));
+
+    const [entry] = activity.listActivity();
+    // The entry, not a second one: the ack moved nothing on this machine, so
+    // there is no new action to log — only where the send stands changed.
+    expect(activity.listActivity()).toHaveLength(1);
+    expect(entry.action).toBe("quorum.send");
+    expect(entry.receipt).toMatch(
+      new RegExp(`^reached ${FPR_B}'s session \\d\\d:\\d\\d:\\d\\d$`)
+    );
+    expect(entry.receipt).not.toContain("unconfirmed");
+    // And the minutes carry the flip — the receipt line is what gets pasted.
+    expect(activity.activityAsText()).toContain(`reached ${FPR_B}'s session`);
+  });
+
+  it("keeps the ack out of quorum.recv and out of the carried count", async () => {
+    // An ack is protocol chatter like a DKG round: consumed by the tap before
+    // `ex.delivered` counts it, so the timeout's "no message at all yet" —
+    // the sentence that means something is wrong — stays true of a room that
+    // has only ever carried acks.
+    const { session } = await open();
+    await q.execQuorumSend({ type: "text", data: "the share" }, { to: FPR_B });
+    session.chat(FPR_B, await ackFor("the share"));
+    await expect(q.execQuorumRecv({ wait: 1000 })).rejects.toThrow(
+      /no message at all yet/
+    );
+  });
+
+  it("confirms a broadcast peer by peer, naming who is still owed", async () => {
+    activity.clearActivity();
+    const { session } = await open();
+    session.connect(FPR_C);
+    await q.execQuorumSend({ type: "text", data: "to the room" }, {});
+    expect(activity.listActivity()[0].receipt).toBe("sent · unconfirmed");
+
+    session.chat(FPR_B, await ackFor("to the room"));
+    let receipt = activity.listActivity()[0].receipt;
+    // One arrival is not the room's: the peer still owed is named, whole.
+    expect(receipt).toContain(`reached ${FPR_B}'s session`);
+    expect(receipt).toContain(`${FPR_C} unconfirmed`);
+
+    session.chat(FPR_C, await ackFor("to the room"));
+    receipt = activity.listActivity()[0].receipt;
+    expect(receipt).toContain(`reached ${FPR_B}'s session`);
+    expect(receipt).toContain(`reached ${FPR_C}'s session`);
+    expect(receipt).not.toContain("unconfirmed");
+  });
+
+  it("lets one delivery confirm one send, however often its ack replays", async () => {
+    // Reconnects replay frames. The same text sent twice is two deliveries
+    // owed, and a duplicated ack (same peer, digest and stamp) must not stand
+    // in for the second one — nor re-log or move the time on the first.
+    activity.clearActivity();
+    const { session } = await open();
+    await q.execQuorumSend({ type: "text", data: "same words" }, { to: FPR_B });
+    await q.execQuorumSend({ type: "text", data: "same words" }, { to: FPR_B });
+
+    const replayed = await ackFor("same words", 111);
+    session.chat(FPR_B, replayed);
+    session.chat(FPR_B, replayed);
+
+    // Newest first: [0] is the second send, [1] the first. Oldest send
+    // confirms first, and the replay confirms nothing further.
+    let [second, first] = activity.listActivity();
+    expect(first.receipt).toContain("reached");
+    const confirmedAt = first.receipt;
+    expect(second.receipt).toBe("sent · unconfirmed");
+
+    // A genuine second delivery carries its own stamp and settles the rest.
+    session.chat(FPR_B, await ackFor("same words", 222));
+    [second, first] = activity.listActivity();
+    expect(second.receipt).toContain("reached");
+    // First ack won and stays won — a replay cannot walk the time forward.
+    expect(first.receipt).toBe(confirmedAt);
+    expect(activity.listActivity()).toHaveLength(2);
+  });
+
+  it("ignores an ack for a send never made, as line noise", async () => {
+    activity.clearActivity();
+    const { session } = await open();
+    await q.execQuorumSend({ type: "text", data: "the share" }, { to: FPR_B });
+    session.chat(FPR_B, await ackFor("something never sent"));
+    // Not surfaced — a refusal would hand any peer a way to put errors on this
+    // screen by inventing acks — and not delivered to a reader either.
+    expect(activity.listActivity()[0].receipt).toBe("sent · unconfirmed");
+    await expect(q.execQuorumRecv({ wait: 1000 })).rejects.toThrow(
+      /no message at all yet/
+    );
+  });
+
+  it("acknowledges the moment its own session takes a payload in", async () => {
+    // The receiving half: a message lands in this exchange's inbox and the
+    // sender is told so, without anybody running a recv cell.
+    const { session } = await open();
+    session.chat(FPR_B, "a payload");
+    await eventually(() => session.sent.length === 1);
+    const { to, text } = session.sent[0];
+    expect(to).toBe(FPR_B);
+    expect(JSON.parse(text)).toEqual({
+      v: 1,
+      t: "quorum-ack",
+      sha: await digestText("a payload"),
+      ts: 1700000000000,
+    });
+    // And the payload itself is still there for the cell that will read it.
+    expect((await q.execQuorumRecv({ wait: 1000 })).data).toBe("a payload");
+  });
+
+  it("acknowledges a payload handed straight to a waiting recv too", async () => {
+    // "Reached their session" covers both branches of `onChat` on purpose:
+    // queued, or handed to the cell already waiting — the sender cannot tell
+    // them apart and does not need to.
+    const { session } = await open();
+    const pending = q.execQuorumRecv({ wait: 5000 });
+    setTimeout(() => session.chat(FPR_B, "straight through"), 10);
+    expect((await pending).data).toBe("straight through");
+    await eventually(() => session.sent.length === 1);
+    expect(JSON.parse(session.sent[0].text).t).toBe("quorum-ack");
+  });
+
+  it("does not acknowledge protocol chatter a tap consumed", async () => {
+    // A DKG round never reaches the inbox, so its frames were never "taken
+    // in" — acking them would confirm a delivery to a reader that will never
+    // exist. The transport's own machinery is its receipt.
+    const { session } = await open();
+    const t = q.createExchangeTransport("dkg.run");
+    session.chat(FPR_B, JSON.stringify({ t: "dkg-commit", c: ["x"] }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(session.sent).toEqual([]);
+    t.release();
+  });
+});
+
 describe("quorum.recv", () => {
   it("takes a message already queued", async () => {
     const { session } = await open();

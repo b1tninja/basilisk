@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import {
   activityAsText,
   activityCount,
+  amendActivityReceipt,
   clearActivity,
   formatActivityTime,
   listActivity,
@@ -162,6 +163,8 @@ describe("it cannot break the thing it observes", () => {
   it("never throws, even on a hostile entry", async () => {
     // The action already happened; refusing to record it does not un-happen
     // it, and surfacing that as a failure would be a lie the other way.
+    // `null`, not a throw and not an id: the caller holding this cannot amend
+    // an entry that was never written, and must not be handed somebody else's.
     await expect(
       recordActivity({
         action: "x",
@@ -172,7 +175,7 @@ describe("it cannot break the thing it observes", () => {
           throw new Error("boom");
         },
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
   });
 
   it("survives a subscriber that throws", async () => {
@@ -181,9 +184,65 @@ describe("it cannot break the thing it observes", () => {
     });
     await expect(
       recordActivity({ action: "a", label: "A", artifact: "x", tier: "inert" })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual(expect.any(Number));
     expect(activityCount()).toBe(1);
     off();
+  });
+});
+
+describe("an amend may touch the receipt and nothing else", () => {
+  // One producer learns its outcome late: `quorum.send`'s delivery ack lands
+  // seconds after the entry is written, and it belongs on the send's own entry
+  // — the ack moved nothing on this machine, so a second entry would log an
+  // action that never happened here. The surface is deliberately one field
+  // wide: everything else in an entry is what happened at the time.
+  it("updates the entry in place, without adding a second one", async () => {
+    const id = await recordActivity({
+      action: "quorum.send",
+      label: "Sent over the session",
+      artifact: "share 2",
+      tier: "outward",
+      receipt: "sent · unconfirmed",
+    });
+    expect(amendActivityReceipt(id, "reached B's session 14:07:23")).toBe(true);
+    expect(activityCount()).toBe(1);
+    const [entry] = listActivity();
+    expect(entry.receipt).toBe("reached B's session 14:07:23");
+    // The rest of the record did not move — an amend is not an edit of history.
+    expect(entry.action).toBe("quorum.send");
+    expect(entry.artifact).toBe("share 2");
+    expect(activityAsText()).toContain("reached B's session 14:07:23");
+    expect(activityAsText()).not.toContain("unconfirmed");
+  });
+
+  it("tells subscribers, so the panel redraws the flip", async () => {
+    const id = await recordActivity({ action: "a", label: "A", artifact: "x", tier: "inert" });
+    let told = 0;
+    const off = onActivityChange(() => (told += 1));
+    amendActivityReceipt(id, "done");
+    off();
+    expect(told).toBe(1);
+  });
+
+  it("amends nothing on a cleared log, an unknown id, or null", async () => {
+    const id = await recordActivity({ action: "a", label: "A", artifact: "x", tier: "inert" });
+    clearActivity();
+    // Clearing is a user act that outranks a late ack — a no-op, not an error.
+    expect(amendActivityReceipt(id, "late")).toBe(false);
+    expect(amendActivityReceipt(999999, "late")).toBe(false);
+    expect(amendActivityReceipt(null, "late")).toBe(false);
+    expect(activityCount()).toBe(0);
+  });
+
+  it("never hands a cleared entry's id to a stranger", async () => {
+    // Ids are minted monotonically and never rewound, so an amend aimed at an
+    // entry that predates a clear cannot land on whatever was written after.
+    const before = await recordActivity({ action: "a", label: "A", artifact: "x", tier: "inert" });
+    clearActivity();
+    const after = await recordActivity({ action: "b", label: "B", artifact: "y", tier: "inert" });
+    expect(after).not.toBe(before);
+    expect(amendActivityReceipt(before, "hijack")).toBe(false);
+    expect(listActivity()[0].receipt).toBeUndefined();
   });
 });
 
