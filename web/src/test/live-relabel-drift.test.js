@@ -311,7 +311,11 @@ describe("between one member applying the rotation and the other", () => {
     const early = await reviewOffer(stale, built.json, () => false);
     expect(early.ok).toBe(false);
     expect(early.refusals.map((r) => r.reason)).toContain("unknown-manifest");
-    expect(early.refusals[0].message).toContain("not holding the same notebook");
+    // The message names the roster among the things a manifest is derived
+    // from, which is the thing that actually drifted here. It used to assert
+    // "not holding the same notebook" — false in this very case, where the
+    // notebook is character-identical and *who is in the room* is what moved.
+    expect(early.refusals[0].message).toContain("the roster the room agrees on");
 
     // The same offer, once CEC's room has moved too. Nothing was re-sent and
     // nothing was re-derived from a message: the announce that moved CEC's room

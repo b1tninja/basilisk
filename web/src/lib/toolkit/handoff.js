@@ -197,7 +197,13 @@ import {
   SLOT_SIGIL,
   slotLabelKey,
 } from "./recipe-parse.js";
-import { canonicalJson, digestText, isoTimestamp, mismatchLog } from "./receipt.js";
+import {
+  canonicalJson,
+  digestText,
+  isoTimestamp,
+  mismatchLog,
+  opsRegistryVersion,
+} from "./receipt.js";
 import { outSlotLabels, publishedSlots, serializeRecipe } from "./recipe.js";
 
 /**
@@ -343,6 +349,7 @@ const DIGEST_RE = /^[0-9a-f]{64}$/;
  * @property {string} actual
  * @property {number} cell
  * @property {"no-such-cell"|"ambiguous-index"|"cell-mismatch"|"different-notebook"
+ *   |"different-build"
  *   |"unknown-manifest"|"not-mine"|"mine-already"|"rendezvous"|"private-value"
  *   |"untyped-value"|"uncarriable"|"absent-value"|"unasked-slot"|"incomplete"
  *   |"slot-present"|"unattributed"|"not-theirs"|"not-offered"
@@ -1030,8 +1037,51 @@ export async function buildOfferFor(spec) {
  * @returns {Promise<boolean>}
  */
 async function checkCellIdentity({ at, cell, plan, manifest, mineDigest, refuse, offered }) {
+  // Which build wrote this manifest. `toolchain.ops` is the registry
+  // fingerprint `buildRunManifest` folds into every manifest — the language's
+  // own version string, derived from the step registry, a function of the
+  // build and never of the run. When the digests below disagree it is the one
+  // fact in hand that can tell "two notebooks" from "two Basilisks": a tab
+  // left open across a deploy re-canonicalises the same source into different
+  // text, so both ends can hold the same notebook and still digest apart. The
+  // digest refusals used to blame the notebook for that and name remedies —
+  // load the recipe, re-share — that the receiving build would simply re-spell
+  // out from under. So a digest mismatch is attributed to the build exactly
+  // when the fingerprints say so, and only then; fingerprints alone refuse
+  // nothing, and the same-build refusals keep their wording untouched.
+  const ourRegistry = opsRegistryVersion();
+  const theirRegistry = String(manifest?.toolchain?.ops || "");
+  const crossBuild = theirRegistry !== "" && theirRegistry !== ourRegistry;
+  /** @param {string} what */
+  const refuseBuild = (what) =>
+    refuse(
+      at,
+      "registry",
+      ourRegistry,
+      theirRegistry,
+      "different-build",
+      `${what} — but before that is read as two notebooks, this manifest says ` +
+        "it was written by a different build of Basilisk: its registry " +
+        `fingerprint is ${theirRegistry} and this build's is ${ourRegistry}. ` +
+        "When the language's canonical spelling changes between builds, the " +
+        "same source re-canonicalises into different text, so the digests " +
+        "differ even when both ends typed the same notebook — and nothing done " +
+        "to the notebook can fix that, because this build would just re-spell " +
+        "it again. Reload whichever tab is on the older build and derive the " +
+        "manifest there afresh: two ends on one build digest alike, or differ " +
+        "for a reason the other refusals can name."
+    );
+
   const cells = manifest?.cells || [];
   if (cells.length !== plan.cells.length) {
+    if (crossBuild) {
+      refuseBuild(
+        `This manifest describes ${cells.length} ` +
+          `${cells.length === 1 ? "cell" : "cells"} and this notebook plans ` +
+          `${plan.cells.length}`
+      );
+      return false;
+    }
     refuse(
       at,
       "cells",
@@ -1078,6 +1128,13 @@ async function checkCellIdentity({ at, cell, plan, manifest, mineDigest, refuse,
   }
   const want = String(declared.recipeDigest || "");
   if (!mineDigest || mineDigest !== want) {
+    if (crossBuild) {
+      refuseBuild(
+        `The manifest's cell ${cell} digests to something this notebook's ` +
+          `cell ${cell} does not`
+      );
+      return false;
+    }
     refuse(
       at,
       "recipeDigest",
@@ -1156,15 +1213,24 @@ export async function acceptHandoffOffer(offer, ctx) {
       String(offer.manifest || ""),
       held,
       "unknown-manifest",
+      // An offer carries no registry fingerprint, so unlike the in-hand
+      // manifest refusals above this one cannot tell "two notebooks" from
+      // "two builds" — it can only name both states and give each the remedy
+      // that actually ends it. Asserting the first as fact, as this sentence
+      // once did, told a peer on a stale build to re-share a notebook the
+      // receiving build would re-spell right back into refusal.
       `This offer is against a run manifest this peer has not seen` +
         `${held ? " — the one this notebook produces digests to something else" : ""}. ` +
-        "A manifest is derived from the notebook on this machine: its text, its " +
-        "title, and the roster the room agrees on. So this says the two ends are " +
-        "not holding the same notebook, and most often that nothing has been " +
-        "shared into this one yet. Have whoever is driving share theirs — " +
-        "Connections, under \"The notebook itself\" — and the same offer is then " +
-        "checked against the same text, which is the whole of what this gate is " +
-        "for."
+        "A manifest is derived from the notebook on this machine — its text, its " +
+        "title, the roster the room agrees on — and from the build's own " +
+        "registry fingerprint, so the two ends differ in one of those. Most " +
+        "often nothing has been shared into this notebook yet: have whoever is " +
+        "driving share theirs — Connections, under \"The notebook itself\" — and " +
+        "the same offer is then checked against the same text. If the notebook " +
+        "has been shared and this refusal is still here, the two ends are " +
+        "running different builds of Basilisk — a tab left open across a deploy " +
+        "— and no re-share can end that: reload the older tab, and the two ends " +
+        "derive the same manifest again."
     );
     return stop();
   }
@@ -1665,13 +1731,22 @@ export async function acceptCellResult(result, ctx) {
       String(result.manifest || ""),
       held,
       "unknown-manifest",
+      // The same honesty as the offer's refusal, for the return trip. The old
+      // tail inferred "the notebook here changed after the cell went out" —
+      // true on one build, and false when what changed is the build: a tab
+      // reloaded across a deploy derives the manifest under a new registry
+      // fingerprint from the very same text. Either way the run that offered
+      // the cell did not survive, which is the fact the remedy hangs on.
       `This result is against a run manifest this peer has not seen` +
         `${held ? " — the one this notebook produces digests to something else" : ""}. ` +
         "Nothing was committed to under that digest here, so there is no run for " +
         "a value to be returned into. A manifest is derived from the notebook on " +
-        "this machine, so the two ends are not holding the same one — which for a " +
-        "result means the notebook here changed after the cell went out, since " +
-        "they could not have been offered it otherwise."
+        "this machine and from the build's own registry fingerprint — so either " +
+        "the notebook here changed after the cell went out, or this tab was " +
+        "reloaded into a newer build of Basilisk in between and now derives a " +
+        "different manifest from the same text. The run that offered the cell is " +
+        "gone in both tellings: start it again on the build both ends now share, " +
+        "and offer the cell from there."
     );
     return stop();
   }

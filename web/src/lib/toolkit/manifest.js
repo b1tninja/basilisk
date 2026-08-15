@@ -402,6 +402,16 @@ export async function buildRunManifest(spec = {}) {
     peersSha: await peersDigest(peers),
     audienceSha: await audienceDigest(spec.audience || Object.values(peers)),
     toolchain: {
+      // `ops` is the build's language fingerprint — `opsRegistryVersion()`
+      // over every step name, parameter and enum, a function of the build and
+      // never of the run — and it sits inside the manifest digest on purpose.
+      // Two peers on different builds therefore derive different digests from
+      // the very same source, and every cross-build offer refuses instead of
+      // running a notebook the two ends would canonicalise differently. That
+      // refusal is the design working; what it must not do is misattribute
+      // itself, so `handoff.js` reads this field back when digests disagree —
+      // fingerprints differing is "two builds, reload the stale tab", and
+      // fingerprints matching leaves the two-notebooks refusals as they were.
       ops: String(spec.registry || opsRegistryVersion()),
       receipt: RECEIPT_VERSION,
     },
