@@ -38,8 +38,10 @@ random 32 | sss.split 2/3 | blip39 | foreach
 … | blip39 | foreach :items
   - :value | out $share
 
-# One share (1-based index)
+# One share (1-based index) — an ordinary slot, readable in a later cell
 … | blip39 | [1] | out $share-1
+
+in $share-1 | qr
 ```
 
 ## Design rules
@@ -49,7 +51,7 @@ random 32 | sss.split 2/3 | blip39 | foreach
 - Blocks: `tee` / `foreach` take a **body** (braces `{ … }` or indented `-` lines).
 - **One `-` line is one branch, always.** Under `tee`, every line forks the stem — opening with a projection (`- public | …`) or without one (`- encode hex | out $a`, which forks the whole value). Lines are never joined: a branch of several steps is written along its own line with `|`. `foreach` has exactly **one** body line, because the loop threads each item through it and there is no second thing a second line could be; a second `- ` there is refused.
 - Keypair halves are **steps**: `public` / `private` (`:public` / `:private` still read and canonicalize to them). Item and loop projections keep their colon (`:value`, `foreach :items`). Dot (`.`) is reserved for namespaced ops (`gpg.encrypt`, `sss.split`) — never for members.
-- Slots: `out $label` registers a live pipeline value; load with bare `$label` (preferred) or `in $label` / `in 1`. `$kp | out` re-emits as `$kp`.
+- Slots: `out $label` registers a live pipeline value — always, whatever the value carries (a share selected with `at N` / `[n]` included); load with bare `$label` (preferred) or `in $label` / `in 1`. Inside a `foreach` body, `out $label` binds the label once, to a bundle of every iteration's value. `$kp | out` re-emits as `$kp`.
 - Named slot args pass live values into ops: `aes-gcm key=$cek` (stem stays the payload).
 - Namespaced product ops use dots (`gpg.encrypt`, `sss.combine`, `webauthn.prf`); cipher ops use hyphens (`aes-gcm`). OpenSSL-sized (`aes-256-gcm`) and JCE (`AES/GCM/NoPadding`) parse to the same canonical hyphen name — **serialize preserves** size/hash as `keyBits=` / `hash=` when implied by those forms. Bare `encrypt`/`decrypt` sugar is migrator-only.
 - Bare `out kp` / `in kp` / `key=cek` do **not** live-parse — use `$label` (`out $kp`, `key=$cek`). Upgrade recipe / `migrateRecipe` rewrites bare forms. A pre-swap `@label` still loads (with a compile warning) and re-serializes as `$label`; `@` at the head of a chain names a **peer** (see Cell headers).
@@ -819,6 +821,13 @@ Brace form is equivalent: `tee { - public | … }`.
 
 Map a body over a shares collection. Optional selector before the body.
 The tip after `foreach` is a **`bundle`** of per-item tips (side effects via `out` / auto-emitted shares) — do **not** pipe the bundle into cipher/KDF ops; use `$slot`s written in the body.
+
+A body `out $x` emits one tile per iteration and binds `$x` **once**, to a
+bundle of every iteration's value — the label is written once in the text, so
+it names the whole emitted set rather than whichever iteration ran last.
+`shares` collects bundles, so `$x | shares | blip39 -d | sss.combine` recovers
+the set on the machine that split it. Two cells cannot both claim the label:
+`Duplicate out slot $x` at compile, the same rule as everywhere else.
 
 ```text
 … | blip39 | foreach

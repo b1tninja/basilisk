@@ -91,6 +91,48 @@ $kp | out $kp`);
     );
   });
 
+  it("holds foreach-body out labels to the same duplicate rule", () => {
+    // A body `out $share` binds a real slot now (a bundle of every iteration's
+    // value), so it claims its label like any other `out`. Two cells cannot
+    // both write it — this used to compile, because body outs were exempt from
+    // the slot walk, and the second loop's values silently shadowed nothing.
+    const { validation } = compileRecipe(
+      [
+        "random 32 | sss.split 2/3 | blip39 | foreach\n  - out $share",
+        "random 32 | sss.split 2/3 | blip39 | foreach\n  - out $share",
+      ].join("\n\n")
+    );
+    expect(validation.ok).toBe(false);
+    expect(validation.errors.some((e) => /Duplicate out slot \$share/.test(e.message))).toBe(
+      true
+    );
+    // …and against a top-level out of the same label, in either order.
+    const mixed = compileRecipe(
+      '"x" | out $share\n\nrandom 32 | sss.split 2/3 | blip39 | foreach\n  - out $share'
+    );
+    expect(mixed.validation.errors.some((e) => /Duplicate out slot \$share/.test(e.message))).toBe(
+      true
+    );
+  });
+
+  it("types a foreach-body out label as a bundle the collector accepts", async () => {
+    // `in $share` after a foreach used to be a compile error — "unknown slot"
+    // about a label the notebook visibly writes. The slot is a bundle of the
+    // loop's values, sized by the split when the text states the count, and
+    // `shares` collects bundles — so the recovery can *name* the set instead
+    // of leaning on the tray or the indexed sweep.
+    const src = [
+      "random 32 | sss.split 2/3 | blip39 | foreach\n  - out $share",
+      "$share | shares | blip39 -d | sss.combine | encode hex | out $secret",
+    ].join("\n\n");
+    const { ast, validation } = compileRecipe(src);
+    expect(validation.errors.map((e) => e.message)).toEqual([]);
+    const arts = await runRecipe(ast);
+    expect(
+      arts.find((a) => /secret/i.test(a.label || a.filename || ""))?.content
+    ).toMatch(/^[0-9a-f]{64}$/);
+  }, 30_000);
+
   it("rejects unknown in slot", () => {
     const { validation } = compileRecipe("in $missing | export pkcs8");
     expect(validation.ok).toBe(false);
@@ -98,6 +140,27 @@ $kp | out $kp`);
       true
     );
   });
+
+  it("runs in $mine after a selected share was put there, share meta and all", async () => {
+    // The two-browser ceremony finding, as a layer test: `$set | at 1 | out
+    // $mine` used to report ok, draw a tile and register nothing, because the
+    // registry diverted any value carrying `meta.shareIndex` away from the
+    // label map — so the next cell failed with "unknown slot (register earlier
+    // with out $mine)", a remedy already performed. `out` binds its label now
+    // whatever the value carries.
+    const { ast, validation } = compileRecipe(
+      [
+        "random 32 | sss.split 2/3 | blip39 | out $set",
+        "in $set | at 1 | out $mine",
+        "in $mine | digest | encode hex | out $check",
+      ].join("\n\n")
+    );
+    expect(validation.errors.map((e) => e.message)).toEqual([]);
+    const arts = await runRecipe(ast);
+    expect(
+      arts.find((a) => /check/i.test(a.label || a.filename || ""))?.content
+    ).toMatch(/^[0-9a-f]{64}$/);
+  }, 30_000);
 
   it("runs in $kp after out $kp", async () => {
     const { ast, validation } = compileRecipe(`genkey ec/p256 | out $kp

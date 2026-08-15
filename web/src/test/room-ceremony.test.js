@@ -32,14 +32,16 @@
  *    spelling does not lex at all. Either way there is no mutator for a step
  *    param, so resolution-after-the-fact has nothing to resolve with and the
  *    audience has to come first.
- * 3. **`$set | at 1 | out $mine` does not make a slot.** A selected share
- *    carries `meta.shareIndex`, and `slot-registry.register` diverts any such
- *    value into `slotsByIndex` and returns *before* `slotsByLabel.set` — so the
- *    cell reports `ok`, draws a tile, and the next cell to read `$mine` fails
- *    with "unknown slot (register earlier with out $mine)", naming a remedy that
- *    had already been performed. It was found by running the ceremony across two
- *    browsers, not here, which is the whole argument for the e2e; this file
- *    pins the shape that avoids it.
+ * 3. **`$set | at 1 | out $mine` makes a slot now — and the generator still
+ *    does not write it.** A selected share carries `meta.shareIndex`, and
+ *    `slot-registry.register` used to divert any such value into
+ *    `slotsByIndex` and return *before* `slotsByLabel.set` — so the cell
+ *    reported `ok`, drew a tile, and the next cell to read `$mine` failed with
+ *    "unknown slot (register earlier with out $mine)", naming a remedy that
+ *    had already been performed. That divert was found by running the ceremony
+ *    across two browsers, and it is gone: `out` always binds its label. The
+ *    generator keeps the shape for a different reason — the dealer already
+ *    holds every share inside `$set`, and `$mine` would be a second copy.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
@@ -251,22 +253,25 @@ describe("every notebook the product can generate", () => {
     expect(RECOVERY_WAIT_MS).toBeGreaterThan(10 * 60_000);
   });
 
-  it("never names a selected share, because a named selected share is not a slot", () => {
-    // The finding that cost a two-browser run. `at` stamps `meta.shareIndex`,
-    // and `register` diverts on it — so `out $mine` after a selection writes a
-    // tile and no slot, and the failure surfaces one cell later as
-    // `in $mine: unknown slot`. Pinned at the registry rather than at the
-    // recipe, because that is where the divert lives and where a fix would
-    // land.
+  it("could now name a selected share, and still does not, to avoid a second copy", () => {
+    // The finding that cost a two-browser run, inverted. `at` stamps
+    // `meta.shareIndex`, and `register` used to divert on it — `out $mine`
+    // after a selection wrote a tile and no slot, and the failure surfaced one
+    // cell later as `in $mine: unknown slot`, naming a remedy already
+    // performed. The divert is gone: registration is decided by the call,
+    // never by what the value carries, so the label binds either way. Pinned
+    // at the registry, where the divert lived, so its return would fail here
+    // first.
     const registry = createSlotRegistry();
     registry.register("$mine", { type: "text", data: "one share", meta: { shareIndex: 1 } });
-    expect(() => registry.resolve("$mine")).toThrow(/unknown slot/);
-    // Without the stamp the same call does register a label, so the divert is
-    // what does it rather than the name being rejected.
+    expect(registry.resolve("$mine").data).toBe("one share");
     registry.register("$plain", { type: "text", data: "not a share", meta: {} });
     expect(registry.resolve("$plain").data).toBe("not a share");
-    // So the generator selects a share only where the selection is consumed on
-    // the spot — into `quorum.send` — and never into an `out`.
+    // The generator still selects a share only where the selection is consumed
+    // on the spot — into `quorum.send` — but for a reason about copies rather
+    // than about a trap: the dealer already holds every share inside `$set`,
+    // and an `out $mine` would put share 1 in a second slot on the one machine
+    // that needs no reminder of it.
     for (const n of SIZES) {
       for (const cell of ceremonyFor(n).cells) {
         if (/\bat \d+\b/.test(cell.recipe)) {

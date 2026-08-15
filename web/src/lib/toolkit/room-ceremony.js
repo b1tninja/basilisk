@@ -301,17 +301,17 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
     ].join("\n"),
   });
 
-  // **There is no `$set | at 1 | out $mine` cell, and the reason is a trap.**
-  // The obvious way to say "share 1 is mine" is to pull it out into a slot of
-  // its own — and it does not work: `slot-registry.register` diverts any value
-  // carrying `meta.shareIndex` into `slotsByIndex` and returns *before*
-  // `slotsByLabel.set`, so a selected share never becomes a named slot. The cell
-  // runs, reports `ok`, writes a tile, and the next cell to read `$mine` fails
-  // with `in $mine: unknown slot (register earlier with out $mine)` — an error
-  // naming a remedy that had already been performed. `dc5d7cb` records the same
-  // divert from the other direction. So share 1 stays inside `$set`, where the
-  // dealer already has every share anyway, and the cell that hands it back
-  // selects it again at that moment.
+  // **There is no `$set | at 1 | out $mine` cell, and the reason is a copy.**
+  // The cell would work — `out` binds its label whatever the value carries,
+  // since the registry stopped diverting on `meta.shareIndex` — but the dealer
+  // already holds every share inside `$set`, so `$mine` would be a second copy
+  // of share 1 on the one machine that needs no reminder of it, and a second
+  // slot to wipe when the set should go. (Historically the cell also *could
+  // not* work: the registry diverted any share-stamped value away from the
+  // label map, which is how a two-browser run found `in $mine: unknown slot`
+  // three cells below an `out $mine` that reported ok.) So share 1 stays
+  // inside `$set`, and the cell that hands it back selects it again at that
+  // moment.
 
   // One send per holder, addressed by whole fingerprint. Never `publish`: a
   // value leaves this machine because a verb said so, and a header that also

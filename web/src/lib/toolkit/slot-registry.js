@@ -81,6 +81,23 @@ export function clonePipelineValue(value) {
       meta: { ...value.meta },
     };
   }
+  if (value.type === "bundle") {
+    // Parts are pipeline values in their own right (a foreach `out` bundle
+    // holds one per iteration, `quorum.recv count=` one per message), so a
+    // shallow copy here would leave every clone sharing the same secret
+    // buffers — and `wipePipelineValue` zeroing one slot would blank them all.
+    const d = value.data || {};
+    return {
+      type: "bundle",
+      data: {
+        ...d,
+        parts: Array.isArray(d.parts)
+          ? d.parts.map((p) => (p ? clonePipelineValue(p) : p))
+          : d.parts,
+      },
+      meta: { ...value.meta },
+    };
+  }
   if (value.type === "openpgp-key") {
     return {
       type: "openpgp-key",
@@ -121,6 +138,9 @@ export function wipePipelineValue(value) {
   }
   if (value.type === "item" && value.data?.value) {
     wipePipelineValue(value.data.value);
+  }
+  if (value.type === "bundle" && Array.isArray(value.data?.parts)) {
+    for (const part of value.data.parts) wipePipelineValue(part);
   }
   if (value.type === "keypair" && value.data) {
     const raw = value.data.raw || value.data.privateRaw;
@@ -187,12 +207,14 @@ function wipeInspectSnapshot(snap) {
 /**
  * @returns {{
  *   register: (nameRef: string, value: PipelineValue, opts?: { allowReplace?: boolean, preexisting?: Set<string> }) => void,
+ *   registerIndexed: (value: PipelineValue) => void,
  *   resolve: (ref: string) => PipelineValue,
  *   has: (ref: string) => boolean,
  *   clear: () => void,
  *   evictSensitive: () => void,
  *   deleteSlot: (label: string) => void,
  *   labels: () => string[],
+ *   indexed: () => PipelineValue[],
  *   listMetas: () => SlotMeta[],
  *   snapshotKeys: () => Set<string>,
  *   size: () => number,
@@ -205,16 +227,23 @@ export function createSlotRegistry() {
   const slotsByIndex = [];
 
   /**
+   * Bind a label to a value (and record it in the indexed order).
+   *
+   * `out $x` always makes `$x` resolvable — registration is decided by the
+   * call, never by what the value carries. This function used to divert any
+   * value wearing `meta.shareIndex` into `slotsByIndex` and return before
+   * `slotsByLabel.set`, so `$set | at 1 | out $mine` reported ok, drew a tile,
+   * and made no slot — and the next cell failed with an error naming a remedy
+   * already performed. The meta stays on values as display/trait data; the
+   * *engine's foreach loop* now says out loud (via `registerIndexed`) what the
+   * divert used to infer from it.
+   *
    * @param {string} nameRef
    * @param {PipelineValue} value
    * @param {{ allowReplace?: boolean, preexisting?: Set<string> }} [opts]
    */
   const register = (nameRef, value, opts = {}) => {
     const cloned = clonePipelineValue(value);
-    if (value.meta?.shareIndex) {
-      slotsByIndex.push(cloned);
-      return;
-    }
     const key = slotLabelKey(nameRef);
     if (key) {
       if (slotsByLabel.has(key)) {
@@ -231,6 +260,21 @@ export function createSlotRegistry() {
       slotsByLabel.set(key, cloned);
     }
     slotsByIndex.push(cloned);
+  };
+
+  /**
+   * Record a value in the indexed order without naming it.
+   *
+   * The engine calls this once per iteration of a `foreach` body's `out`: the
+   * label is bound *once*, after the loop, to a bundle of every iteration's
+   * value, while each individual value still lands here — which is what the
+   * bare `shares` fallback sweeps and what numeric `in N` reads. Explicit at
+   * the call site on purpose: the syntactic shape (`foreach` / `- out`)
+   * decides indexed registration, not a meta field no recipe text shows.
+   * @param {PipelineValue} value
+   */
+  const registerIndexed = (value) => {
+    slotsByIndex.push(clonePipelineValue(value));
   };
 
   /**
@@ -293,6 +337,12 @@ export function createSlotRegistry() {
         !!value?.meta?.sensitive ||
         value?.type === "keypair" ||
         value?.type === "shares" ||
+        // A bundle is as sensitive as its parts — a foreach `out` over shares
+        // binds one, and Lock-all must not keep the set because the wrapper
+        // itself carries no secret bytes.
+        (value?.type === "bundle" &&
+          Array.isArray(value.data?.parts) &&
+          value.data.parts.some((p) => !!p?.meta?.sensitive)) ||
         privateKey;
       if (sensitive) drop.push(label);
     }
@@ -309,6 +359,9 @@ export function createSlotRegistry() {
         !!v?.meta?.sensitive ||
         v?.type === "keypair" ||
         v?.type === "shares" ||
+        (v?.type === "bundle" &&
+          Array.isArray(v.data?.parts) &&
+          v.data.parts.some((p) => !!p?.meta?.sensitive)) ||
         privateKey;
       if (sensitive) {
         wipePipelineValue(v);
@@ -336,8 +389,10 @@ export function createSlotRegistry() {
   const labels = () => [...slotsByLabel.keys()];
 
   /**
-   * Cloned indexed slots (foreach `out` values carry `shareIndex` and land
-   * here) — what the `shares` op falls back to when nothing was pasted.
+   * Cloned indexed slots — every performed `out` in execution order (a
+   * `foreach` body's `out` lands once per iteration, via `registerIndexed`).
+   * What the `shares` op falls back to when the recipe named nothing and the
+   * tray is empty.
    * @returns {PipelineValue[]}
    */
   const indexed = () => slotsByIndex.map((v) => clonePipelineValue(v));
@@ -383,6 +438,7 @@ export function createSlotRegistry() {
 
   return {
     register,
+    registerIndexed,
     resolve,
     has,
     clear,

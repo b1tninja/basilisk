@@ -278,13 +278,14 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // the recombination. Written out rather than counted from a formula, so a
     // change in shape has to be re-derived here.
     //
-    // **There is no "keep share 1" cell**, and that absence is load-bearing:
-    // `$set | at 1 | out $mine` runs, reports `ok` and writes no slot, because
-    // `slot-registry.register` diverts a value carrying `meta.shareIndex` into
-    // `slotsByIndex` before it ever reaches `slotsByLabel`. This journey is
-    // where that was found — the dealer's return cell failed with `in $mine:
-    // unknown slot (register earlier with out $mine)`, an error naming a remedy
-    // that was sitting three cells above it.
+    // **There is no "keep share 1" cell**, by choice rather than by trap now:
+    // `$set | at 1 | out $mine` would bind `$mine` today — `out` always
+    // registers its label since the `meta.shareIndex` divert was removed from
+    // `slot-registry.register` — but the dealer already holds every share
+    // inside `$set`, so a `$mine` slot would only be a second copy. (This
+    // journey is where the divert was found: the dealer's return cell failed
+    // with `in $mine: unknown slot (register earlier with out $mine)`, an
+    // error naming a remedy sitting three cells above it.)
     const cells = ceremonySource.split(/\n\s*\n+/).map((c) => c.trim());
     expect(cells).toHaveLength(5);
     expect(ceremonySource, "a selected share is being written to a slot").not.toMatch(

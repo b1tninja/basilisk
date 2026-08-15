@@ -1302,6 +1302,7 @@ export function projectTypeForMember(current, memberOrSelector) {
  *   warnings: RecipeWarning[],
  *   stepIndex: number,
  *   inForeach: boolean,
+ *   collectionLength?: number,
  *   source?: string,
  * }} ctx
  * @returns {{
@@ -1412,12 +1413,7 @@ function validateBodySteps(body, startType, ctx) {
     }
     checkPooledPipelineValue(step, current, resolved.output, ctx.errors, ctx.stepIndex);
     current = resolved.output;
-    if (
-      step.name === "out" &&
-      slotTypes &&
-      slotTypesByIndex &&
-      !ctx.inForeach
-    ) {
+    if (step.name === "out" && slotTypes && slotTypesByIndex) {
       const ref = String(step.params?.name || DEFAULT_OUT_SLOT);
       const key = slotLabelKey(ref);
       if (key) {
@@ -1428,6 +1424,22 @@ function validateBodySteps(body, startType, ctx) {
             end: step.end,
             stepIndex: ctx.stepIndex,
           });
+        } else if (ctx.inForeach) {
+          // A foreach body's `out $x` runs once per iteration and binds `$x`
+          // once, to a *bundle* of every iteration's value — the runtime's
+          // exact shape, recorded here so `in $x` / `with=$x` type-check
+          // against what the loop actually leaves behind. The length rides
+          // along when the split's share count is in the text, same rule as
+          // `at`. This used to be exempt from the slot walk entirely, which
+          // left the label claimed by nothing and `in $x` refusing a slot the
+          // notebook visibly writes.
+          slotTypes.set(
+            key,
+            typeOf(
+              "bundle",
+              ctx.collectionLength != null ? { length: ctx.collectionLength } : {}
+            )
+          );
         } else {
           slotTypes.set(key, { ...current });
         }
@@ -1901,6 +1913,10 @@ export function validateRecipe(ast) {
         warnings,
         stepIndex,
         inForeach: true,
+        // The collection's stated count (`sss.split 2/3` stamps length: 3 and
+        // `blip39` carries it) — a body `out`'s bundle slot is that many parts.
+        collectionLength:
+          typeof current.length === "number" ? current.length : undefined,
         slotTypes,
         slotTypesByIndex,
         source: ast.source,

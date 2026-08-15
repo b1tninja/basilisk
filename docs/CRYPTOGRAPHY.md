@@ -478,10 +478,11 @@ genkey ec/p256 | tee
 | export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
   - out $share
 
-# One share (1-based)
+# One share (1-based) — a real slot, readable in a later cell (in $share-1)
 … | blip39 | [1] | out $share-1
 
-# Recover
+# Recover (bare `shares` reads the Inputs tray, or shares a split's foreach
+# emitted earlier this session; name slots instead with `$share | shares with=$late`)
 shares | blip39 -d | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem
 
 # Large payload via OpenPGP envelope then SSS

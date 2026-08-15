@@ -272,11 +272,11 @@ describe("a share sealed to its holder", () => {
    * of data, so nothing had to be invented to carry them: only the holder, who
    * can open the envelope, reads them.
    *
-   * There is a mechanical consequence pointing the same way, which is why the
-   * two assertions live together: `slotRegistry.register` diverts any value
-   * carrying `shareIndex` into the indexed table and returns before it names
-   * anything, so a sealed value that kept the field could not be put in
-   * `$sealed` at all.
+   * The registry no longer takes a side: `out $sealed` binds its label
+   * whatever meta the value carries (the old divert on `shareIndex` is gone),
+   * so this drop stands on the disclosure argument alone — which is the
+   * argument it always had, and why the assertion below survives the
+   * registry change untouched.
    */
   it("keeps the share's index inside the envelope and off the value", async () => {
     const holder = await holderKey();
@@ -294,9 +294,9 @@ describe("a share sealed to its holder", () => {
     const registry = createSlotRegistry();
     const arts = await runRecipe(compiled.ast, {}, { slotRegistry: registry });
 
-    // That the slot exists at all is half the assertion: a value still wearing
-    // `shareIndex` is diverted by `slotRegistry.register` into the indexed
-    // table, and `$sealed` would not be a name.
+    // The slot exists, and the value in it wears no share index — two separate
+    // facts now that registration no longer depends on the meta, and the
+    // second is the one the disclosure design turns on.
     expect(registry.labels()).toContain("sealed");
     const held = registry.resolve("$sealed");
     expect(held.meta.shareIndex).toBeUndefined();

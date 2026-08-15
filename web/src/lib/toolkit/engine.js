@@ -443,6 +443,53 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
 
     if (node.kind === "foreach") {
       lastStepEmitted = false;
+
+      /**
+       * A body `out $x` runs once per iteration, and `$x` is written once in
+       * the text — so the label binds *once*, after the loop, to a bundle of
+       * every iteration's value. Last-write-wins would silently lose all but
+       * one share; refusing the second iteration as a duplicate would break
+       * the shipped `slip39-split` preset; a bundle keeps everything and is
+       * the shape `shares` already collects (`$share | shares with=$late`).
+       *
+       * Each iteration's value still lands in the indexed order, said out
+       * loud via `registerIndexed` — that is what the bare `shares` fallback
+       * sweeps and what numeric `in N` reads. The registry used to infer this
+       * from `meta.shareIndex` and swallow the label doing so; now the
+       * syntactic shape decides, and the label is always real.
+       * @type {Map<string, PipelineValue[]>}
+       */
+      const bodyOuts = new Map();
+      /**
+       * @param {import("./recipe.js").RecipeStep} step
+       * @param {PipelineValue|null} itemVal
+       */
+      const noteBodyOut = (step, itemVal) => {
+        if (step.name !== "out" || !itemVal) return;
+        const nameRef = String(step.params?.name || DEFAULT_OUT_SLOT);
+        registry.registerIndexed?.(itemVal);
+        const list = bodyOuts.get(nameRef);
+        if (list) list.push(clonePipelineValue(itemVal));
+        else bodyOuts.set(nameRef, [clonePipelineValue(itemVal)]);
+      };
+      const bindBodyOuts = () => {
+        for (const [nameRef, parts] of bodyOuts) {
+          registerSlot(
+            nameRef,
+            {
+              type: "bundle",
+              data: { parts, count: parts.length },
+              meta: {
+                kind: "foreach-out",
+                count: parts.length,
+                sensitive: parts.some((p) => !!p?.meta?.sensitive),
+              },
+            },
+            preexisting
+          );
+        }
+      };
+
       // A bundle is already a list of pipeline values, so iterating it needs
       // none of the share-specific unpacking below — run the body per part and
       // re-bundle. This is what makes `quorum.recv count=all | foreach` work, and
@@ -457,9 +504,11 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
           let itemVal = inParts[i];
           for (const step of node.body) {
             itemVal = await execStep(step, itemVal, bindings, artifacts, i);
+            noteBodyOut(step, itemVal);
           }
           outParts.push(itemVal);
         }
+        bindBodyOuts();
         value = {
           type: "bundle",
           data: { parts: outParts, count: outParts.length },
@@ -545,9 +594,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
           for (let ai = before; ai < artifacts.length; ai++) {
             artifacts[ai].stepName = step.name;
           }
-          if (step.name === "out" && itemVal) {
-            registerSlot(String(step.params?.name || DEFAULT_OUT_SLOT), itemVal, preexisting);
-          }
+          noteBodyOut(step, itemVal);
         }
         if (itemVal && (itemVal.type === "text" || itemVal.type === "bytes")) {
           const last = body[body.length - 1];
@@ -596,6 +643,7 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
         }
         if (itemVal) parts.push(itemVal);
       }
+      bindBodyOuts();
       // Tip is a foreach bundle of per-item tips — not the global artifact list.
       // Side effects (out tiles / auto-emitted shares) already live in `artifacts`.
       value = {
@@ -1146,7 +1194,8 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       if (!collected.length) {
         // Wired fallback: a split cell that ran earlier this session left its
-        // shares as indexed slots (foreach `out` values carry shareIndex).
+        // shares in the indexed order (a foreach body's `out` records each
+        // iteration there via `registerIndexed`, besides binding its label).
         const indexed = bindings.listIndexedSlots?.() || [];
         collected = indexed
           .filter((v) => v?.type === "text" && v.meta?.shareIndex)
@@ -2493,10 +2542,9 @@ async function execStepBody(step, value, bindings, artifacts) {
          * the *input* value's meta and keeps `traits.shareOf`, so `Share 2 ·
          * encrypted share` still reads correctly on the machine that made it.
          *
-         * There is a second, mechanical consequence and it points the same way:
-         * `slotRegistry.register` diverts any value carrying `shareIndex` into
-         * the indexed table and returns before it names anything, so a sealed
-         * value that kept the field could not be put in `$sealed` at all.
+         * The registry no longer cares either way — `out $sealed` binds its
+         * label whatever meta the value carries — so this drop stands on the
+         * disclosure argument alone, which is the argument it always had.
          */
         return {
           type: "text",
