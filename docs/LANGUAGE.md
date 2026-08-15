@@ -384,24 +384,37 @@ the pair; two verbs consume it whole:
 
 - **`seal`** — encrypt the pair's payload to the pair's member. Output:
   ciphertext, fixed. `gpg.encrypt mode=combined` with the `to=` supplied by the
-  value rather than the text.
+  value rather than chosen by the text.
 - **`send`** — deliver the pair's payload to the pair's member over the
   session, as `quorum.send` does, addressed by the value.
 
+**But the canonical text still says where everything goes.** An earlier
+revision let the verbs stand bare — `scatter` with `- seal | publish` beneath
+it — on the argument that the recipient, being half the input, was not absent.
+Semantically true; visually false. A reader of the plain text could not answer
+"what leaves this machine, and where does it go", which is the second
+constraint at the top of this document and the owner's original complaint about
+incantations. Principle 5 resolves it the way it resolved `split 3`: the bare
+forms are **input sugar**, and the canonical text is complete —
+
 ```text
 @me
-random 32 | split 2/3 | words | scatter
-  - seal | out $sealed | publish
+random 32 | sss.split 2/3 | blip39 | scatter to=room
+  - seal to=each | out $sealed | publish
 ```
 
-No new grammar position. No `to=` whose absence means something. And the
-neighbouring warning does not apply: an omitted parameter carrying meaning is
-principle 4's failure because an *absence* decides a security property, but
-here nothing is absent — the recipient is half the input, exactly as
-`sss.combine` never names which shares because the shares *are* the input.
-Outside a `scatter` body there is no pair, so `seal` and `send` refuse at
-compile time, naming that state: "seal reads the pair a scatter hands it, and
-there is no scatter here."
+`room` and `each` are reserved words in recipient position, and they name
+**derivations, not choices**: `to=room` is the audience in canonical order —
+the second list, visible; `to=each` is this pair's member. Neither can name a
+person, which is the point — a fingerprint in either position would be a
+choice, and the pairing must never be chosen. A constant recipient is still
+writable and still means what it says: `seal to=<fingerprint>` inside a
+scatter body seals every share to that one key, which is occasionally wanted
+and now visibly different from `to=each` rather than differing by an absence.
+
+Outside a `scatter` body there is no pair, so `to=each` — and the bare sugar
+forms — refuse at compile time, naming that state: "seal to=each reads the
+pair a scatter hands it, and there is no scatter here."
 
 For everything else, the body reuses the vocabulary `foreach :items` already
 owns: `:key` and `:value` project a member of the item the loop is holding, and
@@ -443,9 +456,12 @@ point, and the derived-order rule above stays the default it falls back from.
 
 ```text
 @me
-random 32 | split 2/3 | words | scatter
-  - seal | out $sealed | publish
+random 32 | sss.split 2/3 | blip39 | scatter to=room
+  - seal to=each | out $sealed | publish
 ```
+
+(Canonical spelling. `split 2/3 | words | scatter - seal | publish` is the
+authoring sugar that converges on it.)
 
 Walk what this leaves behind on the dealer's machine: the master never enters a
 slot (already true, and until now an accident of how the recipe was written),
@@ -604,8 +620,10 @@ Order of work, bug fixes first:
    vss follows when its spelling does.
 6. `scatter` with pair-aware `seal` / `send`. The `@*` rule is already landed,
    and the body-naming question is resolved above — a pair is a value, and the
-   verbs that consume one read both halves. `gather` follows once the published
-   set exists to gather from.
+   verbs that consume one read both halves, **while the canonical text spells
+   every destination**: `scatter to=room`, `seal to=each`, with the bare forms
+   as input sugar. `gather` follows once the published set exists to gather
+   from, and takes `from=room` for the same reason.
 7. **The recover generator** — recovery written at recovery time from the
    shares' own headers, and the deal notebook reduced to the deal. Retires the
    dealer's return cell and the phase labels one press cannot honour.
