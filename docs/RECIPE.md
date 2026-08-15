@@ -30,8 +30,8 @@ genkey ec/p256 | out $kp
 $kp | public | export spki | pem | out $public
 $kp | export pkcs8 | pem | out $private
 
-# Shares collection → foreach body
-random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
+# Shares collection → foreach body (the quorum is the verb's object: any 2 of 3 recover)
+random 32 | sss.split 2/3 | blip39 | foreach
   - out $share
 
 # Dict view + per-item projection
@@ -55,6 +55,7 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
 - Bare `out kp` / `in kp` / `key=cek` do **not** live-parse — use `$label` (`out $kp`, `key=$cek`). Upgrade recipe / `migrateRecipe` rewrites bare forms. A pre-swap `@label` still loads (with a compile warning) and re-serializes as `$label`; `@` at the head of a chain names a **peer** (see Cell headers).
 - Stem literals: `"hello"` / `'…'` → text; `255` / `0xff` → int (serialize ints as decimal); `true` / `false` → bool. Example: `"hello world" | out $var`.
 - Prefer **positional** args: `out $public`, `export pkcs8`, `genkey ec/p256`.
+- **The quorum is `sss.split`'s object**: `sss.split 2/3` — any 2 of 3 shares recover. `sss.split 3` is an *input form only* — a majority of 3, `floor(3/2)+1` — and serializes as `2/3`, so a reader of a shared recipe never needs the majority rule. `threshold=` / `shares=` still read and converge on the fraction; writing both the object and a named pair member is refused. `1/3` refuses (one share recovers — a copy, not a quorum); `4/3` refuses (unrecoverable by construction); `3/3` is legal and has no redundancy.
 - Casts: retag (`as master` / `as public` / …), coerce (`as int` / `as bool`), or materialize (`as key` / `as keypair` → WebCrypto handles). Literal postfix (`1234 as int`) is not shipped — use `"1234" | as int` or `1234` stem lit.
 - Empty `tee` is invalid; use `peek` for a side inspect snapshot.
 - List marker is only `-`. Leading tabs are errors.
@@ -286,7 +287,7 @@ Each apply stage is `name` then zero or more args:
 | Form | Example | Notes |
 |------|---------|-------|
 | Positional | `genkey ec/p256`, `out $public` | Binds the step’s `positional` param |
-| Named | `sss.split threshold=2 shares=3` | `ident=value` — **unknown `name=` rejected at parse** |
+| Named | `sss.split threshold=2 shares=3` | `ident=value` — **unknown `name=` rejected at parse**. (This pair still reads and canonicalizes to the object form `sss.split 2/3`) |
 | Flag | `aes-gcm -d`, `base64 -d` | Sets the param with `flag: "-d"` to `true` (ciphers + encoding twins) |
 | Encode / decode verb | `base64.encode`, `base64.decode` | Encoding `decodeTwin` steps — serialize as `.encode` / `.decode` (AST still `{ decode }`) |
 | Armor conjugate | `pem`, `der` | Armor / dearmor — not `.encode`/`.decode` twins |
@@ -297,7 +298,9 @@ value is not the registry default (slot names always serialize as `$label`).
 Encoding twins canonicalize to `name.encode` / `name.decode` (not `-d`).
 PEM armor serializes as bare `pem` / `der`; base alphabets as `encode <alphabet>` / `decode <alphabet>`.
 
-Aliases resolve at parse time only via Upgrade recipe for retired tokens (`paste` → `input`, …). Slot load is **`in $label` / bare `$label`**; `from` and `to` were retired in favour of `decode` / `encode`, which removes the ambiguity that made `from base64` unparseable. Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, `to` / `from`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
+**Vocabulary aliases** read live and converge on the namespaced canonical: `split` → `sss.split`, `words` → `blip39` (`words -d` / `words.decode` too), `send` → `quorum.send`. Parse-only — `serializeRecipe` always writes the namespaced name, so the short forms never become a second dialect. One asymmetry, on purpose: **bare `send` refuses**, naming the missing recipient, where bare `quorum.send` broadcasts to every verified peer — an absent recipient deciding "everyone" is an absence deciding a security property, and the short verb never inherits it.
+
+Retired-token aliases resolve at parse time only via Upgrade recipe (`paste` → `input`, …). Slot load is **`in $label` / bare `$label`**; `from` and `to` were retired in favour of `decode` / `encode`, which removes the ambiguity that made `from base64` unparseable. Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, `to` / `from`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
 
 ### ParamSpec (registry)
 
@@ -320,7 +323,7 @@ Reference, and toolcards all read this schema — toolcards are views of
 | `allowIndex` | no | For slot params: allow 1-based index refs |
 | `unresolvedInput` | no | Leaving this unbound leaves an input the *run* asks for: the engine falls back to a panel instead of failing. Which panel is not declared — it is rendered from `slotOf` (`openpgp-key` in the set → the OpenPGP panel, otherwise the keys tray), so a panel is a view of the type and not a second vocabulary |
 | `requiredWith` | no | Names a sibling param whose truthiness arms the requirement (`gpg.encrypt key=` only when `sign` is set) |
-| `serialize` | no | `"always"` — emit `name=value` even when equal to default. For a param whose value is a decision about *this* secret and *these* people rather than a build-wide policy: `sss.split` / `vss.split` `threshold=` `shares=`, `dkg.run threshold=`, `gpg.symencrypt` / `gpg.symdecrypt` `mode=`. A quorum that matched the default used to serialize away, so a 2-of-3 and a 2-of-16 were the same text and the manifest both ends digest held neither |
+| `serialize` | no | `"always"` — emit `name=value` even when equal to default. For a param whose value is a decision about *this* secret and *these* people rather than a build-wide policy: `sss.split` / `vss.split` `threshold=` `shares=`, `dkg.run threshold=`, `gpg.symencrypt` / `gpg.symdecrypt` `mode=`. A quorum that matched the default used to serialize away, so a 2-of-3 and a 2-of-16 were the same text and the manifest both ends digest held neither. `sss.split`'s pair now travels as the verb's **object** (`2/3`, a step-level `object` hook spelling both params in one token); the flag remains as the statement of the property the hook honours |
 
 A recipe's runtime input needs are derived from these two fields plus the
 step-level `unresolvedInputs` (the panel a step's *pipeline* value arrives
@@ -430,7 +433,7 @@ values**: the recipe source, each cell's runtime-input and output SHA-256
 digests, timestamps, and an op-registry fingerprint.
 
 ```text
-random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
+random 32 | sss.split 2/3 | blip39 | foreach
   - out $share
 
 run.receipt "Board key ceremony" | gpg.sign key=$me | out $receipt
@@ -657,7 +660,7 @@ Stage form only: `… | as TYPE`. Three kinds:
 | **Coerce** | No | `as int`, `as bool` | Parse/convert tip to `int` or `bool` (from text / bytes / int / bool). Postfix `1234 as int` deferred — use stem lit or `"1234" \| as int` |
 
 ```text
-random 16 | digest | as master | sss.split threshold=2 shares=3 | blip39 | foreach
+random 16 | digest | as master | sss.split 2/3 | blip39 | foreach
   - out $share
 
 public | export spki | pem | out $pub
@@ -849,7 +852,7 @@ genkey ec/p256 | peek keypair | export pkcs8 | pem | out $private
 | `tee` | Side pipelines on clone/projection; stem unchanged. **Requires** a body. |
 | `foreach` | Map body over a sequence. Optional `:items` / `:values` / `:keys`. |
 | `peek` | Side inspect snapshot; stem unchanged. |
-| `at` | Same as `[n]` / `[n:m]` — share index or slice. |
+| `at` | Same as `[n]` / `[n:m]` — share index or slice. When the share count is stated in the text (`sss.split 2/3` stamps `length: 3`, `blip39` carries it), an index or slice past it refuses at compile: `at 5` of a 3-share split selects nothing. A set counted only at run time (`shares`, `gpg.decrypt`) is not checked. |
 | `in` | Source: load a prior `out` slot by `$label` or 1-based index (also written bare as `$label`). |
 | `encode` / `decode` | Base-alphabet conjugate (`encode hex` / `decode base64`). |
 | `out` | Emit a tile, register a slot, pass the value through. After `$x` / `in $x`, bare `out` inherits `$x`. |
@@ -968,7 +971,7 @@ the order they were written:
 ```text
 # deal 2-of-3 to the room
 @mara
-random 32 | sss.split threshold=2 shares=3 | out $set | publish
+random 32 | sss.split 2/3 | out $set | publish
 ```
 
 The cell is the unit because it is the unit everything else already uses — what
@@ -1012,6 +1015,8 @@ instead — that is what `run.playbook`'s `purpose` is for.
 | `aesgcm` / `aescbc` / `aesctr` | `aes-gcm` / `aes-cbc` / `aes-ctr` |
 | `rsaoaep` / `rsapkcs1` | `rsa-oaep` / `rsa-pkcs1` |
 | `sss` / `recover` | `sss.split` / `sss.combine` |
+| `sss.split threshold=2 shares=3` | `sss.split 2/3` (named pair reads on parse, rewritten) |
+| `split` / `words` / `send` | live aliases for `sss.split` / `blip39` / `quorum.send` — read on parse, serialized namespaced. Bare `send` refuses (name the recipient); bare `quorum.send` broadcasts |
 | `wa-*` | `webauthn.*` |
 | `gpg.vault` / `gpg.vault.pub` | `agent.unlock` / `agent.pub` |
 | `hex` / `unhex` | `to hex` / `from hex` |

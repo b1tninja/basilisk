@@ -45,7 +45,16 @@ round-trips through `serializeRecipe` to `random 32 | sss.split | out $set`.
 The quorum — the whole security property — is not in the text that travels, and
 not in the manifest.
 
-### The quorum as a fraction
+### The quorum as a fraction — **done for `sss.split`**
+
+Shipped as a positional string param normalized at parse (`quorum` binds the
+token, the AST carries only `threshold`/`shares`) and a step-level `object`
+hook that spells the pair back as one token — `serializeStep` writes one
+`name=value` per param, and a pair travelling as one token was the one thing
+that loop could not say. The named pair still reads forever and converges on
+the fraction. `vss.split` deliberately keeps the named spelling until the
+fraction is argued for it too: one verb changing spelling is a migration, two
+is a policy this document has not yet made.
 
 The split is written `2/3` — two of three — as the verb's object:
 
@@ -331,13 +340,13 @@ writes N from the room size — and not afterwards, because a member can leave
 between the notebook being written and the cell being run.
 
 The refusal belongs at plan time, since the audience is known before the run and
-`planRun` already holds the roster. **It cannot be written there yet.** The
-count is not in the static type: `random 32 | sss.split threshold=2 shares=5`
-walks to `{base:"shares", kind:"raw"}` with no `length`, and `blip39` retypes to
-`{base:"shares", kind:"mnemonic"}`, which would drop a refinement even if
-`sss.split` stamped one. `LIST_TYPES` already says `length` counts elements for
-`shares`, so the slot is there and empty. Stamping it — and carrying it through
-`blip39` and `at` — is a prerequisite for this section, not a detail of it.
+`planRun` already holds the roster. **The prerequisite for writing it is now
+met** (migration step 5): `sss.split` stamps `length: N` on its shares output —
+N is a literal in the text, which is what keeps the type knowable before the
+run — `blip39` carries it through the retype in both directions, and `at`
+already consumes it (`at 5` of a 3-share split refuses at compile time). The
+plan-time count-vs-roster comparison itself is this section's work, written
+when `scatter` is.
 
 #### Output types stay statically known
 
@@ -466,14 +475,38 @@ notebook that may not be run for years. What it does not change: the deal
 notebook still travels to every member, still digests into the manifest both
 ends compare, and still names the quorum in its text.
 
-### Vocabulary
+### Vocabulary — **shipped, parse-only; the canonical stays namespaced**
 
 `sss.split` → `split`, `blip39` → `words`, `quorum.send` → `send`. The dotted
-namespaces are doing real work; the acronyms are the jargon. Old names stay as
-aliases — and `send` is the same verb in both grammatical positions: with
-`to=` it is `quorum.send` as it always was; bare inside a `scatter` body it
-consumes the pair; bare anywhere else it refuses, naming the missing recipient
-rather than borrowing one from a binder.
+namespaces are doing real work; the acronyms are the jargon. All three short
+names read now (`words -d` and `words.decode` included) and converge on the
+namespaced canonical through `serializeRecipe` — and `send` is narrower than
+the name it aliases: with `to=` it is `quorum.send` as it always was; bare it
+refuses, naming the missing recipient rather than borrowing one from a binder.
+(When a scatter body exists, bare `send` gains its pair position there — that
+is a later pass, and the refusal today does not mention it.)
+
+This section used to frame the short names as the *canonical* spelling. The
+sweep said no, twice over:
+
+- **`send` cannot be canonical.** Bare `quorum.send` broadcasts and bare
+  `send` refuses, so a broadcast serialized as `send` would be canonical text
+  the parser refuses — the fixed point lost by construction — and a canonical
+  name that flips on whether `to=` is set is one verb serializing under two
+  names, the two-dialects defect itself.
+- **Every refusal quotes the registry name** (`"sss.split" does not accept…`,
+  `Cannot pipe shares into "quorum.send"`). Making the short names canonical
+  without renaming the steps leaves every error naming a spelling the
+  canonical text never contains; renaming the steps is a different and much
+  larger migration (engine dispatch, plan, suggest, glyphs, docs, ~70 test
+  files), not a vocabulary pass.
+
+Canonicalizing the short names would also have rewritten the canonical text of
+every SSS and quorum recipe in existence — presets, generated room ceremonies,
+doc fences — on top of the digest movement migration step 2 already causes.
+Same-build rooms agree either way (both ends re-canonicalize on load); a
+cross-build room refuses honestly with `cell-mismatch`; but churn with no
+agreement gain is churn.
 
 ### Comments survive serialization
 
@@ -526,14 +559,20 @@ Order of work, bug fixes first:
 
 1. **Comments survive serialization.** Small, and it is the readability premise
    everything else rests on.
-2. **The quorum becomes an argument** (`split 2/3`). Fixes a real gap in what
-   the two ends agree on.
+2. **The quorum becomes an argument** (`split 2/3`) — done, on `sss.split`.
+   The degenerate quorums refuse identically in both spellings (`1/3` in
+   `ceremonyIssues`' own words, via one shared constant), and the K-of-K
+   no-redundancy note is on the ceremony picker.
 3. **`publish` as a step** — done. **`:public` as a step** — done.
 4. Elementwise, prototyped against the preset corpus — the round-trip sweep
    reports immediately how many recipes change meaning.
-5. **The share count becomes a `length` refinement** on the `shares` type,
-   stamped by `sss.split` and carried through `blip39` and `at`. Small, and
-   nothing below can refuse a count mismatch at plan time without it.
+5. **The share count becomes a `length` refinement** on the `shares` type —
+   done. Stamped by `sss.split`, carried through `blip39` both directions and
+   through `at` slices (a slice restates its own count), and consumed the same
+   pass: `at N` past a statically known count refuses at compile time, so the
+   refinement has a reader from the day it exists. `vss.split` does not stamp
+   it yet — the fraction and the stamp both went to `sss.split` first, and
+   vss follows when its spelling does.
 6. `scatter` with pair-aware `seal` / `send`. The `@*` rule is already landed,
    and the body-naming question is resolved above — a pair is a value, and the
    verbs that consume one read both halves. `gather` follows once the published

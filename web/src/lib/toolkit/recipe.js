@@ -793,7 +793,20 @@ export function serializeStep(step) {
       ? decodeTwinToken(spec, !!step.params?.decode)
       : step.name,
   ];
+  // The verb's object: one positional token spelling a param *pair*
+  // (`sss.split 2/3`), which the one-param-one-token loop below cannot say.
+  // The params it covers are skipped — the object is their spelling, and
+  // writing `threshold=` beside `2/3` would be the same number twice with two
+  // chances to disagree. A null spell (a half-formed AST) falls through to the
+  // ordinary emission, so nothing becomes unserializable by having the hook.
+  const objectToken = spec?.object ? spec.object.spell(step.params || {}) : null;
+  const objectCovers =
+    objectToken != null
+      ? new Set([spec.object.param, ...spec.object.covers])
+      : null;
+  if (objectToken != null) parts.push(objectToken);
   for (const p of spec?.params || []) {
+    if (objectCovers?.has(p.name)) continue;
     const v = step.params?.[p.name];
     if (v === undefined || v === "") continue;
     // Secret params (design v2 §22a) only ever legitimately hold a `$slot`
@@ -1593,6 +1606,22 @@ function validatePublishSteps(steps, stepIndex, errors) {
 }
 
 /**
+ * Why a threshold of 1 is refused: one share reconstructs, so the split is a
+ * copy wearing a quorum's name. One constant with two consumers — the
+ * compiler's `sss.split` check below and `ceremonyIssues`' stepper check —
+ * because both are refusing the same arithmetic fact and two spellings of one
+ * refusal drift. It says "share" rather than the Sheet's old "card" because at
+ * the moment either consumer fires nothing has been printed yet; the share is
+ * the thing that exists.
+ *
+ * Lives here rather than in `ceremony.js` because the import must point this
+ * way: `ceremony.js` → `fragment.js` → `recipe.js`, so recipe.js importing
+ * ceremony.js would close the cycle.
+ */
+export const COPY_NOT_A_QUORUM =
+  "A threshold of 1 means any single share recovers the secret on its own — that is a copy, not a quorum.";
+
+/**
  * Validate a parsed AST against the registry (types, scopes, params).
  * @param {RecipeAst} ast
  * @returns {ValidationResult}
@@ -1712,6 +1741,22 @@ export function validateRecipe(ast) {
       if (t > n) {
         errors.push({
           message: `sss: threshold (${t}) cannot exceed shares (${n})`,
+          start: step.start,
+          end: step.end,
+          stepIndex,
+        });
+      }
+      // `1/3` is refused here, where the named spelling reaches it too —
+      // `sss.split 1/3` and `sss.split threshold=1 shares=3` must refuse
+      // identically or the object form and the named form are two dialects.
+      // The sentence is `ceremonyIssues`' (one constant, two consumers),
+      // because the Sheet's stepper and the compiler are refusing the same
+      // arithmetic fact and two spellings of it would drift. `1/1` stays
+      // legal: with one share there is no quorum being promised, only a copy
+      // asked for by name.
+      if (t === 1 && n >= 2) {
+        errors.push({
+          message: `sss: ${COPY_NOT_A_QUORUM}`,
           start: step.start,
           end: step.end,
           stepIndex,
@@ -2694,7 +2739,7 @@ in $cek | export jwk | out $cek-jwk`,
     pair: "slip39-secret",
     title: "SSS + BLIP39 split a secret",
     blurb: "Generate 32 random bytes, Shamir-split 2-of-3, encode as BLIP39 mnemonics.",
-    recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
+    recipe: `random 32 | sss.split 2/3 | blip39 | foreach
   - out $share`,
   },
   {
@@ -2712,7 +2757,7 @@ in $cek | export jwk | out $cek-jwk`,
     title: "Sign a run receipt",
     blurb:
       "Split a secret, then mint a receipt of the run — recipe, timestamps, and digests of every output, never the outputs — and OpenPGP-sign it with a vault key.",
-    recipe: `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
+    recipe: `random 32 | sss.split 2/3 | blip39 | foreach
   - out $share
 
 run.receipt | gpg.sign | out $receipt`,
@@ -2735,7 +2780,7 @@ run.receipt | gpg.sign | out $receipt`,
       "Tee the public PEM, then SSS + BLIP39-split the 32-byte scalar (no envelope) — preferred for P-256 keys.",
     recipe: `genkey ec/p256 | tee
   - public | export spki | pem | out $public
-| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
+| export scalar | sss.split 2/3 | blip39 | foreach
   - out $share`,
   },
   {
@@ -2756,7 +2801,7 @@ run.receipt | gpg.sign | out $receipt`,
       "Tee the public PEM, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
     recipe: `genkey ec/p256 | tee
   - public | export spki | pem | out $public
-| export scalar | sss.split threshold=2 shares=3 | blip39 | foreach
+| export scalar | sss.split 2/3 | blip39 | foreach
   - gpg.encrypt`,
   },
   {
@@ -2776,7 +2821,7 @@ run.receipt | gpg.sign | out $receipt`,
     title: "Split PEM via OpenPGP envelope",
     blurb:
       "Emit PKCS#8 PEM ($pem), OpenPGP-encrypt under a random 32-byte master, then SSS + BLIP39-split the master. Keep envelope.asc with the shares.",
-    recipe: `genkey ec/p256 | export pkcs8 | pem | out $pem | gpg.symencrypt mode=master | sss.split threshold=2 shares=3 | blip39 | foreach
+    recipe: `genkey ec/p256 | export pkcs8 | pem | out $pem | gpg.symencrypt mode=master | sss.split 2/3 | blip39 | foreach
   - out $share`,
   },
   {

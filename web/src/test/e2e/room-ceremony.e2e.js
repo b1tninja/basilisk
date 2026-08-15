@@ -252,7 +252,10 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // trust.
     await ceremony.getByRole("button", { name: /Show the \d+ cells this writes/ }).click();
     const preview = await ceremony.locator("[data-room-ceremony-recipe]").innerText();
-    expect(preview).toContain("sss.split threshold=2 shares=2");
+    // The quorum as the verb's object (migration step 2) — the generator writes
+    // the canonical fraction, so the preview and the notebook cannot differ by
+    // a respelling.
+    expect(preview).toContain("sss.split 2/2");
     expect(preview).toContain(`quorum.send ${L.holder}`);
     expect(preview).toContain(`quorum.recv from=${L.dealer}`);
     // Whole keys in the preview too — the one place a reader checks who is
@@ -293,8 +296,9 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     expect(cells[0].split("\n")[0]).toBe(`@${L.dealer}`);
     expect(cells[2].split("\n")[0]).toBe(`@${L.holder}`);
     expect(cells[4].split("\n")[0]).toBe(`@${L.holder}`);
-    // The quorum is in the text, where two peers will digest it — `ade4043`.
-    expect(ceremonySource).toContain("sss.split threshold=2 shares=2");
+    // The quorum is in the text, where two peers will digest it — `ade4043`,
+    // spelled as the verb's object since migration step 2.
+    expect(ceremonySource).toContain("sss.split 2/2");
     // Never `publish`: a share leaves this machine because a verb said so.
     expect(ceremonySource).not.toContain("publish");
     // The master is in no slot. The split cell writes a digest and the share

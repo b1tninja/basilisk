@@ -1233,10 +1233,12 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // **The quorum is in the text.** `docs/LANGUAGE.md` opens on this exact
     // recipe as the case where it was not: `sss.split threshold=2 shares=3`
     // round-tripped to `sss.split`, so the whole security property was absent
-    // from what the two ends digest. `ade4043` fixed it, and this is that fix
-    // standing in the notebook that actually travels rather than in a
-    // round-trip sweep.
-    expect(src).toContain("sss.split threshold=2 shares=3");
+    // from what the two ends digest. `ade4043` fixed it, and migration step 2
+    // then made the quorum the verb's object — the named pair this test types
+    // canonicalizes to the fraction, and the fraction is what stands in the
+    // notebook that actually travels. The property pinned is unchanged: both
+    // numbers are in the text.
+    expect(src).toContain("sss.split 2/3");
     // Both addressed ends are whole keys, and they are the room's keys — the
     // send names the holder, the receive names the dealer. A prefix would still
     // work at run time (`sendChatTo` matches on one, `takeQueued` on the

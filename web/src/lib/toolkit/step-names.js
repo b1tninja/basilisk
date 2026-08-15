@@ -207,7 +207,11 @@ export function resolveDecodeTwinVerb(raw, getStep) {
   if (!spec?.decodeTwin) return null;
   // Cipher ops keep encrypt/decrypt + `-d`; dotted verbs are for encodings etc.
   if (CIPHER_DISPATCH_TARGETS.has(canonical)) return null;
-  return { canonical, decode: mode === "decode" };
+  // `spec.name`, not the token that was typed: `getStep` resolves registry
+  // aliases, so `words.decode` finds `blip39`'s spec — and an AST step named
+  // `words` would be a name the engine's dispatch has never heard of. For a
+  // non-alias spelling the two strings are identical, so nothing else moves.
+  return { canonical: spec.name, decode: mode === "decode" };
 }
 
 /**

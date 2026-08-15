@@ -100,13 +100,14 @@ describe("compact share form", () => {
     // So the stem still minifies and the body is left exactly as written.
     const foreachPretty = `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach
   - out $share`;
-    // `sss.split threshold=2 shares=3` keeps its arguments through the compact
-    // form: they are `serialize: "always"` now, because a quorum dropped for
-    // matching a default is absent from the link the recipient reads and from
-    // the manifest both ends compare. Minifying the stem never meant minifying
-    // away what the recipe does.
+    // The quorum keeps both numbers through the compact form: a quorum dropped
+    // for matching a default is absent from the link the recipient reads and
+    // from the manifest both ends compare. It travels as the verb's object now
+    // (`sss.split 2/3`, LANGUAGE.md migration step 2) — the named pair above is
+    // an input form converging on the fraction. Minifying the stem never meant
+    // minifying away what the recipe does.
     expect(compactRecipeText(foreachPretty)).toBe(
-      "random 32|sss.split threshold=2 shares=3|blip39.encode|foreach\n  - out $share"
+      "random 32|sss.split 2/3|blip39.encode|foreach\n  - out $share"
     );
 
     const chained = `genkey ec/p256 | out $kp

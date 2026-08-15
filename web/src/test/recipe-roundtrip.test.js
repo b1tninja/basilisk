@@ -426,38 +426,48 @@ describe("a comment survives serialization", () => {
  * from the text two peers compare, and from the manifest they digest, and a
  * 2-of-3 and a 2-of-16 were the same recipe with only the second written down.
  *
- * `serialize: "always"` is the narrow half of `LANGUAGE.md`'s principle 4. The
- * assertions below are on the *property* — the numbers are in the text, and
- * every spelling of the same split converges on one text — rather than on a
- * particular sentence, because the designed form (`split 2/3` as the verb's
- * object) has to keep both of those true and should not have to rewrite this.
+ * `serialize: "always"` was the narrow half of `LANGUAGE.md`'s principle 4;
+ * the designed half is now in: **the quorum is the verb's object**, and
+ * `sss.split`'s canonical spelling is the fraction (`sss.split 2/3`), where
+ * neither number can be defaulted away at all. The assertions below stay on
+ * the *property* — the numbers are in the text, and every spelling of the
+ * same split converges on one text — with the canonical characters pinned per
+ * verb, because the two verbs now spell it differently: `vss.split` keeps the
+ * named pair until the fraction is argued for it too.
  */
 describe("a split's quorum is in the text it serializes to", () => {
-  const splits = ["sss.split", "vss.split"];
-
   it("writes K and N even when both are the registry's defaults", () => {
-    for (const op of splits) {
-      const { first } = settle(`random 32 | ${op} threshold=2 shares=3 | out $set`);
-      expect(first, op).toContain(`${op} threshold=2 shares=3`);
-    }
+    const sss = settle("random 32 | sss.split threshold=2 shares=3 | out $set");
+    expect(sss.first).toContain("sss.split 2/3");
+    const vss = settle("random 32 | vss.split threshold=2 shares=3 | out $set");
+    expect(vss.first).toContain("vss.split threshold=2 shares=3");
   });
 
   it("converges: every spelling of one split serializes to one text", () => {
-    // The property principle 5 claims, expressible today. The abbreviated form
-    // is "leave the defaults off"; under `split 2/3` it becomes "leave the
-    // threshold off". Either way the canonical text has to be complete, so
-    // input forms that mean the same split must land on the same characters —
-    // a stronger assertion than each of them merely surviving.
-    for (const op of splits) {
-      const spellings = [
-        `random 32 | ${op} | out $set`,
-        `random 32 | ${op} threshold=2 | out $set`,
-        `random 32 | ${op} shares=3 | out $set`,
-        `random 32 | ${op} threshold=2 shares=3 | out $set`,
-      ].map((src) => settle(src).first);
-      expect(new Set(spellings).size, `${op}: ${JSON.stringify(spellings)}`).toBe(1);
-      expect(spellings[0]).toContain("threshold=2 shares=3");
-    }
+    // The property principle 5 claims. The abbreviated forms — defaults left
+    // off, or the majority form `sss.split 3` — are input forms only; the
+    // canonical text is complete, so every spelling of the same split must
+    // land on the same characters — a stronger assertion than each of them
+    // merely surviving.
+    const spellings = [
+      "random 32 | sss.split | out $set",
+      "random 32 | sss.split threshold=2 | out $set",
+      "random 32 | sss.split shares=3 | out $set",
+      "random 32 | sss.split threshold=2 shares=3 | out $set",
+      "random 32 | sss.split 2/3 | out $set",
+      "random 32 | sss.split 3 | out $set",
+    ].map((src) => settle(src).first);
+    expect(new Set(spellings).size, JSON.stringify(spellings)).toBe(1);
+    expect(spellings[0]).toContain("sss.split 2/3");
+
+    const vss = [
+      "random 32 | vss.split | out $set",
+      "random 32 | vss.split threshold=2 | out $set",
+      "random 32 | vss.split shares=3 | out $set",
+      "random 32 | vss.split threshold=2 shares=3 | out $set",
+    ].map((src) => settle(src).first);
+    expect(new Set(vss).size, JSON.stringify(vss)).toBe(1);
+    expect(vss[0]).toContain("threshold=2 shares=3");
   });
 
   it("says how many participants a dkg.run needs to reconstruct", () => {
@@ -485,6 +495,6 @@ describe("a split's quorum is in the text it serializes to", () => {
     const src = "random 32 | sss.split threshold=2 shares=3 | out $set";
     const back = compileRecipe(throughLink(src));
     expect(back.validation.errors).toEqual([]);
-    expect(serializeRecipe(back.ast)).toContain("threshold=2 shares=3");
+    expect(serializeRecipe(back.ast)).toContain("sss.split 2/3");
   });
 });

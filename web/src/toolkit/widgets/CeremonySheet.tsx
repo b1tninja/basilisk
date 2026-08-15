@@ -16,6 +16,7 @@ import { ShareCheck } from "./ShareCheck";
 import {
   CEREMONY_STAGES,
   ceremonyIssues,
+  ceremonyNotes,
   nextStage,
   prevStage,
   stageIndex,
@@ -250,6 +251,18 @@ export function CeremonySheet({
                   reconstruct the secret. Fewer than {threshold} reveal nothing at all.
                 </p>
               )}
+
+              {/*
+                A legal quorum can still deserve a warning: K-of-K recombines
+                and has no redundancy at all, and the word "quorum" invites the
+                reader to assume some. `ceremonyNotes` owns the sentence so the
+                compiler-side refusals and this note come from one module.
+              */}
+              {ceremonyNotes({ threshold, shares }).map((note) => (
+                <p key={note} className="ceremony-quorum-note" data-tone="warn">
+                  {note}
+                </p>
+              ))}
 
               <label className="ceremony-toggle">
                 <input

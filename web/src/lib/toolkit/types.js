@@ -1378,6 +1378,12 @@ export function inferParamDrivenType(name, current, params = {}) {
             : ""),
       };
     }
+    // The element count survives the retype. Encoding N raw shares yields N
+    // mnemonics and decoding N mnemonics yields N raw shares — a retype that
+    // dropped `length` would make `sss.split`'s stamp a refinement nothing
+    // downstream of the one step everyone writes next could ever read, which
+    // is the with-no-consumer defect in producer's clothing.
+    const carried = current.length != null ? { length: current.length } : {};
     const decode = !!params.decode;
     if (decode) {
       if (current.kind === "raw") {
@@ -1386,7 +1392,7 @@ export function inferParamDrivenType(name, current, params = {}) {
           error: `"blip39.decode" expects shares/mnemonic, got shares/raw`,
         };
       }
-      return { ok: true, output: typeOf("shares", { kind: "raw" }) };
+      return { ok: true, output: typeOf("shares", { kind: "raw", ...carried }) };
     }
     if (current.kind === "mnemonic") {
       return {
@@ -1394,7 +1400,7 @@ export function inferParamDrivenType(name, current, params = {}) {
         error: `"blip39" encode expects shares/raw, got shares/mnemonic (use -d to decode)`,
       };
     }
-    return { ok: true, output: typeOf("shares", { kind: "mnemonic" }) };
+    return { ok: true, output: typeOf("shares", { kind: "mnemonic", ...carried }) };
   }
 
   if (name === "hkp.filter" || name === "recipients.merge") {
@@ -1579,6 +1585,13 @@ export function inferParamDrivenType(name, current, params = {}) {
         error: `"at" expects shares, got ${formatType(current)}`,
       };
     }
+    // The share count, when the text states it. `sss.split 2/3` stamps
+    // `length: 3` and `blip39` carries it, so an index past the split is
+    // decidable here, before the run, from literals alone. A set whose count
+    // is only known at run time (`shares`, `gpg.decrypt`) carries no length
+    // and the checks below stay silent — a refusal must name a state that is
+    // actually true, and "selects nothing" is not knowable there.
+    const count = current.length;
     const sel = String(params.selector || "1").trim();
     const range = sel.match(/^(\d+):(\d+)$/);
     const single = sel.match(/^(\d+)$/);
@@ -1588,12 +1601,37 @@ export function inferParamDrivenType(name, current, params = {}) {
       if (a < 1 || b < a) {
         return { ok: false, error: `"at" slice must be 1-based with start ≤ end` };
       }
+      if (count != null && a > count) {
+        return {
+          ok: false,
+          error:
+            `"at ${a}:${b}" of a ${count}-share split selects nothing — ` +
+            `the shares are numbered 1..${count}`,
+        };
+      }
+      // A slice is fewer shares, and the type says how many — leaving the
+      // stamped count on a two-share slice of three would be a length that
+      // lies, which is worse than none.
+      if (count != null) {
+        return {
+          ok: true,
+          output: { ...current, length: Math.min(b, count) - a + 1 },
+        };
+      }
       return { ok: true, output: { ...current } };
     }
     if (single) {
       const n = Number(single[1]);
       if (n < 1) {
         return { ok: false, error: `"at" index must be ≥ 1` };
+      }
+      if (count != null && n > count) {
+        return {
+          ok: false,
+          error:
+            `"at ${n}" of a ${count}-share split selects nothing — ` +
+            `the shares are numbered 1..${count}`,
+        };
       }
       // One share: mnemonic text or raw bytes
       if (current.kind === "raw") {

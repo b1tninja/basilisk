@@ -294,7 +294,10 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
     recipe: [
       "random 32 | tee",
       "  - digest | encode hex | out $expected",
-      `| sss.split threshold=${threshold} shares=${shares} | blip39 | out $set`,
+      // The quorum as the verb's object — the canonical spelling, so the text
+      // this generator writes is the text `serializeRecipe` would write back
+      // and the preview cannot differ from the notebook by a respelling.
+      `| sss.split ${threshold}/${shares} | blip39 | out $set`,
     ].join("\n"),
   });
 

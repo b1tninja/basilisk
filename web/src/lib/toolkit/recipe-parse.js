@@ -1287,6 +1287,28 @@ class Parser {
     if (alt?.oaepHash) {
       step.params = { ...step.params, hash: alt.oaepHash };
     }
+    // Bare `send` refuses; bare `quorum.send` broadcasts. The alias is
+    // *narrower* than the name it resolves to, on purpose: an absent
+    // recipient deciding "everyone" is an absence deciding a security
+    // property, which the short verb never inherits. Checked here because
+    // this is the last place the spelling the author typed still exists —
+    // the AST carries only `quorum.send`, so `validateRecipe` could not
+    // tell the two apart without a field invented to carry the difference.
+    if (
+      canon === "quorum.send" &&
+      lower === "send" &&
+      !String(step.params?.to ?? "").trim()
+    ) {
+      this.errors.push({
+        message:
+          "`send` names no recipient — write `send <fingerprint>` (or " +
+          "`to=<fingerprint>`) so the text says who is handed the value. " +
+          "To broadcast to every verified peer, write `quorum.send`, whose " +
+          "empty `to=` is documented to mean that.",
+        start: nameStart,
+        end: this.pos,
+      });
+    }
     return step;
   }
 
@@ -2230,6 +2252,12 @@ class Parser {
       break;
     }
 
+    // The verb's object (`sss.split 2/3`) is normalized *before* defaults are
+    // filled, because "the author also wrote threshold=" and "the default
+    // filled threshold in" must stay distinguishable — the first is a
+    // contradiction to refuse, the second is the ordinary case.
+    if (spec?.object) this.normalizeObjectParam(spec, params, start);
+
     for (const p of spec?.params || []) {
       if (params[p.name] === undefined && p.default !== undefined) {
         params[p.name] = p.default;
@@ -2315,6 +2343,72 @@ class Parser {
       start,
       end: this.pos,
     };
+  }
+
+  /**
+   * Normalize a step's object token (`sss.split 2/3`) into the params it
+   * spells, and delete it — the AST carries `threshold`/`shares`, never the
+   * token, so the engine, the type walk and the chip editors have exactly one
+   * place to read the quorum from and `serializeRecipe` (via the spec's
+   * `object.spell`) writes the fraction back from the same place.
+   *
+   * Two input forms, per `LANGUAGE.md` principle 5 (abbreviated in, canonical
+   * out):
+   *
+   * - `K/N` — the canonical object. Any K of N recover.
+   * - `N` — majority of N: `floor(N/2)+1`. An input form only; it serializes
+   *   as the fraction, so nobody reading a shared recipe needs the rule.
+   *   Majority is what makes any two qualifying sets intersect — `2/4` would
+   *   let two disjoint pairs each rebuild the secret independently.
+   *
+   * Writing the object *and* a named param it covers is refused rather than
+   * arbitrated: `sss.split 2/3 shares=4` states the share count twice and the
+   * two statements disagree, and picking a winner would make the text mean
+   * something one of its clauses denies. Semantic refusals (`1/3` is a copy,
+   * `4/3` unrecoverable, more than 16 shares) stay in `validateRecipe`, where
+   * the named spelling reaches them too — the two spellings must refuse
+   * identically or they are two dialects.
+   *
+   * @param {import("./registry.js").StepSpec} spec
+   * @param {Record<string, string|number|boolean>} params
+   * @param {number} start
+   */
+  normalizeObjectParam(spec, params, start) {
+    const { param, covers } = spec.object;
+    const raw = params[param];
+    delete params[param];
+    if (raw === undefined || raw === "") return;
+    const text = String(raw).trim();
+    const named = covers.filter((k) => params[k] !== undefined);
+    if (named.length) {
+      this.errors.push({
+        message:
+          `${spec.name} ${text} already states the quorum — drop ` +
+          `${named.map((k) => `\`${k}=\``).join(" and ")}, the object is the whole of it`,
+        start,
+        end: this.pos,
+      });
+      return;
+    }
+    const frac = /^(\d+)\/(\d+)$/.exec(text);
+    if (frac) {
+      params[covers[0]] = Number(frac[1]);
+      params[covers[1]] = Number(frac[2]);
+      return;
+    }
+    if (/^\d+$/.test(text)) {
+      const n = Number(text);
+      params[covers[0]] = Math.floor(n / 2) + 1;
+      params[covers[1]] = n;
+      return;
+    }
+    this.errors.push({
+      message:
+        `${spec.name}: the object is the quorum — write \`2/3\` (any 2 of 3 ` +
+        `recover) or \`3\` for a majority of 3, not "${text}"`,
+      start,
+      end: this.pos,
+    });
   }
 
   /**

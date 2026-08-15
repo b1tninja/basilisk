@@ -29,6 +29,7 @@
  */
 
 import { compactRecipeText } from "./fragment.js";
+import { COPY_NOT_A_QUORUM } from "./recipe.js";
 import { SLOT_SIGIL } from "./recipe-parse.js";
 
 /** @typedef {"setup"|"split"|"verify"|"cards"|"receipt"} CeremonyStageId */
@@ -150,11 +151,36 @@ export function ceremonyIssues(params = {}) {
     );
   }
   if (threshold === 1 && shares >= 2) {
-    issues.push(
-      "A threshold of 1 means any single card recovers the secret on its own — that is a copy, not a quorum."
-    );
+    // The compiler refuses `sss.split 1/3` with the same sentence — see
+    // `COPY_NOT_A_QUORUM` in recipe.js for why there is exactly one spelling.
+    issues.push(COPY_NOT_A_QUORUM);
   }
   return issues;
+}
+
+/**
+ * What a legal quorum is still worth saying out loud, at the stepper.
+ *
+ * Not issues: nothing here blocks the ceremony. `K/K` is a legitimate thing to
+ * want — "none of us alone" — and the word quorum invites a reader to assume
+ * redundancy it does not have, so the picker says so before the cards exist
+ * rather than after one is lost. Empty whenever `ceremonyIssues` is not,
+ * because a note qualifying an impossible quorum would be qualifying a thing
+ * the panel just said cannot exist.
+ *
+ * @param {Partial<CeremonyParams>} params
+ * @returns {string[]}
+ */
+export function ceremonyNotes(params = {}) {
+  if (ceremonyIssues(params).length) return [];
+  const threshold = Number(params.threshold);
+  const shares = Number(params.shares);
+  if (threshold === shares && shares >= 2) {
+    return [
+      `${threshold}-of-${shares} has no redundancy: every share is needed, so losing any one card loses the secret. Lower the threshold by one if a lost card should be survivable.`,
+    ];
+  }
+  return [];
 }
 
 /**

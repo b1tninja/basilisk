@@ -99,13 +99,13 @@ describe("parse / serialize", () => {
     expect(errors).toEqual([]);
     // `threshold=2` used to disappear here because it equalled the registry
     // default, so this recipe canonicalized to `sss.split shares=2` — a
-    // 2-of-2 whose quorum was half written down. The test is about spacing and
-    // body formatting; the quorum now rides along because `serialize: "always"`
-    // keeps it, which is what makes the split's K-of-N readable in the text
-    // both peers digest. Asserted in full rather than loosened, so a future
-    // change that drops either half fails here too.
+    // 2-of-2 whose quorum was half written down. The quorum is the verb's
+    // object now (`sss.split 2/2`, LANGUAGE.md migration step 2): the named
+    // pair above is an input form and the fraction is what both peers digest.
+    // Asserted in full rather than loosened, so a future change that drops
+    // either half of the quorum fails here too.
     expect(text).toBe(
-      "random 16 | sss.split threshold=2 shares=2 | foreach\n  - out $share"
+      "random 16 | sss.split 2/2 | foreach\n  - out $share"
     );
   });
 

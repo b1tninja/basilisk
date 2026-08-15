@@ -337,10 +337,13 @@ describe("the secret, and what is written down about it", () => {
     // `ade4043`: `sss.split threshold=2 shares=3` used to round-trip to bare
     // `sss.split`, so the security property was absent from what the two ends
     // compare. A generated notebook is the case where that would be least
-    // visible, since nobody typed the numbers.
+    // visible, since nobody typed the numbers. The canonical spelling is the
+    // verb's object now (`sss.split 2/3` — LANGUAGE.md migration step 2), so
+    // the pin moved with it; the property pinned is unchanged — both numbers
+    // are in the text the two ends digest.
     for (const n of SIZES) {
       const c = ceremonyFor(n);
-      expect(c.text).toContain(`sss.split threshold=${c.threshold} shares=${c.shares}`);
+      expect(c.text).toContain(`sss.split ${c.threshold}/${c.shares}`);
     }
   });
 

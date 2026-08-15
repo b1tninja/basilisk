@@ -247,6 +247,18 @@ import {
  *   retire the panel without a second list saying so.
  * @property {IoType} [instantiates]  §31a — a type constructor: this source *is* how you write that type down
  * @property {string[]} [aliases]
+ * @property {{ param: string, covers: string[], spell: (params: Record<string, *>) => string|null }} [object]
+ *   The verb's **object** — one positional token that spells a *pair* of params
+ *   (`sss.split 2/3` states threshold and shares in one breath). `param` names
+ *   the positional the token binds to on parse (the parser normalizes it into
+ *   `covers` and deletes it, so the AST only ever carries the real params);
+ *   `spell` writes the token back from those params, and `serializeStep` then
+ *   skips every param in `covers` — the object *is* their spelling. `spell`
+ *   returning null falls back to ordinary `name=value` emission, so a
+ *   half-formed AST still serializes rather than throwing. One token for a
+ *   param pair is the one thing `serializeStep`'s one-param-one-token loop
+ *   cannot say, which is why this is a declared hook and not a special case
+ *   buried in the serializer.
  * @property {(params: Record<string, *>) => { input: IoType, output: IoType }} [effectiveIo]
  * @property {StepOverload[]} [overloads]  refined-type overloads (compile-time dispatch)
  */
@@ -567,6 +579,32 @@ const OTP_AT_PARAM = {
   min: 0,
   doc: "Unix seconds to compute for; 0 is now. Pin it to make a run reproducible (RFC 6238's vectors are times)",
 };
+
+/**
+ * What `sss.split` leaves in the pipe: N shares, and the type says N.
+ *
+ * One function for all five input overloads, because the answer never varied
+ * by input — only the *acceptance* does. `params.shares` is a literal in the
+ * recipe text by the time this runs (the object form or the named pair, both
+ * normalized at parse), so the length is knowable before the run and the
+ * determinism rule holds. An out-of-range or missing N (a hand-built AST —
+ * a parsed one is bounded 1..16 by the param checks) stamps nothing rather
+ * than something false.
+ *
+ * @param {import("./types.js").RefinedType} current
+ * @param {Record<string, *>} params
+ * @returns {import("./types.js").RefinedType}
+ */
+function sssSplitOutput(current, params) {
+  void current;
+  const n = Number(params?.shares);
+  return typeOf(
+    "shares",
+    Number.isInteger(n) && n >= 1 && n <= 16
+      ? { kind: "raw", length: n }
+      : { kind: "raw" }
+  );
+}
 
 /** @type {StepSpec[]} */
 export const STEPS = [
@@ -2022,11 +2060,76 @@ export const STEPS = [
     shelf: "split",
     conjugate: "sss.combine",
     pairCaption: "Split / combine",
-    doc: "Split a 16/32-byte master into raw SSS shares (K-of-N). Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split …`. Large PEM: `… | pem | out $pem | gpg.symencrypt mode=master | sss.split …`.",
+    /**
+     * ## `split` reads; `sss.split` is what the text says
+     *
+     * The vocabulary aliases (`LANGUAGE.md`, "Vocabulary") are **parse-only**:
+     * `split 2/3` is accepted here and on `blip39` (`words`) and `quorum.send`
+     * (`send`), and every one of them converges on the namespaced name through
+     * `serializeRecipe`. The canonical direction was swept and deliberately
+     * not flipped, for two reasons that outrank the doc's framing:
+     *
+     * - **`send` cannot be canonical.** Bare `send` *refuses* (a recipient
+     *   must be named) while bare `quorum.send` broadcasts — so a broadcast
+     *   send serialized as `send` would be canonical text that does not parse
+     *   back, and a canonical name that depends on whether `to=` is set would
+     *   be one verb serializing under two names. The family stays together.
+     * - **Every refusal names the registry name.** "`sss.split` does not
+     *   accept …", "Cannot pipe shares into `quorum.send`" — canonicalizing
+     *   the short names without renaming the steps would leave every error
+     *   quoting a spelling the canonical text never contains, and renaming
+     *   the steps is a different, much larger migration.
+     */
+    aliases: ["split"],
+    doc: "Split a 16/32-byte master into raw SSS shares. The quorum is the verb's object: `sss.split 2/3` — any 2 of 3 recover; `sss.split 3` is a majority-of-3 input form and serializes as `2/3`. Pipe into `blip39` for mnemonics. EC: `export scalar | sss.split 2/3`. Large PEM: `… | pem | out $pem | gpg.symencrypt mode=master | sss.split 2/3`.",
     input: "bytes",
     output: "shares",
     entropy: "keying",
+    /**
+     * ## The quorum is the verb's object
+     *
+     * `LANGUAGE.md` principle 4's designed half: a security-relevant parameter
+     * is the verb's object, not an option. `sss.split 2/3` puts both numbers
+     * in one token where neither can be defaulted away, and `serializeStep`
+     * writes that token for every spelling of the same split — named params,
+     * the bare-`N` majority form, or the fraction itself all converge on it.
+     * `spell` reads the normalized params, so it cannot disagree with what the
+     * engine will run.
+     */
+    object: {
+      param: "quorum",
+      covers: ["threshold", "shares"],
+      spell(params) {
+        const t = Number(params?.threshold);
+        const n = Number(params?.shares);
+        return Number.isFinite(t) && Number.isFinite(n) ? `${t}/${n}` : null;
+      },
+    },
     params: [
+      /**
+       * ## The object token, and why it is a string
+       *
+       * `2/3` binds here and is normalized away at parse time — the parser
+       * rewrites it into `threshold` and `shares` and deletes this key, so no
+       * AST ever carries it and nothing downstream has two places to read the
+       * quorum from. `type: "string"` is load-bearing: the positional path
+       * reads a digit-leading token with the int reader unless the param says
+       * string, and the int reader takes the `2` of `2/3` and stops, leaving
+       * `/3` where the grammar wants a new argument.
+       *
+       * The abbreviated form `sss.split 3` is an *input* form only — a
+       * majority of 3, `floor(3/2)+1 = 2` — and serializes as `2/3`, so a
+       * reader of a shared recipe never needs to know the majority rule.
+       * Majority rather than any smaller fraction because any two qualifying
+       * sets then intersect: `2/4` would let two disjoint pairs each rebuild
+       * the secret without the other knowing.
+       */
+      {
+        name: "quorum",
+        type: "string",
+        positional: true,
+        doc: "The quorum, as the verb's object: `K/N` (`2/3` — any 2 of 3 recover) or `N` for a majority of N. Serializes as `K/N`; `threshold=`/`shares=` still read and converge on it.",
+      },
       /**
        * ## Why the quorum is never dropped on serialize
        *
@@ -2044,13 +2147,16 @@ export const STEPS = [
        * they digest — a 2-of-3 and a 2-of-16 were the same recipe, and only
        * the second of them was written down. That is `LANGUAGE.md`'s principle
        * 4, and this is the narrow half of its fix: the parameter keeps its
-       * spelling and stops being droppable. The designed half makes it the
-       * verb's object (`split 2/3`), where it cannot be defaulted away at all.
+       * spelling and stops being droppable. The designed half is the `object`
+       * hook above — these two now travel as the fraction, and `serialize:
+       * "always"` remains as the statement of the property the hook honours.
        *
        * The same reasoning applies verbatim to `vss.split` and to `dkg.run`'s
        * threshold, and only to those — see the audit in the commit that added
        * this. A param whose default is genuinely inert stays droppable,
-       * because noise in the text is its own readability cost.
+       * because noise in the text is its own readability cost. `vss.split`
+       * keeps the named spelling until the fraction is argued for it too;
+       * one verb changing spelling is a migration, two is a policy.
        */
       {
         name: "threshold",
@@ -2124,27 +2230,25 @@ export const STEPS = [
         doc: "Optional share passphrase mask (Basilisk-specific) — `$slot` only, never a literal: bind it from Inputs (`input | out $pw`, then `passphrase=$pw`) so the mask is named in the recipe without travelling in it.",
       },
     ],
+    /**
+     * ## The output says how many shares it is
+     *
+     * `LIST_TYPES` has always said `length` counts elements for `shares`, and
+     * the slot sat empty — the repo's signature defect, a refinement with no
+     * producer. N is a literal in the recipe text (the object form makes it
+     * unomittable), so stamping it keeps the output type knowable before the
+     * run: nothing here reads a runtime value. `blip39` carries it through
+     * the retype and `at` consumes it — `at 5` of a 3-share split refuses at
+     * compile time instead of selecting nothing at run time. The bounds guard
+     * is against a hand-built AST; a parsed recipe always has 1..16 by the
+     * param checks.
+     */
     overloads: [
-      {
-        when: { base: "bytes", kind: "master", length: 16 },
-        output: { base: "shares", kind: "raw" },
-      },
-      {
-        when: { base: "bytes", kind: "master", length: 32 },
-        output: { base: "shares", kind: "raw" },
-      },
-      {
-        when: { base: "bytes", kind: "master" },
-        output: { base: "shares", kind: "raw" },
-      },
-      {
-        when: { base: "bytes", kind: "scalar", length: 32 },
-        output: { base: "shares", kind: "raw" },
-      },
-      {
-        when: { base: "bytes", kind: "scalar", length: 16 },
-        output: { base: "shares", kind: "raw" },
-      },
+      { when: { base: "bytes", kind: "master", length: 16 }, output: sssSplitOutput },
+      { when: { base: "bytes", kind: "master", length: 32 }, output: sssSplitOutput },
+      { when: { base: "bytes", kind: "master" }, output: sssSplitOutput },
+      { when: { base: "bytes", kind: "scalar", length: 32 }, output: sssSplitOutput },
+      { when: { base: "bytes", kind: "scalar", length: 16 }, output: sssSplitOutput },
     ],
   },
   {
@@ -2152,6 +2256,11 @@ export const STEPS = [
     kind: "transform",
     toolbox: "sss",
     shelf: "split",
+    // Parse-only, converging on `blip39` — see the note on `sss.split`'s
+    // `aliases` for why the short names did not become the canonical text.
+    // `words.encode` / `words.decode` read too: `resolveDecodeTwinVerb`
+    // resolves the base through `getStep`, which knows aliases.
+    aliases: ["words"],
     decodeTwin: true,
     pairCaption: "BLIP39",
     pairLabels: { forward: "Encode", reverse: "Decode" },
@@ -2372,7 +2481,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "sss",
     shelf: "split",
-    doc: "Select from a shares collection (1-based). Same as `[1]` / `[1:2]`. Example: `… | blip39 | [1] | out $share-1`.",
+    doc: "Select from a shares collection (1-based). Same as `[1]` / `[1:2]`. When the split's share count is stated in the text (`sss.split 2/3` stamps it on the type), an index past it refuses at compile time — `at 5` of a 3-share split selects nothing. Example: `… | blip39 | [1] | out $share-1`.",
     input: "shares",
     output: "shares",
     entropy: "none",
@@ -4874,6 +4983,16 @@ export const STEPS = [
     kind: "transform",
     toolbox: "quorum",
     shelf: "channel",
+    // Parse-only, and *narrower* than the name it aliases: bare `send`
+    // refuses at parse, naming the missing recipient, where bare
+    // `quorum.send` broadcasts. An absent recipient deciding "everyone" is
+    // exactly the absence-decides-a-security-property shape principle 4
+    // forbids, so the short verb never inherits it — and that asymmetry is
+    // also why `send` can never be the canonical spelling (a broadcast
+    // serialized as `send` would be canonical text that refuses to parse).
+    // The refusal lives in `parseStage`, the only place the spelling is
+    // still known. See the note on `sss.split`'s `aliases`.
+    aliases: ["send"],
     doc: "Write the pipeline text to the exchange's data channels (per-peer session keys; key-confirmed channels only). `to=` addresses one peer by fingerprint; empty broadcasts to every verified peer, which is the exchange's own policy. Passes the value through unchanged. Requires a `quorum.offer`/`quorum.join` earlier in this run — for a channel with no exchange behind it, use `peer.send`.",
     input: "text",
     output: "text",
