@@ -5,10 +5,11 @@ import {
   keyMetaChipsHtml,
   keyPillExtrasHtml,
   primaryUidLabel,
-  shortKeyId,
   userLabelOf,
 } from "../lib/key-hit.js";
+import { renderKeysTable } from "../lib/keys.js";
 import { setTrust } from "../lib/trust.js";
+import { formatFingerprint } from "../lib/utils.js";
 
 /** Minimal localStorage for Node vitest. */
 function installMemoryLocalStorage() {
@@ -63,8 +64,19 @@ beforeEach(() => {
 });
 
 const FPR = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+/**
+ * Distinguishable characters, so an assertion about a *part* of a key can fail.
+ *
+ * `FPR` is forty identical `A`s, which was fine for everything above and useless
+ * for the rule below: "the last eight characters are absent" is unprovable on a
+ * value whose every eight characters are the same eight. The one that caught
+ * this was a real key's shape.
+ */
+const VARIED = "D772078C5C7C2A0EDCA09ED32C5EBBB46AD01388";
+/** The 32-bit short key id — the form none of these surfaces may print. */
+const SHORT = VARIED.slice(-8);
 
-describe("primaryUidLabel / userLabelOf / shortKeyId", () => {
+describe("primaryUidLabel / userLabelOf", () => {
   it("formats name + email UID", () => {
     expect(
       primaryUidLabel({
@@ -74,17 +86,65 @@ describe("primaryUidLabel / userLabelOf / shortKeyId", () => {
     ).toBe("Ada <ada@example.com>");
   });
 
-  it("reads user label and short key id", () => {
+  it("reads a user label", () => {
     expect(userLabelOf({ label: " Laptop " })).toBe("Laptop");
-    expect(
-      shortKeyId({ fingerprint: FPR, key_id: "1122334455667788" })
-    ).toBe("55667788");
-    expect(shortKeyId({ fingerprint: FPR })).toBe("AAAAAAAA");
+  });
+});
+
+/**
+ * No surface here publishes part of a key, and every one of them publishes all
+ * of it.
+ *
+ * A `shortKeyId` printed `…6AD01388` into all three — the results list, the
+ * recipient pills and the key table — under the caption "Key ID". Thirty-two
+ * bits, on the page whose own copy reads "Short (8-character) key IDs are
+ * collision-prone. Confirm the full fingerprint out of band before trusting a
+ * key", one row away from the sentence.
+ *
+ * Both halves are asserted because either alone is satisfiable by an accident:
+ * deleting the chip and the fingerprint together would pass an absence test,
+ * and lengthening the chip to sixteen would pass a presence test. Neither is
+ * the rule. The rule is that the whole value is what identifies a key here and
+ * no part of it is offered as a substitute.
+ */
+describe("the chips tell keys apart without publishing part of one", () => {
+  const item = {
+    fingerprint: VARIED,
+    key_id: "2C5EBBB46AD01388",
+    userLabel: "Work YubiKey",
+    approved_uids: [{ email: "ada@lovelace.dev", name: "Ada" }],
+    approval_state: "approved",
+  };
+
+  it("keeps the short key id out of the search-result chips", () => {
+    expect(keyMetaChipsHtml(item)).not.toContain(SHORT);
+  });
+
+  it("keeps it out of a selected recipient's pill", () => {
+    expect(keyPillExtrasHtml(item)).not.toContain(SHORT);
+  });
+
+  it("keeps it out of the key table, which prints the whole value above it", () => {
+    const table = renderKeysTable([item]);
+    expect(table).toContain(formatFingerprint(VARIED));
+    // Tags stripped, because the whole ungrouped fingerprint is legitimately in
+    // this row twice — the `/key?fpr=` href and the delete button's data
+    // attribute — and both of those end in the same eight characters without
+    // showing anybody anything. What must not come back is a `…6AD01388` a
+    // reader can see and read out. `formatFingerprint` groups in fours, so the
+    // printed value cannot satisfy this by accident.
+    expect(table.replace(/<[^>]*>/g, " ")).not.toContain(SHORT);
+  });
+
+  it("prints the whole fingerprint on the hit itself", () => {
+    // The reason the chip was removable rather than shortenable: the value it
+    // was a part of is already on the same row.
+    expect(keyHitHtml(item)).toContain(formatFingerprint(VARIED));
   });
 });
 
 describe("keyMetaChipsHtml", () => {
-  it("includes label, trust, revoked, expiry, and key id", () => {
+  it("includes label, trust, revoked and expiry", () => {
     setTrust(FPR, "trusted");
     const html = keyMetaChipsHtml({
       fingerprint: FPR,
@@ -98,7 +158,9 @@ describe("keyMetaChipsHtml", () => {
     expect(html).toContain("trusted");
     expect(html).toContain("revoked");
     expect(html).toContain("Expired");
-    expect(html).toContain("CAFEBABE");
+    // `key_id` is still on the record and still correct — 64 bits, for the
+    // vault and HKP lookups that index by it. It is not a chip.
+    expect(html).not.toContain("CAFEBABE");
   });
 
   it("shows no expiry chip when unset", () => {

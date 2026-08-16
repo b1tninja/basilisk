@@ -112,18 +112,29 @@ export function normalizeIds(ids) {
 }
 
 /**
- * Short label for an id in a human-facing message.
+ * How an id is written into a human-facing message: whole.
  *
- * Takes the *last* 8 hex digits, not the first. Ids are 64-char zero-padded
- * scalars, so small numeric ids — 1, 2, 3, which is what a local rehearsal
- * uses — all begin `00000000`, and a leading-prefix truncation renders every
- * participant identically in exactly the message someone is reading to find
- * out who to chase.
+ * It used to take the last 8 hex digits — not the first, because ids are
+ * 64-char zero-padded scalars and small rehearsal ids (1, 2, 3) all begin
+ * `00000000`, which would have rendered every participant identically. That
+ * reasoning was right about the end and wrong about the length. A real room's
+ * ids come from `idFromFingerprint`, which reduces a fingerprint mod the curve
+ * order; a v4 fingerprint is 160 bits and the order is 256, so the reduction is
+ * the identity and the scalar is the fingerprint with 24 zeros in front. The
+ * last 8 digits of it are therefore the last 8 of somebody's *fingerprint* —
+ * the 32-bit short key id, in a refusal, naming who dealt a bad share.
+ *
+ * These messages are read exactly when something has gone wrong, and `dkg.js`
+ * is explicit that the remedy is social: a person takes this id to a room and
+ * asks. A partial makes that conversation start with "which one of us is that",
+ * and there is no press here to reveal the rest — a log line is not a widget.
+ * The name went with the length, for the reason `approval-gate.js` renamed its
+ * own: a function called `shortId` that returns the whole id is a comment
+ * asserting something untrue.
  * @param {string|bigint} id
  */
-export function shortId(id) {
-  const s = String(id || "");
-  return s.length > 8 ? s.slice(-8) : s;
+export function idText(id) {
+  return String(id || "");
 }
 
 /**

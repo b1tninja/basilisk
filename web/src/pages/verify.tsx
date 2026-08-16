@@ -33,17 +33,34 @@ type KeyRecord = {
   key_expiration?: string;
 };
 
-/** Fingerprint as 4-hex groups with last 8 (key ID) highlighted. */
+/**
+ * The whole fingerprint in even 4-hex groups, and no group singled out.
+ *
+ * The last eight characters used to be drawn as their own wider group, tinted,
+ * titled "Key ID (last 8 hex)". Nothing was hidden — every character was on the
+ * page — but this is the page where two people read a fingerprint to each other
+ * to decide whether to trust a key, and marking eight of the forty is an
+ * instruction about which eight to read. Those eight are 32 bits, the length
+ * forged wholesale in 2016 and the length this product's own search page calls
+ * collision-prone two paragraphs from here; they are also not the OpenPGP key
+ * ID, which is the low *sixteen* hex. So the emphasis named the wrong thing and
+ * recommended it in the same stroke.
+ *
+ * `formatFingerprint`'s grouping is what every other surface prints and what
+ * `findFingerprints` recovers, so the groups here are that spelling wrapped in
+ * spans for the wrapping, not a second one.
+ *
+ * The meta grid below carried the same eight characters again, on their own,
+ * under the heading "Key ID" — a partial with no whole beside it, which is the
+ * form that gets copied. It is gone rather than lengthened to sixteen: this
+ * card already prints the value that identifies the key, directly above.
+ */
 function fingerprintBreakdownHtml(fpr: string): string {
   const clean = normalizeFingerprintInput(fpr);
-  if (clean.length < 8) {
-    return `<code class="fpr">${escapeHtml(formatFingerprint(clean))}</code>`;
-  }
-  const body = clean.slice(0, -8);
-  const keyId = clean.slice(-8);
-  const groups = body.match(/.{1,4}/g) || [];
+  const groups = formatFingerprint(clean).split(" ").filter(Boolean);
+  if (!groups.length) return `<code class="fpr"></code>`;
   const bodyHtml = groups.map((g) => `<span class="fpr-group">${escapeHtml(g)}</span>`).join("");
-  return `<span class="fpr-breakdown" aria-label="Fingerprint">${bodyHtml}<span class="fpr-group fpr-keyid" title="Key ID (last 8 hex)">${escapeHtml(keyId)}</span></span>`;
+  return `<span class="fpr-breakdown" aria-label="Fingerprint">${bodyHtml}</span>`;
 }
 
 function VerifyPage() {
@@ -150,7 +167,6 @@ function VerifyPage() {
         <div class="key-meta-row"><dt>Approval</dt><dd>${escapeHtml(revoked ? "revoked" : record.approval_state || "—")}</dd></div>
         <div class="key-meta-row"><dt>Expires</dt><dd>${expiryHtml}</dd></div>
         <div class="key-meta-row"><dt>Certifications</dt><dd>${escapeHtml(String(certCount))}</dd></div>
-        <div class="key-meta-row"><dt>Key ID</dt><dd><code>${escapeHtml(clean.slice(-8))}</code></dd></div>
       </dl>
       <p class="muted m-0-b-sm">Still confirm this fingerprint and verified email out of band before trusting the key.</p>
       ${uids ? `<ul class="uid-list">${uids}</ul>` : ""}

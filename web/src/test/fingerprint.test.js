@@ -247,6 +247,47 @@ describe("nothing prints part of a fingerprint any more", () => {
     /slice\(\s*0\s*,\s*\d+\s*\)[^\n]{0,40}…[^\n]{0,40}slice\(\s*-\s*\d+\s*\)/;
   /** `${x.slice(0, 8)}…` — the same defect with one end instead of two. */
   const ONE_END = /slice\(\s*0\s*,\s*\d+\s*\)[^\n]{0,40}…/;
+  /** `x.slice(-8)` — the short key id, with no ellipsis to give it away. */
+  const SHORT_KEY_ID = /slice\(\s*-\s*8\s*\)/;
+
+  /**
+   * The 32-bit form, swept over everything rather than a list — and only it.
+   *
+   * The two rules above look for an ellipsis, which is what made them readable
+   * and what let this one hide: `fpr.slice(-8)` has no `…` and no `shortFpr` in
+   * its name, so it read as ordinary string handling in seven modules at once —
+   * a download filename, a ciphertext tile, a keyserver chip, a verify card, a
+   * DKG timeout. Every one of them was a short key id under a different noun.
+   *
+   * Eight hex characters is 32 bits, which is the length forged wholesale in
+   * 2016 and the length `pages/index.tsx` warns about by name. **Sixteen is
+   * not on this list and must not be.** The OpenPGP key ID *is* the low 64 bits
+   * of the fingerprint, and `vault.js`, `pubkey-cache.js`, `upstream-hkp.js` and
+   * `recipient-picker.js` derive one to match a PKESK packet or index an HKP
+   * record — protocol, not presentation, and rewriting those would break
+   * lookup. The distinction is the whole point: a 16-hex value on the wire is
+   * load-bearing, an 8-hex value in front of a person is the defect.
+   *
+   * So the sweep is the whole app, because there is no module where a 32-bit
+   * key id is the right answer — not even a log line, where it is worse.
+   */
+  it("derives no 32-bit key id anywhere in the app", () => {
+    const offenders = [];
+    for (const { file, text } of SOURCES) {
+      text.split(/\r?\n/).forEach((line, i) => {
+        if (!SHORT_KEY_ID.test(line)) return;
+        offenders.push(`${file}:${i + 1} ${line.trim()}`);
+      });
+    }
+    expect(
+      offenders,
+      `A short key id is being derived here:\n${offenders.join("\n")}\nThe ` +
+        `whole value goes on screen through <Fingerprint>, and into a filename, ` +
+        `a label or a refusal as itself. If this is a key id for a lookup rather ` +
+        `than for a reader, it is the low 64 bits — slice(-16) — and it still ` +
+        `does not belong in front of anybody.`
+    ).toEqual([]);
+  });
 
   /**
    * The two-ended form has one legitimate subject left, and it is not a key.

@@ -1,5 +1,5 @@
 import { Auth } from "./auth.js";
-import { expiryCellText, shortKeyId, userLabelOf } from "./key-hit.js";
+import { expiryCellText, userLabelOf } from "./key-hit.js";
 import { sortByTrust, trustBadgeHtml } from "./trust.js";
 import {
   escapeHtml,
@@ -41,7 +41,6 @@ export function renderKeysTable(items, options = {}) {
     }
     const trust = trustBadgeHtml(fp);
     const userLabel = userLabelOf(item);
-    const kid = shortKeyId(item);
     const revoked = item.revoked
       ? ` <span class="key-chip key-chip-revoked">revoked</span>`
       : "";
@@ -49,10 +48,12 @@ export function renderKeysTable(items, options = {}) {
     return (
       `<tr>` +
       `<td>` +
+      // The whole fingerprint and nothing else. A `…6AD01388` line used to sit
+      // directly under this link, captioned "Key ID" — the same 32 bits the
+      // search page warns about, printed one line below the 160 it is a part
+      // of, which is the pair that teaches a reader the short form is the
+      // usable one.
       `<a class="text-link fpr" href="${fpHref}">${escapeHtml(formatFingerprint(fp))}</a>` +
-      (kid
-        ? `<div class="muted fs-xs mono" title="Key ID">…${escapeHtml(kid)}</div>`
-        : "") +
       `</td>` +
       `<td>${
         userLabel

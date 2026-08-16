@@ -1675,7 +1675,16 @@ export function createExchangeTransport(op = "dkg.run") {
       broadcast: (m) => session.sendChat(JSON.stringify(m)),
       sendTo: (id, m) => {
         const fpr = byId.get(id);
-        if (!fpr) throw new Error(`${op}: no participant with id ${id.slice(-8)}`);
+        // The whole id, because this is the message that says the roster and
+        // the caller disagree and the id is the only handle on the
+        // disagreement. It printed the last eight characters, which for a v4
+        // key are the last eight of the fingerprint — `idFromFingerprint`
+        // reduces mod the curve order and a 160-bit fingerprint is already
+        // smaller than that, so `scalarToHex` pads it and changes nothing else.
+        // A refusal naming a peer by their short key id is the defect this
+        // codebase is named after, and it also cannot be matched against `ids`,
+        // which is the list a reader would check it in.
+        if (!fpr) throw new Error(`${op}: no participant with id ${id}`);
         return session.sendChatTo(fpr, JSON.stringify(m));
       },
       subscribe: (handler) => {

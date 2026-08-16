@@ -1,6 +1,23 @@
 /**
  * Shared rich key-hit rendering for search results and recipient pickers.
- * Surfaces label, trust, expiry, key ID so similar keys can be told apart.
+ * Surfaces label, trust, origin and expiry so similar keys can be told apart.
+ *
+ * **The chips tell keys apart by facts about them, never by part of one.** A
+ * `shortKeyId` used to sit here printing `…6AD01388` under the caption "Key ID",
+ * in the search results of the page whose own copy reads "Short (8-character)
+ * key IDs are collision-prone. Confirm the full fingerprint out of band before
+ * trusting a key" — the contradiction `components/ui/fingerprint.tsx` was built
+ * to end, arriving from a second direction. Thirty-two bits is the length that
+ * was forged wholesale in 2016, and it was the one string on the row short
+ * enough to read aloud, so it is the one a reader would have compared.
+ *
+ * Nothing replaced it, because nothing needed to: all three consumers —
+ * `keyHitHtml` below, the pills in `recipient-picker.js` and the table in
+ * `keys.js` — already print `formatFingerprint` of the whole value on the same
+ * row. The chip was a shorter, checkable-looking spelling of the value directly
+ * beside it. The 64-bit `key_id` these records carry is still derived and still
+ * correct; it indexes vault entries and HKP lookups, and it is not an identity
+ * to put in front of a person.
  * @module lib/key-hit
  */
 
@@ -99,22 +116,6 @@ export function userLabelOf(item) {
 }
 
 /**
- * Short key ID for differentiation (last 8 hex of fingerprint / key_id).
- * @param {KeyHitItem} item
- * @returns {string}
- */
-export function shortKeyId(item) {
-  const kid = String(item.key_id || item.keyId || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
-  if (kid.length >= 8) return kid.slice(-8);
-  const fp = String(item.fingerprint || "")
-    .toUpperCase()
-    .replace(/[^0-9A-F]/g, "");
-  return fp.length >= 8 ? fp.slice(-8) : kid || fp;
-}
-
-/**
  * @param {KeyHitItem} item
  * @returns {string|null|Date|undefined}
  */
@@ -123,7 +124,7 @@ function expirationOf(item) {
 }
 
 /**
- * Compact meta chips: user label, trust, approval/revoked, expires, key ID.
+ * Compact meta chips: user label, trust, origin, approval/revoked, expires.
  * @param {KeyHitItem} item
  * @returns {string}
  */
@@ -184,15 +185,6 @@ export function keyMetaChipsHtml(item) {
   } else {
     chips.push(
       `<span class="key-chip key-chip-expiry none" title="Does not expire">no expiry</span>`
-    );
-  }
-
-  const kid = shortKeyId(item);
-  if (kid) {
-    chips.push(
-      `<span class="key-chip key-chip-kid mono" title="Key ID">…${escapeHtml(
-        kid
-      )}</span>`
     );
   }
 
@@ -285,14 +277,6 @@ export function keyPillExtrasHtml(item) {
       `<span class="key-chip key-chip-expiry" title="${escapeHtml(
         exp.absolute
       )}">${escapeHtml(exp.relative)}</span>`
-    );
-  }
-  const kid = shortKeyId(item);
-  if (kid) {
-    parts.push(
-      `<span class="key-chip key-chip-kid mono" title="Key ID">…${escapeHtml(
-        kid
-      )}</span>`
     );
   }
   return parts.join("");

@@ -36,11 +36,11 @@ import {
   addCommitments,
   combine,
   deal,
+  idText,
   mod,
   publicKeyOf,
   scalarFromHex,
   scalarToHex,
-  shortId,
   verify,
 } from "./vss.js";
 
@@ -118,7 +118,7 @@ export function finalize({ myId, contributions }) {
   const seen = new Set();
   for (const c of contributions) {
     if (seen.has(c.from)) {
-      throw new Error(`dkg: duplicate contribution from ${shortId(c.from)}…`);
+      throw new Error(`dkg: duplicate contribution from ${idText(c.from)}`);
     }
     seen.add(c.from);
     if (!verify({ share: c.share, id: myId, commitments: c.commitments })) {
@@ -138,7 +138,7 @@ export function finalize({ myId, contributions }) {
       // that the run yielded nothing, and that nobody else can check it — and
       // `refusalReport` says what to do about it, with the caution attached.
       const err = new Error(
-        `dkg: share from ${shortId(c.from)}… does not match their commitments. ` +
+        `dkg: share from ${idText(c.from)} does not match their commitments. ` +
           "Nothing usable came out of this run: the joint key is the sum of every " +
           "contribution, so one bad contribution is a different key rather than a " +
           "share short. Only the recipient can see this — commitments are broadcast " +

@@ -38,7 +38,7 @@ import {
   openEntropyPool,
   randomNonce,
 } from "../toolkit/entropy-pool.js";
-import { shortId } from "./vss.js";
+import { idText } from "./vss.js";
 
 /** Round 1: `{ t, v, from, commit }`. */
 export const POOL_COMMIT = "pool-commit";
@@ -158,7 +158,7 @@ export async function runEntropyPool({
         throw new Error(
           `entropy pool: timed out after ${Math.round(timeoutMs / 1000)}s waiting for ` +
             `${what} from ${missing.length} of ${peers.length} participants ` +
-            `(${missing.map(shortId).join(", ")}). Nothing was pooled: a value drawn ` +
+            `(${missing.map(idText).join(", ")}). Nothing was pooled: a value drawn ` +
             "without them would be one the rest of us chose."
         );
       }

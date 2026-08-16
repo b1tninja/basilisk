@@ -75,6 +75,40 @@ describe("what the arithmetic layer says", () => {
     expect(m).not.toMatch(/restart/i);
   });
 
+  it("names the dealer by the whole id, not its last eight characters", () => {
+    /*
+     * The id in this sentence is the handle on a conversation that has to
+     * happen out of band — `dkg-session.js` is explicit that the remedy is
+     * social — and it used to be `shortId(c.from)…`, the last eight hex
+     * characters. For a real room those are the last eight of somebody's
+     * *fingerprint*: `idFromFingerprint` reduces mod the curve order, a v4
+     * fingerprint is 160 bits and the order is 256, so the reduction is the
+     * identity and the scalar is the fingerprint with zeros in front. A
+     * refusal naming a peer by their 32-bit short key id, in the one message
+     * a person carries into a room and reads aloud.
+     *
+     * Asserted as "the only id-shaped token is a whole id" rather than
+     * `toContain(ids[1])` alone, because `toContain` passes on a message that
+     * carries the whole id *and* a truncation of it beside — which is how a
+     * second spelling of one fact gets in.
+     */
+    const runs = message().match(/\b[0-9a-f]{8,}\b/g) || [];
+    expect(runs).toEqual([ids[1]]);
+  });
+
+  it("names the whole id in the duplicate-contribution refusal too", () => {
+    // The other throw in `finalize`, and it carried the same truncation.
+    const dup = withBadDealer();
+    let m = "";
+    try {
+      finalize({ myId: ids[0], contributions: [dup[0], dup[0]] });
+    } catch (err) {
+      m = String(err.message);
+    }
+    expect(m).toMatch(/duplicate contribution/);
+    expect(m.match(/\b[0-9a-f]{8,}\b/g)).toEqual([ids[0]]);
+  });
+
   it("still carries the dealer's id for a surface to use", () => {
     // Structurally, not parsed back out of the sentence — `dkg-ops.js` maps it
     // to a fingerprint so `DkgPanel` can mark the right row.

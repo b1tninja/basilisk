@@ -314,8 +314,15 @@ export async function exportVaultKey(spec) {
       armored = await ensurePassphraseProtected(armored, String(spec?.exportPassphrase || ""));
     }
 
-    const shortId = fpr.slice(-8).toLowerCase();
-    const filename = `${shortId}-${format.ext}`;
+    // The whole fingerprint names the file, the way `gpg --export` names one.
+    //
+    // It was the last eight hex characters. A backup is read months later, in a
+    // directory beside other backups, by somebody deciding which key they are
+    // about to restore — and the filename is the entire identification, with no
+    // hover, no menu and no whole value anywhere on the line to check it
+    // against. Forty characters is legal on every filesystem this downloads to
+    // and the download name is the only reader.
+    const filename = `${fpr.toLowerCase()}-${format.ext}`;
     if (format.id === "asc") {
       downloadFile(filename, armored, format.mime);
     } else if (format.id === "gpg") {

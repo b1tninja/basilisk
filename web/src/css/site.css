@@ -2060,10 +2060,6 @@ input[type=file] { display: none; }
   border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
   background: color-mix(in srgb, var(--brand) 10%, transparent);
 }
-.key-chip-kid {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  letter-spacing: 0.02em;
-}
 .key-chip-revoked,
 .key-chip-expiry.expired {
   color: var(--error, #ff7b72);
@@ -2377,11 +2373,6 @@ input[type=file] { display: none; }
 }
 .fpr-breakdown .fpr-group {
   margin-right: 0.35em;
-}
-.fpr-breakdown .fpr-keyid {
-  font-weight: 700;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .trust-badge {

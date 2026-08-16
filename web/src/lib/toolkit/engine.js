@@ -2862,21 +2862,35 @@ async function execStepBody(step, value, bindings, artifacts) {
             const cryptoSummary = await summarizeEncryption(a.armored);
             sealed = a.armored;
             const isShare = !!value.meta?.shareIndex;
-            const short =
-              batch.fpr && batch.fpr.length >= 8
-                ? batch.fpr.slice(-8).toLowerCase()
-                : String(bi + 1);
+            /**
+             * Which recipient this ciphertext is for, whole.
+             *
+             * `mode=separate` makes one artifact per recipient and the *only*
+             * thing telling them apart is this — the label on the tile and the
+             * name of the file that leaves the browser. It was
+             * `fpr.slice(-8)`, so a row read `GPG ciphertext (6ad01388)` and
+             * downloaded `encrypted-6ad01388.asc`: a 32-bit short key id doing
+             * the whole work of saying who a message was sealed to, in the one
+             * place a sender checks before handing the file over. Two keys
+             * ending alike put two files in a folder that no longer say which
+             * is which, and the artifact's own `recipientFingerprint` — the
+             * whole value, already here — has no reader on any surface.
+             *
+             * The index is still the fallback, because a batch with no
+             * fingerprint has nothing to name and "2" is honest about that.
+             */
+            const who = batch.fpr ? batch.fpr.toUpperCase() : String(bi + 1);
             const multi = mode !== "combined" && batches.length > 1;
             artifacts.push({
               label: isShare
                 ? `Share ${value.meta.shareIndex} (GPG)`
                 : multi
-                  ? `GPG ciphertext (${short})`
+                  ? `GPG ciphertext for ${who}`
                   : a.label || "GPG ciphertext",
               filename: isShare
                 ? `share-${value.meta.shareIndex}.asc`
                 : multi
-                  ? `encrypted-${short}.asc`
+                  ? `encrypted-${who.toLowerCase()}.asc`
                   : a.filename || "encrypted.asc",
               content: a.armored,
               sensitive: false,

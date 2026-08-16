@@ -285,6 +285,36 @@ input | gpg.encrypt to=$alices mode=separate`
     );
     expect(sepCipher.length).toBeGreaterThanOrEqual(2);
 
+    /*
+     * Which recipient each ciphertext is for, said whole.
+     *
+     * `mode=separate` makes one artifact per recipient and the label and
+     * filename are the *only* things telling them apart — a sender picking
+     * which file to hand to whom has nothing else on the tile. Both used to be
+     * `fpr.slice(-8)`: `GPG ciphertext (6ad01388)` and `encrypted-6ad01388.asc`,
+     * a 32-bit short key id doing the whole work of naming a recipient, in two
+     * files that land in one folder.
+     *
+     * Written against the *behaviour* rather than the spelling, which is the
+     * lesson from the slot label that never worked: a pin matching
+     * `fingerprint.slice(-8)` survived a mutation because the code said
+     * `fpr.slice(-8)`. So this asserts what a person can read — the whole
+     * fingerprint present, and specifically the truncation absent as the only
+     * hex on the line.
+     */
+    for (const fpr of [af, bf]) {
+      const art = sepCipher.find((a) => a.recipientFingerprint === fpr);
+      expect(art, `no separate ciphertext for ${fpr}`).toBeTruthy();
+      expect(art.label).toContain(fpr);
+      expect(art.filename).toBe(`encrypted-${fpr.toLowerCase()}.asc`);
+      // The stem is the whole value, not a tail of it — `endsWith` is satisfied
+      // by 8 and by 16 alike, and only one of them is the fingerprint.
+      expect(art.filename.slice("encrypted-".length, -".asc".length)).toBe(
+        fpr.toLowerCase()
+      );
+      expect(art.label).not.toMatch(/\(\s*[0-9a-f]{8}\s*\)/i);
+    }
+
     const comb = compileRecipe(
       `hkp.search team | hkp.filter | out $alices
 

@@ -767,7 +767,7 @@ function CatalogApp() {
                 data={{
                   peers: [
                     {
-                      peer: "AABBCCDDEEFF0011",
+                      peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641",
                       role: "controlling",
                       pairs: [
                         { local: { label: "srflx:60122" }, remote: { label: "srflx:51004" }, state: "succeeded", nominated: true, rttMs: 38 },
@@ -789,7 +789,7 @@ function CatalogApp() {
                   allFailed: true,
                   peers: [
                     {
-                      peer: "AABBCCDDEEFF0011",
+                      peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641",
                       role: "",
                       pairs: [
                         { local: { label: "host:54321" }, remote: { label: "host:53211" }, state: "failed" },
@@ -805,8 +805,8 @@ function CatalogApp() {
                 netType="connstate"
                 data={{
                   peers: [
-                    { peer: "AABBCCDDEEFF0011", connectionState: "connected", iceConnectionState: "connected", signalingState: "stable", channelState: "open", verified: true },
-                    { peer: "1122334455667788", connectionState: "connecting", iceConnectionState: "checking", signalingState: "have-local-offer", channelState: "connecting" },
+                    { peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641", connectionState: "connected", iceConnectionState: "connected", signalingState: "stable", channelState: "open", verified: true },
+                    { peer: "44C1D9E07B8A2F631E5D0A9C2B7E4F81D3A65029", connectionState: "connecting", iceConnectionState: "checking", signalingState: "have-local-offer", channelState: "connecting" },
                   ],
                 }}
               />
@@ -833,9 +833,9 @@ function CatalogApp() {
                 netType="connstate"
                 data={{
                   peers: [
-                    { peer: "AABBCCDDEEFF0011", connectionState: "failed", iceConnectionState: "failed", signalingState: "stable", channelState: "closed" },
-                    { peer: "1122334455667788", connectionState: "disconnected", iceConnectionState: "disconnected", signalingState: "stable", channelState: "open" },
-                    { peer: "99AABBCCDDEEFF00", connectionState: "closed", iceConnectionState: "closed", signalingState: "closed", channelState: "closed" },
+                    { peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641", connectionState: "failed", iceConnectionState: "failed", signalingState: "stable", channelState: "closed" },
+                    { peer: "44C1D9E07B8A2F631E5D0A9C2B7E4F81D3A65029", connectionState: "disconnected", iceConnectionState: "disconnected", signalingState: "stable", channelState: "open" },
+                    { peer: "9F2A11B4C8D30E5761AA0C4E88B2F6D5091C7E43", connectionState: "closed", iceConnectionState: "closed", signalingState: "closed", channelState: "closed" },
                   ],
                 }}
               />
@@ -846,7 +846,7 @@ function CatalogApp() {
                 netType="connstate"
                 data={{
                   peers: [
-                    { peer: "AABBCCDDEEFF0011", connectionState: "connected", iceConnectionState: "connected", signalingState: "stable", channelState: "connecting", verified: true },
+                    { peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641", connectionState: "connected", iceConnectionState: "connected", signalingState: "stable", channelState: "connecting", verified: true },
                   ],
                 }}
               />
@@ -858,8 +858,8 @@ function CatalogApp() {
                 netKind="data-channel"
                 data={{
                   peers: [
-                    { peer: "AABBCCDDEEFF0011", readyState: "open", bufferedAmount: 655360, bufferedAmountLowThreshold: 65535, ordered: true, messagesSent: 42, messagesReceived: 17, bytesSent: 719872, bytesReceived: 4148, backPressured: true },
-                    { peer: "1122334455667788", readyState: "open", bufferedAmount: 0, bufferedAmountLowThreshold: 65535, ordered: false, messagesSent: 3, messagesReceived: 3, bytesSent: 33, bytesReceived: 33 },
+                    { peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641", readyState: "open", bufferedAmount: 655360, bufferedAmountLowThreshold: 65535, ordered: true, messagesSent: 42, messagesReceived: 17, bytesSent: 719872, bytesReceived: 4148, backPressured: true },
+                    { peer: "44C1D9E07B8A2F631E5D0A9C2B7E4F81D3A65029", readyState: "open", bufferedAmount: 0, bufferedAmountLowThreshold: 65535, ordered: false, messagesSent: 3, messagesReceived: 3, bytesSent: 33, bytesReceived: 33 },
                   ],
                 }}
               />
@@ -877,7 +877,7 @@ function CatalogApp() {
                 netType="stats"
                 netKind="quality"
                 data={{
-                  peers: [{ peer: "AABBCCDDEEFF0011", rttMs: 38, packetLossPct: null, bytesSent: 4300, bytesReceived: 12800, packetsSent: 214, packetsReceived: 190 }],
+                  peers: [{ peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641", rttMs: 38, packetLossPct: null, bytesSent: 4300, bytesReceived: 12800, packetsSent: 214, packetsReceived: 190 }],
                   notes: ["packet loss is not measured: this transport is SCTP data channels, so no RTP statistics exist to lose packets from"],
                 }}
               />
@@ -1033,7 +1033,7 @@ function CatalogApp() {
               <StateLabel>session — live exchange handle (§21a)</StateLabel>
               <NetworkArtifact
                 netType="session"
-                data={{ room: "KJ8XW2PQZM4RT9FQ", role: "creator", connected: 1, audience: ["AABBCCDDEEFF00112233", "445566778899AABBCCDD"] }}
+                data={{ room: "KJ8XW2PQZM4RT9FQ", role: "creator", connected: 1, audience: ["9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641", "44C1D9E07B8A2F631E5D0A9C2B7E4F81D3A65029"] }}
               />
             </div>
             <div>
@@ -1051,7 +1051,7 @@ function CatalogApp() {
                   `linkOriginNote`, so neither can drift. */}
               <NetworkArtifact
                 netType="channel"
-                data={{ link: "AABBCCDDEEFF0011", origin: "quorum", label: "quorum", ordered: true, state: "open", via: "relay" }}
+                data={{ link: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641", origin: "quorum", label: "quorum", ordered: true, state: "open", via: "relay" }}
               />
             </div>
           </div>
@@ -1689,7 +1689,7 @@ function CatalogApp() {
                   // The mesh's own link is in the same inventory and must not be
                   // drawn twice — it is the roster row above.
                   {
-                    id: "AABBCCDDEEFF0011",
+                    id: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641",
                     origin: "quorum",
                     role: "offerer",
                     connectionState: "connected",
@@ -1751,7 +1751,7 @@ function CatalogApp() {
                     expires: null,
                   },
                   {
-                    fingerprint: "1122334455667788AABBCCDDEEFF00112233445566",
+                    fingerprint: "1122334455667788AABBCCDDEEFF001122334455",
                     uid: "old-work-key <ops@example.com>",
                     expires: Date.now() + 4 * 86_400_000,
                   },
@@ -2704,7 +2704,7 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
       netData: {
         peers: [
           {
-            peer: "AABBCCDDEEFF0011",
+            peer: "9F2C41AB7E6D0538C1B4A90EE7D25F3B8C07A641",
             connectionState: "connected",
             iceConnectionState: "connected",
             signalingState: "stable",
@@ -2712,7 +2712,7 @@ function demoArtifactTiles(): React.ComponentProps<typeof OutputList>["outputs"]
             verified: true,
           },
           {
-            peer: "1122334455667788",
+            peer: "44C1D9E07B8A2F631E5D0A9C2B7E4F81D3A65029",
             connectionState: "connecting",
             iceConnectionState: "checking",
             signalingState: "have-local-offer",

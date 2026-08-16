@@ -31,7 +31,7 @@
  */
 
 import { finalize, round1, scalarToHex } from "./dkg.js";
-import { normalizeIds, shortId } from "./vss.js";
+import { idText, normalizeIds } from "./vss.js";
 
 /** Wire types. Kept tiny and versioned — these ride a data channel. */
 export const DKG_COMMIT = "dkg-commit";
@@ -196,7 +196,7 @@ export async function runDkg({
           reject(
             new Error(
               `dkg: timed out after ${Math.round(timeoutMs / 1000)}s waiting on ${missing.length} of ${peers.length} participants (${missing
-                .map(shortId)
+                .map(idText)
                 .join(", ")})`
             )
           );

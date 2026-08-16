@@ -9,8 +9,9 @@
  * than in a browser.
  */
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKey } from "openpgp";
+import { sanitizeFilename } from "../lib/zip-store.js";
 import {
   EXPORT_FORMATS,
   exportRefusal,
@@ -117,6 +118,52 @@ describe("a refusal is a sentence, and every one of these is a state", () => {
   it("offers exactly the four formats the vault can write", () => {
     expect(EXPORT_FORMATS.map((f) => f.id)).toEqual(["asc", "gpg", "qr", "paper"]);
     expect(Object.isFrozen(EXPORT_FORMATS)).toBe(true);
+  });
+});
+
+/**
+ * What a backup is called, which is the only thing identifying it later.
+ *
+ * The name was `${fpr.slice(-8)}-private.asc`. A key backup is read months
+ * after it is written, in a directory beside other backups, by somebody
+ * deciding which key they are about to restore — and unlike every surface in
+ * the app there is no hover, no menu, and no whole value anywhere on the line
+ * to check the short one against. Two keys ending alike put two files in a
+ * folder that no longer say which is which, which is the collision the short
+ * id makes cheap.
+ *
+ * `downloadFile` is stubbed because it is the module's one browser act; the
+ * name is the return value, so the decision is testable without one.
+ */
+vi.mock("../lib/key-export.js", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, downloadFile: () => {} };
+});
+
+describe("what an exported key is called", () => {
+  it("names the file by the whole fingerprint, as gpg --export does", async () => {
+    const { exportVaultKey } = await import("../lib/toolkit/vault-manage.js");
+    const res = await importPrivateKey(await makeKey({ passphrase: STRONG }), {
+      target: "vault",
+    });
+    const fpr = res.fingerprint;
+    expect(fpr).toHaveLength(40);
+
+    const { filename } = await exportVaultKey({
+      fingerprint: fpr,
+      format: "asc",
+      exportPassphrase: STRONG,
+      meta: { protection: "passphrase" },
+    });
+    expect(filename).toBe(`${fpr.toLowerCase()}-private.asc`);
+    // Said as a property as well as a literal: the stem is the whole value and
+    // not a tail of it. `-8` and `-16` both satisfy `endsWith`, and only one of
+    // them is the fingerprint.
+    expect(filename.split("-")[0]).toBe(fpr.toLowerCase());
+    // And it survives the sanitizer the download path runs it through — 40 hex
+    // characters plus a suffix is well inside its 180-character clamp and holds
+    // nothing it rewrites.
+    expect(sanitizeFilename(filename, "x")).toBe(filename);
   });
 });
 

@@ -677,7 +677,6 @@ export function mountRecipientBinder(host, opts) {
                     userLabel: r.userLabel,
                     label: r.userLabel,
                     keyExpiration: r.keyExpiration,
-                    key_id: r.keyId,
                     origin: r.origin,
                     source_keyserver: r.sourceKeyserver,
                   })
