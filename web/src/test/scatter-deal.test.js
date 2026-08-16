@@ -199,6 +199,13 @@ describe("seal to=each encrypts share i to member i's key", () => {
     expect(sealed).toHaveLength(members.length);
     // The artifact record already names the addressee — whole, never a prefix.
     expect(sealed.map((a) => a.recipientFingerprint)).toEqual(members);
+    // And again in `traits`, which is the copy that reaches a reader: the three
+    // projections between here and a tile drop every field they do not name and
+    // `recipientFingerprint` is named by none of them. The share tile shows this
+    // one — see `sealed-share-recipient.test.js`, which owns the rendering half.
+    expect(sealed.map((a) => a.traits?.sealedTo)).toEqual(
+      members.map((m) => m.toUpperCase())
+    );
 
     // The cryptographic proof, not just the record: decrypt each envelope
     // with its member's own key and read the share index off the mnemonic.

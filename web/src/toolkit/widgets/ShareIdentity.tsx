@@ -29,6 +29,7 @@ export function ShareIdentity({
   artifact: {
     shareIndex?: number;
     tags?: string[];
+    recipientFingerprint?: string;
     // The open bag, narrowed to what `shareIdentity` reads — see ShareCards.
     traits?: Record<string, unknown> & {
       shareOf?: number;
@@ -63,6 +64,19 @@ export function ShareIdentity({
       {id.flavour ? (
         <span className="font-mono text-[9px] text-[var(--muted-foreground)]">
           {id.flavour}
+        </span>
+      ) : null}
+      {id.recipient ? (
+        // Whole, and allowed to wrap rather than be cut: `break-all` is here
+        // because the alternative a narrow tile invites is an ellipsis, and a
+        // shortened fingerprint is the thing `88fcfd0` swept out of `src`. A
+        // sealed share tile is where a dealer decides which file goes to whom,
+        // so the forty characters are the content, not decoration.
+        <span
+          className="w-full font-mono text-[9px] break-all text-[var(--muted-foreground)]"
+          data-share-recipient
+        >
+          sealed to {id.recipient}
         </span>
       ) : null}
     </span>

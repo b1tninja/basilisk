@@ -3339,8 +3339,36 @@ export function useNotebook() {
             });
 
       if (!verdict.ok) return { ok: false, why: summarizeHandoff(verdict) };
+      /**
+       * Registered plainly, because a handoff binding must never replace.
+       *
+       * This call passed `{ allowReplace: true }`, which never did anything:
+       * `slot-registry.js` replaces only when `allowReplace` *and* a
+       * `preexisting` set containing the key are both given, and no set was
+       * passed here. That set is the engine's — `registry.snapshotKeys()` taken
+       * as a run begins — and it encodes a rule about *runs*: re-running a
+       * notebook may overwrite the slots the last run left, while two `out $x`
+       * inside one run still collide. A handoff binding is not part of a run
+       * and has no such set to be measured against.
+       *
+       * The flag is gone rather than completed because completing it would have
+       * broken the doctrine the layer above already enforces. `reviewOffer` and
+       * `reviewResult` are handed `hasSlot`, and both refuse a label this
+       * machine already holds with `slot-present` — "which of the two is right
+       * is not a question a result can answer — two peers answering one offer
+       * look exactly like this". A refusal returns no bindings at all, so this
+       * loop is only ever reached when every label is free and the replace path
+       * could not have fired even with the set supplied. Passing one would not
+       * have fixed a silent failure; it would have installed the overwrite that
+       * `slot-present` exists to refuse.
+       *
+       * What a person sees when a handoff binding collides is therefore the
+       * refusal, not a replacement and not silence: `verdict.ok` is false one
+       * line above, `summarizeHandoff` names the slot, and the shell puts that
+       * sentence in the handoff note.
+       */
       for (const b of verdict.bindings || []) {
-        slots.register(b.label, b.value, { allowReplace: true });
+        slots.register(b.label, b.value);
       }
       // `kernelEpoch`, because what just changed is the kernel's slot registry.
       // This bumped `sessionTick` — which is the vault's counter, read by

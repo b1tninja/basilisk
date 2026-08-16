@@ -501,6 +501,12 @@ describe("a result writes only into the slots its cell writes", () => {
     expect(verdict.ok).toBe(false);
     expect(verdict.refusals[0].reason).toBe("slot-present");
     expect(verdict.refusals[0].message).toContain("two peers answering one offer");
+    // And it carries no bindings to register — an empty list, not a list the
+    // caller must know to skip. This is what makes the shell's registration
+    // loop a no-op on a collision even before `acceptHandoff` returns the
+    // refusal above it, and therefore why registering a handoff binding needs
+    // no replace path. See `handoff-binding-no-replace.test.js`.
+    expect(verdict.bindings).toEqual([]);
   });
 
   it("takes one answer to one offer, and refuses the second either way", async () => {

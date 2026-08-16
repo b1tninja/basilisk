@@ -731,15 +731,47 @@ export function qrDataUri(svg) {
  * of the set's mnemonics, so it distinguishes splits and discloses nothing
  * about the secret.
  *
- * @param {{ shareIndex?: number, tags?: string[],
- *   traits?: { shareOf?: number, threshold?: number, setId?: string } }} artifact
- * @returns {{ index: number, threshold: number, setId: string, flavour: string } | null}
+ * The recipient joins them because a *sealed* share tile could not answer the
+ * question it exists to raise. `seal to=each` and `gpg.encrypt mode=separate`
+ * make one artifact per holder, and the plain-ciphertext branch names the
+ * holder in the label (`GPG ciphertext for <fingerprint>`) and in the filename.
+ * The share branch does not: it labels `Share 2 (GPG)` and writes
+ * `share-2.asc`, so a dealer holding three sealed files to hand out had the
+ * index and the threshold and nothing at all saying *whose* each one is. The
+ * artifact has carried `recipientFingerprint` the whole time, whole, with no
+ * reader on any surface — this is the reader, and `traits.sealedTo` is how it
+ * arrives. The named field alone would not have done: it is dropped by all
+ * three projections between the engine and a tile, so a read-out built on it
+ * renders under test and nowhere a person can look, which is the same defect
+ * one layer along.
+ *
+ * Local by construction, and that matters here: the sealed *value* drops
+ * `shareIndex` precisely so a published envelope cannot tell the room which
+ * share went to whom. This is the dealer's own artifact list on the dealer's
+ * own machine — the side already entitled to know, the same side
+ * `sealed-share-envelope.test.js` labels "the machine entitled to know" — and
+ * nothing here crosses a wire.
+ *
+ * Whole, never a tail. The 8-hex form this replaces is the defect `88fcfd0`
+ * swept out of `src`; a fingerprint on a tile is what a sender checks before
+ * handing a file over, and two keys ending alike is exactly the case it has to
+ * survive.
+ *
+ * @param {{ shareIndex?: number, tags?: string[], recipientFingerprint?: string,
+ *   traits?: { shareOf?: number, threshold?: number, setId?: string,
+ *     sealedTo?: string } }} artifact
+ * @returns {{ index: number, threshold: number, setId: string, flavour: string,
+ *   recipient: string } | null}
  */
 export function shareIdentity(artifact) {
   const traits = artifact?.traits || {};
   const index = Number(traits.shareOf ?? artifact?.shareIndex ?? 0) || 0;
   const threshold = Number(traits.threshold ?? 0) || 0;
   const setId = String(traits.setId ?? "").toUpperCase();
+  // `traits` first, for the reason this module's header gives about
+  // `shareOf`: the named field beside it survives no projection, so a read-out
+  // that trusted it would render in a test and nowhere a person can look.
+  const recipient = String(traits.sealedTo ?? artifact?.recipientFingerprint ?? "").toUpperCase();
   if (!index && !threshold && !setId) return null;
   const tags = (artifact?.tags || []).map(String);
   // `encrypted` is checked first because a GPG-encrypted share carries
@@ -752,7 +784,7 @@ export function shareIdentity(artifact) {
       : tags.includes("raw")
         ? "raw share"
         : "";
-  return { index, threshold, setId, flavour };
+  return { index, threshold, setId, flavour, recipient };
 }
 /* ══════════════════════════════════════════════════════════════════════════
  *  WebRTC read-outs — the three panels a user lands on when a call fails

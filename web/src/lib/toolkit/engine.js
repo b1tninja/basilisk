@@ -196,7 +196,6 @@ import {
  * @property {{
  *   shares?: {
  *     mnemonics: string[],
- *     envelopeB64?: string,
  *     envelopeArmored?: string,
  *     passphrase?: string,
  *   },
@@ -206,7 +205,6 @@ import {
  *     armoredMessages: string[],
  *     privateKeyArmored: string,
  *     passphrase?: string,
- *     envelopeB64?: string,
  *     envelopeArmored?: string,
  *   },
  *   key?: {
@@ -1535,24 +1533,49 @@ async function execStepBody(step, value, bindings, artifacts) {
       }
       assertDistinctShares(collected);
       const mnemonics = collected.map((m) => m.mnemonic);
-      /** @type {Uint8Array|null} */
-      let envelope = null;
-      if (inp?.envelopeB64) {
-        envelope = base64ToBytes(String(inp.envelopeB64).replace(/\s+/g, ""));
-      }
+      /**
+       * The envelope this source can supply is always none, and the constants
+       * say so rather than a branch pretending otherwise.
+       *
+       * A branch here read a base64 envelope field off `inputs.shares` and
+       * decoded it into the legacy AES-GCM blob `combineRawShares` asks for
+       * when a decoded set carries `BLIP39_ENVELOPE_FLAG`. The identifier is
+       * left unwritten on purpose — `shares-envelope-b64-absent.test.js` sweeps
+       * the whole app for it, and a comment naming it would be the field
+       * growing a second life as "the one we used to have". Nothing ever wrote
+       * it:
+       * the Inputs tray builds `inputs.shares` from the share rows and a
+       * passphrase and nothing else, so the decode could not run and the two
+       * typedef lines advertising it named a channel no caller could reach.
+       *
+       * Deleted rather than wired, because the format has no producer here
+       * either — `splitRawShares` has set `flags = 0` since this code's first
+       * commit, so no version of this product has dealt an enveloped set.
+       * Wiring meant a new tray field for a blob only some predecessor tool
+       * could have made, feeding `aesGcmOpen`, which no test exercises. The
+       * armored spelling is a different object and stays: `envelope.asc` is an
+       * OpenPGP message reaching `gpg.symdecrypt` through
+       * `resolveEnvelopeArmored`, which reads `inputs.shares.envelopeArmored`.
+       *
+       * A holder of legacy enveloped shares therefore still meets
+       * `combineRawShares`'s refusal naming `envelope.bin.b64`, and this
+       * product still has no way to accept one. That was as true before this
+       * deletion as after it; what changed is that the code no longer shows a
+       * channel where there is none.
+       */
       return {
         type: "shares",
         data: {
           encoding: "mnemonic",
           mnemonics,
-          envelope,
+          envelope: null,
           threshold: 0,
           shares: mnemonics.length,
-          enveloped: !!envelope,
+          enveloped: false,
         },
         meta: {
           sensitive: true,
-          envelope,
+          envelope: null,
           passphrase: inp?.passphrase || "",
         },
       };
@@ -2909,6 +2932,19 @@ async function execStepBody(step, value, bindings, artifacts) {
                 ? {
                     shareOf: value.meta.shareIndex,
                     threshold: value.meta.threshold,
+                    // In the bag, not only in the named field beside it,
+                    // because the bag is the part that survives. Three
+                    // projections stand between here and a tile — `cellOutputs`
+                    // and the shell's two `OutputArtifact` mappings — and each
+                    // is an explicit field list that drops what it does not
+                    // name. None of them names `recipientFingerprint`, so the
+                    // whole value sitting on the artifact could never have
+                    // reached a reader however carefully a widget asked for it.
+                    // `artifact-readouts.js` states the rule and cites
+                    // `shareIndex` as the standing example of a field that is
+                    // dead and saved only by `traits.shareOf`; this is that
+                    // lesson applied rather than repeated.
+                    ...(batch.fpr ? { sealedTo: batch.fpr.toUpperCase() } : {}),
                   }
                 : undefined,
             });
