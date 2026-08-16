@@ -6292,7 +6292,11 @@ async function materializeOutArtifacts(value, params) {
         label: r.label || "",
         email: r.email || "",
         approvalState: r.approvalState || "",
-        encryptCapable: r.encryptCapable !== false,
+        // Three states through the serializer, not two. `!== false` collapsed
+        // "nobody has read this certificate" into `true`, and the tile drew it
+        // as a key that can receive — the unverified row looking verified, in
+        // the one list somebody checks before pressing encrypt.
+        encryptCapable: r.encryptCapable == null ? null : !!r.encryptCapable,
       })),
       null,
       2

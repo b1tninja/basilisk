@@ -1259,11 +1259,18 @@ function CatalogApp() {
                   kind: "key",
                   role: "public-key",
                   tags: ["openpgp", "public-key"],
-                  traits: { fingerprint: "C81F5AM19C4D7E0518A2B6C93D4E7F0A1B2C3D4E" },
+                  // Hex, all forty characters, and the same value in all three
+                  // fields. It used to read `C81F5AM…` / `@C81FSAM` / `0xSAM` —
+                  // three spellings of a key, none of them a fingerprint, one of
+                  // them not even hex. The row now draws the published value
+                  // through `<Fingerprint>`, so a mock that is not a fingerprint
+                  // previews a state the product cannot reach.
+                  traits: { fingerprint: "C81F5A019C4D7E0518A2B6C93D4E7F0A1B2C3D4E" },
                   sizeBytes: 1798,
                   onCopy: () => {},
-                  publishedAs: "@C81FSAM",
-                  directoryUrl: "https://example.org/pks/lookup?op=get&search=0xSAM",
+                  publishedAs: "C81F5A019C4D7E0518A2B6C93D4E7F0A1B2C3D4E",
+                  directoryUrl:
+                    "https://example.org/pks/lookup?op=get&search=0xC81F5A019C4D7E0518A2B6C93D4E7F0A1B2C3D4E",
                 },
               ]}
             />
@@ -2453,6 +2460,17 @@ const DEMO_RECIPIENTS = JSON.stringify(
       approvalState: "unverified",
       encryptCapable: false,
     },
+    // The third state, and the one every keyserver row now has: nothing has
+    // read this certificate. The directory reports revocation and expiry and
+    // stores nothing about encryption capability, so `null` is what a search
+    // produces and the row says so rather than rendering like Dana's.
+    {
+      fingerprint: "44332211AABBCCDD44332211AABBCCDD44332211",
+      label: "Ingrid Vasquez",
+      email: "ingrid@example.org",
+      approvalState: "approved",
+      encryptCapable: null,
+    },
   ],
   null,
   2
@@ -2484,7 +2502,11 @@ const DEMO_RECIPIENTS_MANY = JSON.stringify(
     label: ["Dana Okonkwo", "Sam Reyes", "Ingrid Vasquez", "Tomas Bergqvist"][i % 4],
     email: `${["dana", "sam", "ingrid", "tomas"][i % 4]}${i}@example.org`,
     approvalState: i % 3 === 0 ? "approved" : "unverified",
-    encryptCapable: i % 5 !== 3,
+    // A keyserver search, drawn as one: capability is `null` on every row
+    // except the ones the directory itself decided — revoked and expired keys,
+    // which it reports and which read `false`. It used to be `i % 5 !== 3`,
+    // four rows in five claiming a verdict nothing had taken.
+    encryptCapable: i % 5 === 3 ? false : null,
   })),
   null,
   2

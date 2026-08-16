@@ -104,12 +104,24 @@ function uidLabel(uids) {
 /**
  * Whether this certificate has expired, according to the certificate.
  *
- * `getExpirationTime()` answers a Date, `Infinity` for a key that never
- * expires, or `null` for one it cannot date at all; only a Date already past is
- * an expiry. The directory's `key_expiration` is the same fact, read by the
- * server at ingest, and it is consulted second rather than not at all: it is
- * the only source for a key openpgp declines to date, and it costs nothing
- * because `loadRecipientKey` already fetched the JSON it sits in.
+ * **The certificate is the authority and the directory is a convenience copy.**
+ * The armor is signed; `key_expiration` is a field the server derived from that
+ * same armor at ingest and has held ever since, so where the two disagree the
+ * armor is what the key actually says and the JSON is what the database
+ * remembers. A directory row that says "expires next year" must not survive
+ * armor that expired last month, and neither must the reverse.
+ *
+ * `getExpirationTime()` answers three things and only one of them is silence.
+ * A Date is an answer. `Infinity` is *also* an answer — "this certificate
+ * carries no expiry" — and it used to fall through to the directory, which is
+ * how a record claiming an expiry could report a key expired whose armor says
+ * nothing of the kind; a signing-only key sitting beside a stale row was told
+ * "Key is expired" when its real and unrelated defect is that it has no
+ * encryption subkey, and the remedy that refusal points at (ask the owner to
+ * re-issue) is one nobody could perform. Only `null` and a throw are silence,
+ * and only they reach the directory — which is worth keeping, because it is the
+ * one source for a key openpgp declines to date, and it costs nothing:
+ * `loadRecipientKey` already fetched the JSON it sits in.
  *
  * @param {import("openpgp").Key} pgpKey
  * @param {object} meta
@@ -119,6 +131,7 @@ async function hasExpired(pgpKey, meta) {
   try {
     const at = await pgpKey.getExpirationTime();
     if (at instanceof Date) return at.getTime() <= Date.now();
+    if (at === Infinity) return false;
   } catch (_) {
     /* fall through to what the directory said */
   }

@@ -2,6 +2,8 @@
  * Agent + HKP toolkit ops and gpg key=$slot compose.
  */
 import "fake-indexeddb/auto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateKey } from "openpgp";
 import { runRecipe } from "../lib/toolkit/engine.js";
@@ -106,6 +108,44 @@ in $signed | gpg.verify key=$me | out $ok`;
     const { ast, validation } = compileRecipe(`hkp.get ${fpr} | out $bob`);
     expect(validation.ok).toBe(true);
     expect(ast?.chains?.[0]?.steps?.[0]?.params?.fpr).toBe(fpr);
+  });
+
+  it("the cell the Keys tray inserts names a slot, never a piece of the key", () => {
+    // `useNotebook.insertUnlockCell` built the `agent.pub` slot out of the
+    // fingerprint: `@` and the last eight hex characters. Two things wrong with
+    // one line.
+    //
+    // Eight hex is a short key id — 32 bits, the width forged wholesale in 2016
+    // — and it names more than one key, so a reader comparing it against
+    // whatever they were told out of band compares a part while believing they
+    // compared the whole. That is the defect `components/ui/fingerprint.tsx`
+    // exists to refuse, arriving through a recipe instead of a layout.
+    //
+    // And it did not work. `SLOT_LABEL_RE` requires a leading letter and about
+    // two hex strings in three begin with a digit, so `compileRecipe` returned
+    // no ast for most keys and `if (!ast) return` swallowed it: the button did
+    // nothing at all, silently, for the majority of fingerprints.
+    const HOOK = readFileSync(
+      fileURLToPath(new URL("../toolkit/useNotebook.ts", import.meta.url)),
+      "utf8"
+    );
+    const body = HOOK.slice(HOOK.indexOf("const insertUnlockCell"));
+    const insert = body.slice(0, body.indexOf("const insertSlotRef"));
+    expect(insert).toContain('kind === "agent.unlock" ? "$me" : "$pub"');
+    expect(insert).not.toMatch(/slice\(-8\)/);
+
+    // Both spellings, put through the grammar rather than trusted. The
+    // fingerprint *ends* in a digit on purpose: it is the last eight characters
+    // that became the label, so that is where the leading-letter rule bit.
+    const fpr = "A".repeat(32) + "12345678";
+    expect(compileRecipe(`agent.pub ${fpr} | out $pub`).validation.ok).toBe(true);
+    expect(compileRecipe(`agent.unlock ${fpr} | out $me`).validation.ok).toBe(true);
+    // The old one, for the record: it is not merely uglier, it is not a slot.
+    expect(compileRecipe(`agent.pub ${fpr} | out @${fpr.slice(-8).toLowerCase()}`).ast).toBeFalsy();
+
+    // The whole fingerprint is still on the line — it is the op's own argument,
+    // one token left of the slot, so nothing was hidden by shortening the name.
+    expect(`agent.pub ${fpr} | out $pub`).toContain(fpr);
   });
 
   it("validateRecipe exposes gpgPass for key=$slot sign", () => {

@@ -1216,13 +1216,49 @@ describe("Publish is outward, declared once, and states its consequences (§34a/
     expect(HOOK).not.toMatch(/publishedAs = fingerprint \?/);
     expect(HOOK).not.toMatch(/fingerprint\.slice\(-8\)/);
 
-    expect(publishedHandle("3F2AB19C4D7E0518A2B6C93D4E7F0A1B2C3D4E5F")).toBe("@2C3D4E5F");
+    // This used to pin `@2C3D4E5F` — the last eight hex characters, which is a
+    // short key id however it is punctuated. The pin is turned over rather than
+    // deleted, because the property it was guarding is still worth guarding:
+    // whatever `publishedAs` holds, it is derived from the directory's answer
+    // and nowhere else. What changed is the rule, not the source.
+    const FPR = "3F2AB19C4D7E0518A2B6C93D4E7F0A1B2C3D4E5F";
+    expect(publishedHandle(FPR)).toBe(FPR);
+    expect(publishedHandle(FPR)).toHaveLength(40);
     // Lowercase and spaced forms are the same fingerprint; the handle is not a
     // second spelling of one.
-    expect(publishedHandle("3f2ab19c 4d7e0518 a2b6c93d 4e7f0a1b 2c3d4e5f")).toBe("@2C3D4E5F");
+    expect(publishedHandle("3f2ab19c 4d7e0518 a2b6c93d 4e7f0a1b 2c3d4e5f")).toBe(FPR);
+    // The whole point, stated as the thing that must not come back: no suffix
+    // of the fingerprint, and no `@` making one look like a name.
+    expect(publishedHandle(FPR)).not.toBe(`@${FPR.slice(-8)}`);
+    expect(publishedHandle(FPR).startsWith("@")).toBe(false);
     // No fingerprint is not an empty one: `$pub` says the directory did not
     // name what it took, which is a different thing from a key with no name.
     expect(publishedHandle("")).toBe("$pub");
     expect(publishedHandle(null)).toBe("$pub");
+  });
+
+  it("draws the published fingerprint whole, and `$pub` as the placeholder it is", () => {
+    // A tile that carried the whole fingerprint and printed eight of it would
+    // have moved the truncation one file along rather than removed it. The
+    // renderer is where a person meets the value, so it is asserted here:
+    // `<Fingerprint>` is the only component in this repo that draws one, and it
+    // prints every character, groups them, and copies the whole thing.
+    const TILE = stripComments(read("../toolkit/widgets/ArtifactTile.tsx"));
+    expect(TILE).toMatch(/import \{ Fingerprint \} from "@\/components\/ui\/fingerprint"/);
+    expect(TILE).toMatch(/peerIsFingerprint\(a\.publishedAs\)[\s\S]{0,120}<Fingerprint fpr=\{a\.publishedAs\}/);
+    // And `$pub` still reaches the plain `<code>` branch: it is not a
+    // fingerprint, and drawing it as one would offer a keyserver link and a
+    // trust mark for a key that has no identity here.
+    expect(TILE).toMatch(/<code className="artifact-meta font-mono text-\[var\(--brand\)\]">\{a\.publishedAs\}<\/code>/);
+
+    // The design gallery previews this row. It carried `@C81FSAM` — not a
+    // fingerprint, not even hex — which would now take the placeholder branch
+    // and show the gallery a state the product cannot produce.
+    const GALLERY = read("../pages/toolkit-widgets.tsx");
+    const published = [...GALLERY.matchAll(/publishedAs: "([^"]*)"/g)].map((m) => m[1]);
+    expect(published.length).toBeGreaterThan(0);
+    for (const value of published) {
+      expect(value === "$pub" || /^(?:[0-9A-F]{40}|[0-9A-F]{64})$/.test(value)).toBe(true);
+    }
   });
 });

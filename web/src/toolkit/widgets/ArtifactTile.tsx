@@ -1,7 +1,13 @@
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Fingerprint } from "@/components/ui/fingerprint";
 import { cn } from "@/lib/cn";
+// The one predicate for "this is a whole OpenPGP fingerprint, 40 or 64 hex and
+// nothing between". It was written for the peer grammar, where a partial had to
+// be told apart from a name; the question a tile asks about `publishedAs` is the
+// same one, and asking it twice is how two answers start to disagree.
+import { peerIsFingerprint } from "../../lib/toolkit/recipe-parse.js";
 import { KindGlyph, badgeFamily, badgeTier } from "./kind-glyphs";
 import { ArtifactAction, type ActionTier } from "./ArtifactAction";
 import { ConsequenceBanner, type ConsequenceSpec } from "./ConsequenceBanner";
@@ -580,7 +586,20 @@ export function ArtifactTile({
         })}
         {a.publishedAs ? (
           <span className="flex shrink-0 items-center gap-1">
-            <code className="artifact-meta font-mono text-[var(--brand)]">{a.publishedAs}</code>
+            {/* The whole fingerprint, through the one component that draws one.
+                This printed `@` and eight hex characters — a short key id in
+                everything but name — beside a Copy that copied the eight. A
+                published key is exactly the value somebody reads back to the
+                person who will encrypt to it, so it is the last place a partial
+                belongs. `$pub` is not a fingerprint and is not drawn as one:
+                it is the placeholder for "published, and the directory named
+                nothing", and `<Fingerprint>` would offer a keyserver link and
+                a trust mark for a key that has no identity here. */}
+            {peerIsFingerprint(a.publishedAs) ? (
+              <Fingerprint fpr={a.publishedAs} className="artifact-meta" />
+            ) : (
+              <code className="artifact-meta font-mono text-[var(--brand)]">{a.publishedAs}</code>
+            )}
             {a.directoryUrl ? (
               <button
                 type="button"

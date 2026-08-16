@@ -883,7 +883,7 @@ describe.skipIf(!python.ok || !chromium.ok)(
         expect(cachedHit.label).toBe(hit.label);
       });
 
-      it("narrows a result set: the revoked key does not survive the filter", async () => {
+      it("narrows a result set: neither the revoked key nor the expired one survives", async () => {
         await clearCache();
         const found = await callOp(page, "execHkpSearch", { query: "Example" });
         const before = found.value.data.length;
@@ -893,7 +893,12 @@ describe.skipIf(!python.ok || !chromium.ok)(
         expect(filtered.ok, filtered.error).toBe(true);
         const after = filtered.value.data.map((x) => x.fingerprint);
         expect(after).not.toContain(corpus.byId("grace").fingerprint);
-        expect(after).toHaveLength(before - 1);
+        // `frank` is new here, and it is the half of the defect below that the
+        // directory *can* decide: `key_expiration` is in the payload and this
+        // path did not read it, so an expired key came through a filter asked
+        // to keep only keys that can encrypt.
+        expect(after).not.toContain(corpus.byId("frank").fingerprint);
+        expect(after).toHaveLength(before - 2);
         expect(filtered.value.meta.filtered).toBe(true);
       });
 
@@ -916,7 +921,11 @@ describe.skipIf(!python.ok || !chromium.ok)(
           { origin: "basilisk" },
           found.value
         );
-        expect(basiliskOnly.value.data).toHaveLength(all - 1);
+        // Every corpus key is basilisk-origin, so `origin=` narrows nothing
+        // here — what these five are is the *default* switches still running
+        // underneath it, dropping the revoked key and the expired one. Written
+        // as `all - 2` rather than `5` because the corpus decides the total.
+        expect(basiliskOnly.value.data).toHaveLength(all - 2);
 
         const everything = await callOp(
           page,
@@ -927,22 +936,47 @@ describe.skipIf(!python.ok || !chromium.ok)(
         expect(everything.value.data).toHaveLength(all);
       });
 
-      it("DEFECT: keeps a key that cannot encrypt through encrypt=true", async () => {
+      it("encrypt=true drops what the directory can prove, and says the rest is unverified", async () => {
         await clearCache();
         const found = await callOp(page, "execHkpSearch", { query: "Example" });
         const filtered = await callOp(page, "execHkpFilter", { encrypt: true }, found.value);
         const kept = filtered.value.data.map((x) => x.fingerprint);
 
-        // Both of these genuinely cannot encrypt — `hkp.get` says so two
-        // describes above, from the armor. `hkp.filter` never sees armor:
-        // `hkp.search` hits carry none, and `recipientFromSearchHit` derives
-        // `encryptCapable` from approval state alone. So "Keep only
-        // encrypt-capable keys" keeps a signing-only key and an expired one, and
-        // only the *revoked* key is dropped — because revocation is the one
-        // capability fact the directory's JSON reports.
-        expect(kept).toContain(corpus.byId("erin").fingerprint);
-        expect(kept).toContain(corpus.byId("frank").fingerprint);
+        // This spec used to be labelled DEFECT and assert that `erin` and
+        // `frank` were both *kept*. Two things changed, and only one of them is
+        // the code getting cleverer.
+        //
+        // `frank` is dropped now because the answer was always in the payload:
+        // `key_expiration` sits in every `key_summary`, and this path read
+        // approval state and revocation and walked past it.
+        expect(kept).not.toContain(corpus.byId("frank").fingerprint);
         expect(kept).not.toContain(corpus.byId("grace").fingerprint);
+
+        // `erin` is still kept, and that is not a regression — it is the honest
+        // answer. Erin is signing-only: no ECDH subkey, so `getEncryptionKey()`
+        // refuses. That is a fact about the certificate's packets, and the
+        // directory has no column for it — not the algorithm, not the key
+        // flags, not a derived bit. `CertRecord` does not hold it, so
+        // `key_summary` cannot report it, so no amount of care in this filter
+        // can decide it. The filter is a synchronous narrowing of a value
+        // already in hand (`entropy: "none"`, and `recipient-resolve-ui.js`
+        // calls it from inside a modal repaint); fetching armor per candidate
+        // to answer this would make a render path issue two requests per row.
+        expect(kept).toContain(corpus.byId("erin").fingerprint);
+
+        // So the result has to *say* it did not judge them, and that is the
+        // difference between this and the defect. `hkp.get` two describes above
+        // reads erin's armor and answers "No encryption-capable subkey"; until
+        // something does that, the row is unverified and is labelled so.
+        expect(filtered.value.meta.encryptUnverified).toBe(kept.length);
+        const erinRow = filtered.value.data.find(
+          (x) => x.fingerprint === corpus.byId("erin").fingerprint
+        );
+        expect(erinRow.encryptCapable).toBeNull();
+        expect(erinRow.encryptCapable).not.toBe(true);
+        // The switch's own copy has to agree with this result, and it is pinned
+        // beside the filter in `recipients-encrypt-to.test.js` — the registry is
+        // importable in node and there is no reason to read it out of a bundle.
       });
 
       it("reports a search that found nothing without inventing a reason", async () => {
@@ -1141,7 +1175,16 @@ describe.skipIf(!python.ok || !chromium.ok)(
           (fpr) => window.__hkp.publishedHandle(fpr),
           r.value.fingerprint
         );
-        expect(publishedAs).toBe(`@${judyFingerprint.slice(-8)}`);
+        //
+        // It is the *whole* fingerprint. This asserted `@` and the last eight
+        // hex characters, which is a short key id however it is punctuated —
+        // eight hex names more than one key, and a reader comparing it against
+        // what somebody read them over the phone cannot tell they compared a
+        // part. The tile draws this through `<Fingerprint>`, the one component
+        // that puts a fingerprint in front of anyone, so it is grouped on
+        // screen and copied whole.
+        expect(publishedAs).toBe(judyFingerprint);
+        expect(publishedAs).not.toBe(`@${judyFingerprint.slice(-8)}`);
         expect(publishedAs).not.toBe("$pub");
       });
 

@@ -16,6 +16,7 @@ import {
 import { sortByTrustAndOrigin } from "../trust.js";
 import { normalizeVaultFingerprint } from "../vault-session.js";
 import {
+  encryptUnverifiedCount,
   filterRecipients,
   openPgpKeyPipelineValue,
   pipelineValueToRecipients,
@@ -54,25 +55,40 @@ function fingerprintFromAddReply(body) {
 }
 
 /**
- * The handle an artifact tile shows once its key is in the directory.
+ * What an artifact tile shows once its key is in the directory: the whole
+ * fingerprint, or `$pub` when the directory named nothing.
  *
  * It lives here, beside the call that produces the fingerprint, rather than in
  * `useNotebook.publishArtifact` where it was written inline, for two reasons.
  * A tile whose handle read `$pub` was reporting the *parse* failure above and
  * not anything about the key, and nothing could see that from the hook; and the
- * rule for turning a fingerprint into a handle is now stated once, where the
- * fingerprint comes from, instead of at the one call site that happened to need
- * it. `$pub` remains the reading for "published, but the directory did not name
- * what it took" — an honest placeholder, not a fingerprint.
+ * rule is now stated once, where the fingerprint comes from, instead of at the
+ * one call site that happened to need it. `$pub` remains the reading for
+ * "published, but the directory did not name what it took" — an honest
+ * placeholder, not a fingerprint.
+ *
+ * **It used to return `@` and the last eight hex characters.** That is a short
+ * key id wearing a different sigil: eight hex is 32 bits, the width that was
+ * forged wholesale in 2016, and it names more than one key. The objection is
+ * not that eight is too few — `components/ui/fingerprint.tsx` sets out at
+ * length why raising the number is not the fix — it is that a form built out of
+ * the fingerprint's own characters *will* be compared, and the reader comparing
+ * it cannot tell that they compared a part. So this publishes no number of
+ * characters: it publishes all of them, and `ArtifactTile` renders the result
+ * through `<Fingerprint>` like every other fingerprint on the site, so the
+ * value is grouped, reachable and copied whole.
+ *
+ * Nothing is fetched to do it. `publishArmoredKey` already answers with the
+ * full fingerprint, and this was throwing thirty-two of its characters away.
  *
  * @param {string} fingerprint
- * @returns {string}
+ * @returns {string} the whole uppercase fingerprint, or `$pub`
  */
 export function publishedHandle(fingerprint) {
   const fpr = String(fingerprint || "")
     .toUpperCase()
     .replace(/[^0-9A-F]/g, "");
-  return fpr ? `@${fpr.slice(-8)}` : "$pub";
+  return fpr || "$pub";
 }
 
 /**
@@ -179,14 +195,17 @@ export async function execHkpSearch(params = {}) {
       meta: { sensitive: false, kind: "opaque", hkpSearch: true },
     };
   }
+  // `valid` and `encryptCapable` are no longer re-stated here. Both were
+  // `x !== false`, which is the identity on a boolean and a *promotion* on
+  // anything else: `recipientFromSearchHit` now answers `null` for a capability
+  // the directory cannot decide, and this line turned every one of those into
+  // `true` before the value left the op. Whatever it decided is what ships.
   const list = (payload.results || [])
     .map(recipientFromSearchHit)
     .filter(Boolean)
     .map((r) => ({
       ...r,
       approvalState: r.approvalState || (r.origin === "basilisk" ? "approved" : r.approvalState),
-      valid: r.valid !== false,
-      encryptCapable: r.encryptCapable !== false,
     }));
   return recipientsPipelineValue(list, {
     query,
@@ -196,20 +215,34 @@ export async function execHkpSearch(params = {}) {
 }
 
 /**
+ * Narrow a recipients list.
+ *
+ * The result carries `encryptUnverified` whenever `encrypt=true` was in force,
+ * because that switch can only do half of what its name says: it drops the keys
+ * the directory *proves* cannot encrypt — revoked, expired — and it has nothing
+ * to judge the rest by, since capability is a fact about a certificate's
+ * packets and the portal's JSON carries no column for it (see
+ * `recipientFromSearchHit`). A count of what went unjudged is how the answer
+ * stops presenting itself as complete. Zero is stamped too, and deliberately:
+ * "nothing here is unverified" is a different statement from a field that is
+ * simply absent, and only the first of them can be relied on.
+ *
  * @param {{ type?: string, data?: * }|null} value
  * @param {Record<string, *>} params
  */
 export async function execHkpFilter(value, params = {}) {
   const list = pipelineValueToRecipients(value);
   const origin = String(params.origin || "").toLowerCase();
+  const wantEncrypt = params.encrypt !== false && params.encrypt !== "false";
   const filtered = filterRecipients(list, {
     approved: params.approved !== false && params.approved !== "false",
-    encrypt: params.encrypt !== false && params.encrypt !== "false",
+    encrypt: wantEncrypt,
     origin: origin || undefined,
   });
   return recipientsPipelineValue(filtered, {
     ...(value?.meta || {}),
     filtered: true,
+    ...(wantEncrypt ? { encryptUnverified: encryptUnverifiedCount(filtered) } : {}),
   });
 }
 
@@ -242,13 +275,9 @@ export async function execHkpCache(params = {}) {
       meta: { sensitive: false, kind: "opaque", hkpCache: true },
     };
   }
-  const list = rows
-    .map(recipientFromSearchHit)
-    .filter(Boolean)
-    .map((r) => ({
-      ...r,
-      valid: r.valid !== false,
-      encryptCapable: r.encryptCapable !== false,
-    }));
+  // Same as `execHkpSearch`: a cache record holds no capability verdict either,
+  // and `x !== false` would invent one. The cache stores armor, so a caller
+  // that wants the answer can get it — from `hkp.get`, which asks.
+  const list = rows.map(recipientFromSearchHit).filter(Boolean);
   return recipientsPipelineValue(list, { hkpCache: true, count: list.length });
 }

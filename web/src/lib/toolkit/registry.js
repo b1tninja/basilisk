@@ -3642,7 +3642,7 @@ export const STEPS = [
     kind: "transform",
     toolbox: "hkp",
     shelf: "directory",
-    doc: "Filter a `recipients` list. Defaults: approved + encrypt-capable (upstream/import kept when valid).",
+    doc: "Filter a `recipients` list. Defaults: approved, minus keys the directory shows cannot encrypt (upstream/import kept when valid).",
     input: "recipients",
     output: "recipients",
     entropy: "none",
@@ -3657,7 +3657,11 @@ export const STEPS = [
         name: "encrypt",
         type: "bool",
         default: true,
-        doc: "Keep only encrypt-capable keys",
+        // It said "Keep only encrypt-capable keys" and kept a signing-only one.
+        // The directory reports revocation and expiry and nothing else about
+        // what a key can do, so this is what the switch is actually able to
+        // promise; `hkp.get` is where a certificate gets asked.
+        doc: "Drop keys the directory shows cannot encrypt (revoked, expired). The rest are unverified — only `hkp.get` reads the key itself.",
       },
       {
         name: "origin",

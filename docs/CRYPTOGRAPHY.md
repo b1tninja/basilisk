@@ -306,7 +306,7 @@ Typed `recipients` lists for encrypt `to=@…`. Email `to=` uses deferred lookup
 |----|--------|-------|
 | `hkp.get` | Done | Public key by fingerprint → `openpgp-key/public` |
 | `hkp.search` | Done | Directory search → `recipients` (`format=json` → text) |
-| `hkp.filter` | Done | Keep approved + encrypt-capable (defaults on) |
+| `hkp.filter` | Done | Keep approved; drop what the directory shows cannot encrypt — revoked, expired (defaults on). Capability of the rest is unverified: only `hkp.get` reads the certificate |
 | `recipients.merge` | Done | Dedupe by fingerprint (`with=$slot`) |
 
 ### WebAuthn (toolbox `webauthn`, no CAST suite)

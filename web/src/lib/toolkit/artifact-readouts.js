@@ -150,9 +150,17 @@ export function packetSummary(armored) {
  * fingerprint is dropped: the fingerprint is the only field that identifies a
  * recipient, and a row that cannot be identified must not be shown as one.
  *
+ * `encryptCapable` is read as three states and not two. `false` is a key the
+ * directory has shown cannot receive; `null` is a key nobody has read, which is
+ * every row of an `hkp.search` result, because capability lives in a
+ * certificate's packets and the directory stores no column for it. `r.x !==
+ * false` used to sit here and answer `true` for both of the last two — the
+ * unverified row rendering exactly like the verified one, in the list somebody
+ * checks before pressing encrypt.
+ *
  * @param {string} json
  * @returns {{ fingerprint: string, label: string, email: string,
- *   approvalState: string, encryptCapable: boolean }[] | null}
+ *   approvalState: string, encryptCapable: boolean|null }[] | null}
  */
 export function recipientRows(json) {
   let parsed;
@@ -169,7 +177,7 @@ export function recipientRows(json) {
       label: String(r.label || ""),
       email: String(r.email || ""),
       approvalState: String(r.approvalState || ""),
-      encryptCapable: r.encryptCapable !== false,
+      encryptCapable: r.encryptCapable == null ? null : !!r.encryptCapable,
     }));
   return rows.length ? rows : null;
 }
@@ -194,7 +202,7 @@ export function recipientRows(json) {
  * engine serialized, which is the order `gpg.encrypt` will walk.
  *
  * @param {{ fingerprint: string, label: string, email: string,
- *   approvalState: string, encryptCapable: boolean }[]} rows
+ *   approvalState: string, encryptCapable: boolean|null }[]} rows
  * @param {string} query
  */
 export function filterRecipientRows(rows, query) {

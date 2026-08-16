@@ -516,7 +516,10 @@ export async function buildInspectSnapshot(value) {
         label: r.label || "",
         email: r.email || "",
         approvalState: r.approvalState || "",
-        encryptCapable: r.encryptCapable !== false,
+        // `null` where nothing has asked the certificate — see the recipients
+        // branch of `materializeOutArtifacts`. An inspector that reported `true`
+        // for an unread key would be the most misleading place of all to do it.
+        encryptCapable: r.encryptCapable == null ? null : !!r.encryptCapable,
         hasArmor: String(r.armoredPublic || "").includes("BEGIN PGP"),
       })),
     };

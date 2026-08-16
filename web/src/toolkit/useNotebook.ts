@@ -3284,10 +3284,36 @@ export function useNotebook() {
     setSessionTick((n) => n + 1);
   }, []);
 
+  /**
+   * Write a cell that unlocks a key, or takes its public half, into the notebook.
+   *
+   * **The slot is a name, and it stopped being made out of the key.** It used to
+   * be `@` and the last eight hex characters of the fingerprint, which is a
+   * short key id: eight hex names more than one key, and a reader comparing it
+   * cannot tell they compared a part rather than the whole.
+   * `components/ui/fingerprint.tsx` settled the shape this repo uses for that —
+   * a compact form prints *a name the row already has*, never characters
+   * derived from the key, and the whole value stays reachable beside it. Here
+   * the whole value is reachable in the most direct way there is: it is the
+   * `agent.pub <fingerprint>` argument, on the same line, one token to the
+   * left, untruncated. So the slot is `$pub`, the mirror of the `$me` the
+   * unlock branch has always written.
+   *
+   * Spelling the *whole* fingerprint into the label instead is not available
+   * and it is worth saying why, because it is the obvious other answer:
+   * `SLOT_LABEL_RE` requires a leading letter, and about two hex strings in
+   * three begin with a digit. `normalizePeerRef` was given a fingerprint branch
+   * ahead of the name grammar for exactly that reason; `$` has no such branch,
+   * and adding one is a change to the slot grammar — share links, migration,
+   * every `in`/`out` — not to what a person is shown.
+   *
+   * That leading-letter rule is also why this button did nothing at all for
+   * most keys: `@2c3d4e5f` is an invalid slot label, `compileRecipe` returned
+   * no ast, and `if (!ast) return` swallowed it. A fixed label always compiles.
+   */
   const insertUnlockCell = useCallback(
     (fpr: string, kind: "agent.unlock" | "agent.pub" = "agent.unlock") => {
-      const short = `@${(fpr.slice(-8) || "me").toLowerCase()}`;
-      const slot = kind === "agent.unlock" ? "$me" : short;
+      const slot = kind === "agent.unlock" ? "$me" : "$pub";
       const recipe = `${kind} ${fpr} | out ${slot}`;
       const { ast } = compileRecipe(recipe);
       if (!ast) return;

@@ -19,6 +19,14 @@ import {
  * perfectly good signing key — but a reader choosing recipients has to see it,
  * because `gpg.encrypt` will skip that row and the skip is easy to miss.
  *
+ * `encryptCapable: null` is the third state and it is the common one. A
+ * keyserver search produces rows nobody has read: the directory reports
+ * revocation and expiry, and stores nothing at all about whether a certificate
+ * has an encryption-capable subkey. Those rows say "encryption unverified" in
+ * the ordinary muted tone, because it is not a defect in the key — it is a
+ * missing reading, and `hkp.get` is what takes it. Left blank, as it was, the
+ * unverified row and the verified row were the same row.
+ *
  * No per-row *Import to key cache* button, though §37b sketches one: the
  * pubkey-cache service is not injected into a tile's actions yet, and a button
  * whose handler does not exist is worse than the absence. It is one service
@@ -104,11 +112,21 @@ export function RecipientsCard({
                     pane, "approved · cannot encrypt" lost its second half —
                     and the half that gets cut is the one that changes what
                     `gpg.encrypt` will do with this row. */}
+                {/* Three states, because there are three. `false` is a key the
+                    directory showed cannot receive. `null` is every row of a
+                    keyserver search: capability is a fact about a certificate's
+                    packets and the directory holds no column for it, so nothing
+                    on the search path has read this key. Drawing `null` as
+                    blank — which `encryptCapable !== false` did — made the
+                    unverified row identical to the verified one on the exact
+                    surface a reader uses to pick a recipient. */}
                 <td className="w-[26%] font-mono text-[9px] text-[var(--muted-foreground)]">
                   <span className="block truncate">{r.approvalState}</span>
-                  {r.encryptCapable ? null : (
+                  {r.encryptCapable === false ? (
                     <span className="block truncate text-[var(--warn)]">cannot encrypt</span>
-                  )}
+                  ) : r.encryptCapable === null ? (
+                    <span className="block truncate">encryption unverified</span>
+                  ) : null}
                 </td>
               </tr>
             ))}

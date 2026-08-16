@@ -7,12 +7,14 @@ import { generateKey, readKey } from "openpgp";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { compileRecipe, unresolvedRecipients } from "../lib/toolkit/recipe.js";
 import {
+  encryptUnverifiedCount,
   filterRecipients,
   parseEncryptToToken,
+  recipientFromSearchHit,
   stepEncryptToBound,
 } from "../lib/toolkit/recipients-ops.js";
 import { formatType, inferSourceType } from "../lib/toolkit/types.js";
-import { stepsAccepting } from "../lib/toolkit/registry.js";
+import { STEPS, stepsAccepting } from "../lib/toolkit/registry.js";
 import {
   sessionClear,
   sessionList,
@@ -130,6 +132,61 @@ describe("hkp.filter", () => {
       },
     ];
     expect(filterRecipients(list).map((r) => r.fingerprint[0])).toEqual(["A"]);
+  });
+
+  it("keeps a row whose capability nobody could read, and counts it", () => {
+    // The state that did not exist before: `null` is not `false`, so the filter
+    // has no grounds to drop the row — and it is not `true` either, so the
+    // result must not present it as checked. Both halves are asserted, because
+    // either one alone is satisfied by collapsing back to a boolean.
+    const list = [
+      { fingerprint: "A".repeat(40), approvalState: "approved", encryptCapable: true },
+      { fingerprint: "D".repeat(40), approvalState: "approved", encryptCapable: null },
+      { fingerprint: "C".repeat(40), approvalState: "approved", encryptCapable: false },
+    ];
+    const kept = filterRecipients(list);
+    expect(kept.map((r) => r.fingerprint[0])).toEqual(["A", "D"]);
+    expect(encryptUnverifiedCount(kept)).toBe(1);
+    expect(encryptUnverifiedCount(list.filter((r) => r.encryptCapable === true))).toBe(0);
+  });
+
+  it("reads the directory's expiry, and does not guess from its silence", () => {
+    // `key_expiration` was in every `key_summary` payload and nothing on this
+    // path read it, so the one expired key in the corpus went through a filter
+    // asked to keep only keys that can encrypt. It is decided now — and only
+    // in the direction the field can support: a row that states a past instant
+    // is incapable, a row that states nothing has not said anything.
+    const past = new Date(Date.now() - 86400000).toISOString();
+    const future = new Date(Date.now() + 86400000).toISOString();
+    const row = (extra) => ({
+      fingerprint: "A".repeat(40),
+      approval_state: "approved",
+      origin: "basilisk",
+      ...extra,
+    });
+    expect(recipientFromSearchHit(row({ key_expiration: past })).encryptCapable).toBe(false);
+    expect(recipientFromSearchHit(row({ key_expiration: past })).valid).toBe(false);
+    expect(recipientFromSearchHit(row({ key_expiration: future })).encryptCapable).toBeNull();
+    expect(recipientFromSearchHit(row({ key_expiration: null })).encryptCapable).toBeNull();
+    expect(recipientFromSearchHit(row({ key_expiration: "not a date" })).encryptCapable).toBeNull();
+    // Revocation was already decidable and stays decided.
+    expect(recipientFromSearchHit(row({ revoked: true })).encryptCapable).toBe(false);
+  });
+
+  it("says what it can promise, on the switch a person reads", () => {
+    // The registry is the copy. It read "Keep only encrypt-capable keys" over a
+    // result that kept a signing-only key and an expired one — a control lying
+    // about its own name. A filter that cannot fully judge must not claim it
+    // did, so the promise is now exactly the two facts the directory reports.
+    const filter = STEPS.find((s) => s.name === "hkp.filter");
+    const encrypt = filter.params.find((p) => p.name === "encrypt");
+    expect(encrypt.doc).not.toMatch(/Keep only encrypt-capable/);
+    expect(encrypt.doc).toMatch(/revoked, expired/);
+    expect(encrypt.doc).toMatch(/unverified/);
+    // And it names the op that *can* answer, rather than leaving the reader
+    // with a limitation and no way past it.
+    expect(encrypt.doc).toMatch(/hkp\.get/);
+    expect(filter.doc).not.toMatch(/encrypt-capable/);
   });
 });
 

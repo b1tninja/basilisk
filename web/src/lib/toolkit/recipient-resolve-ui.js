@@ -120,7 +120,7 @@ export function openRecipientResolveModal(opts) {
         status.textContent = list.length
           ? `${list.length} key${list.length === 1 ? "" : "s"}`
           : hits.length
-            ? "No approved encrypt-capable keys (try Show pending / all)"
+            ? "No usable approved keys (try Show pending / all)"
             : "No keys found";
       }
       if (!list.length) {
@@ -203,11 +203,12 @@ export function openRecipientResolveModal(opts) {
       hits = sortByTrust(payload.results || [])
         .map(recipientFromSearchHit)
         .filter(Boolean)
+        // Same removal as `resolveRecipientQuery` below: promoting an unknown
+        // capability to `true` here is what put a signing-only key in this
+        // modal's default list looking exactly like a key that can receive.
         .map((r) => ({
           ...r,
           approvalState: r.approvalState || "approved",
-          valid: r.valid !== false,
-          encryptCapable: r.encryptCapable !== false,
         }));
     };
 
@@ -243,18 +244,22 @@ export async function lookupRecipientsForPolicy(opts) {
   const all = (payload.results || [])
     .map(recipientFromSearchHit)
     .filter(Boolean)
+    // `encryptCapable: r.encryptCapable !== false` used to sit here and promote
+    // the directory's "cannot tell" to "yes"; `valid` beside it was the identity
+    // on a boolean. What the row mapping decided is what this resolves against.
     .map((r) => ({
       ...r,
       approvalState: r.approvalState || "approved",
-      valid: r.valid !== false,
-      encryptCapable: r.encryptCapable !== false,
     }));
   const approved = filterRecipients(all, { approved: true, encrypt: true });
 
   if (!approved.length) {
     return {
       status: "none",
-      message: payload.reason || "No approved encrypt-capable keys found",
+      // Not "no encrypt-capable keys": nothing here read a certificate, so the
+      // state that is true is that the directory has no approved key it can
+      // offer — revoked and expired ones having been dropped on its own word.
+      message: payload.reason || "No usable approved keys in the directory",
       hits: all,
     };
   }
