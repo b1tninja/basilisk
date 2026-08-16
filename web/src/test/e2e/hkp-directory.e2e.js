@@ -180,7 +180,7 @@ const LOAD_HKP = `(async () => {
   const mod = await import(path);
   const WANTED = [
     "execHkpGet", "execHkpSearch", "execHkpFilter", "execHkpCache",
-    "publishArmoredKey",
+    "publishArmoredKey", "publishedHandle",
   ];
   for (const name of WANTED) {
     if (typeof mod[name] !== "function") {
@@ -352,8 +352,17 @@ describe.skipIf(!python.ok)("the directory Basilisk actually serves", () => {
     // first approved user id is ever emitted — carol has two.
     expect(lines).toHaveLength(3);
     expect(lines[0]).toBe("info:1:1");
-    expect(lines[1]).toBe(`pub:255:0::::::20:${carol.fingerprint.toLowerCase()}`);
-    expect(lines[2]).toBe(`uid:${carol.uids[0].length}:${carol.uids[0]}`);
+    // Carol is live, unexpired and has no stored expiration, so every column
+    // after the fingerprint is empty — including the flags column, which is
+    // the point: empty flags is a statement, where no column at all was not.
+    expect(lines[1]).toBe(`pub:${carol.fingerprint.toLowerCase()}:::::`);
+    // The uid is URL-encoded, so it is asserted by what it decodes to rather
+    // than by a second copy of the encoder living here: `%XX` is the one part
+    // of this line where a JavaScript literal could disagree with the Python
+    // that wrote it and still be right.
+    expect(lines[2].split(":")).toHaveLength(5);
+    expect(decodeURIComponent(lines[2].split(":")[1])).toBe(carol.uids[0]);
+    expect(lines[2].endsWith(":::")).toBe(true);
     expect(carol.uids).toHaveLength(2);
 
     // A name is not an index needle at all, and a pending key has no index
@@ -367,7 +376,7 @@ describe.skipIf(!python.ok)("the directory Basilisk actually serves", () => {
     expect(pending.status).toBe(404);
   });
 
-  it("DEFECT: that index body is not the format any HKP client parses", async () => {
+  it("sends the index body the draft specifies, not one of its own", async () => {
     const carol = corpus.byId("carol");
     const body = await (
       await fetch(`${server.origin}/pks/lookup?op=index&search=0x${carol.fingerprint}`)
@@ -376,27 +385,33 @@ describe.skipIf(!python.ok)("the directory Basilisk actually serves", () => {
 
     // `draft-shaw-openpgp-hkp-00` §5.2:
     //   pub:<keyid>:<algo>:<keylen>:<created>:<expires>:<flags>
-    // Seven fields, the identifier first. What Basilisk sends has ten, with the
-    // fingerprint *last*, two literals (`255`, `0`) where the algorithm and key
-    // length belong, and the fingerprint's byte length — 20 — in a tenth field
-    // of its own invention. No created, no expires, no flags.
-    expect(pub).toHaveLength(10);
+    // Seven fields, the identifier first. What Basilisk used to send had ten,
+    // with the fingerprint *last*, two literals (`255`, `0`) where the
+    // algorithm and key length belong, and the fingerprint's byte length — 20 —
+    // in a tenth field of its own invention. No created, no expires, and, worst
+    // of all, no flags: see the revocation spec below, which is what forced
+    // this. A flags column no parser can find is not a warning, so the field
+    // order and the warning that rides in it were one fix.
+    expect(pub).toHaveLength(7);
     expect(pub[0]).toBe("pub");
-    expect(pub[1]).toBe("255");
-    expect(pub[2]).toBe("0");
-    expect(pub.slice(3, 8)).toEqual(["", "", "", "", ""]);
-    expect(pub[8]).toBe("20");
-    expect(pub[9]).toBe(carol.fingerprint.toLowerCase());
-    // The real algorithm and strength are known and simply not sent: carol is
-    // EdDSA (22) at 256 bits.
+    expect(pub[1]).toBe(carol.fingerprint.toLowerCase());
+
+    // Algorithm, key length and creation stay empty, and that is a deliberate
+    // second half of the fix rather than an omission: `CertRecord` holds none
+    // of the three. They are *derivable* — carol is EdDSA (22) at 256 bits, and
+    // `basilisk/openpgp/keyinfo.py` derives exactly this for the v2 JSON index
+    // — but only by parsing the stored certificate, which would turn a metadata
+    // read into a blob read on every request. Empty is legal here and true;
+    // `255:0` was neither.
+    expect(pub.slice(2, 5)).toEqual(["", "", ""]);
     expect(carol.algorithm).toBe("eddsaLegacy");
     expect(carol.bits).toBe(256);
 
-    // The uid line carries a character count and then the *raw* user id, where
-    // the draft carries a URL-encoded one. So a user id containing a colon
-    // shifts every field after it, and a parser splitting on ":" reads one more
-    // field than exists. Demonstrated with a key whose name has a colon in it,
-    // rather than argued.
+    // The uid line used to carry a character count and then the *raw* user id,
+    // where the draft carries a URL-encoded one. So a user id containing a
+    // colon shifted every field after it, and a parser splitting on ":" read
+    // one more field than exists. Demonstrated with a key whose name has a
+    // colon in it, rather than argued.
     const colon = await generateKey({
       type: "ecc",
       curve: "curve25519Legacy",
@@ -420,19 +435,29 @@ describe.skipIf(!python.ok)("the directory Basilisk actually serves", () => {
       await fetch(`${server.origin}/pks/lookup?op=index&search=0x${olga.fingerprint}`)
     ).text();
     const uidLine = olgaIndex.split("\n")[2];
-    expect(uidLine).toBe(`uid:${olga.uids[0].length}:${olga.uids[0]}`);
-    expect(uidLine.split(":")).toHaveLength(4);
+    // Five fields even though the name contains a colon, and the colon comes
+    // back out of the encoding intact. The old form gave four here and three
+    // for a name without a colon — the field count was a property of whatever
+    // someone had called themselves.
+    expect(olga.uids[0]).toContain(":");
+    expect(uidLine.split(":")).toHaveLength(5);
+    expect(decodeURIComponent(uidLine.split(":")[1])).toBe(olga.uids[0]);
     expect(carol.uids[0]).not.toContain(":");
+    expect(uidLine.split(":").length).toBe(
+      body.split("\n")[2].split(":").length
+    );
 
     // The one Python test over this surface asserts `"pub:" in r.text`, which
-    // any of these forms satisfies — which is how it has survived. Reported,
-    // not fixed; nothing in `web/src` requests `op=index`.
+    // every form this route has ever emitted satisfies — which is how the old
+    // one survived. `tests/unit/test_hkp_index_format.py` now splits the line
+    // and reads the columns, on the Python side where the format is written.
     expect(body).toContain("pub:");
   });
 
-  it("cannot tell a revoked key from a live one in an index record", async () => {
+  it("tells a revoked key from a live one, and an expired one from both", async () => {
     const alice = corpus.byId("alice");
     const grace = corpus.byId("grace");
+    const frank = corpus.byId("frank");
     const index = async (k) =>
       (
         await (
@@ -440,21 +465,36 @@ describe.skipIf(!python.ok)("the directory Basilisk actually serves", () => {
         ).text()
       )
         .split("\n")[1];
+    const flags = (line) => line.split(":")[6];
 
     const live = await index(alice);
     const revoked = await index(grace);
+    const expired = await index(frank);
     expect(await keyRecord(server.origin, grace.fingerprint)).toMatchObject({
       revoked: true,
       approval_state: "approved",
     });
 
-    // There is no flags field to carry `r`, so the two records are identical
-    // apart from the fingerprint. A client reading only the index cannot tell
-    // that one of these keys has been revoked. Should carry the draft's `r`
-    // (and `e` for the expired key). Reported, not fixed.
-    expect(revoked.replace(grace.fingerprint.toLowerCase(), alice.fingerprint.toLowerCase()))
-      .toBe(live);
-    expect(revoked).not.toContain(":r");
+    // The whole reason the format above changed. Without a flags column these
+    // two records were identical apart from the fingerprint, so a client
+    // reading only the index — which is all `gpg --search-keys` reads before it
+    // offers a key to import — could not tell that one of them had been
+    // withdrawn.
+    expect(flags(revoked)).toBe("r");
+    expect(flags(live)).toBe("");
+    expect(
+      revoked.replace(grace.fingerprint.toLowerCase(), alice.fingerprint.toLowerCase())
+    ).not.toBe(live);
+
+    // `frank` is expired by his own signature and still `approved` in the
+    // directory — the sweep that would mark him `expired` has not run, and that
+    // window is exactly when a client needs telling. The expiry rides in its
+    // own column beside the flag, as seconds since the epoch.
+    expect(flags(expired)).toBe("e");
+    const at = Number(expired.split(":")[5]);
+    expect(at).toBeGreaterThan(0);
+    expect(at * 1000).toBeLessThan(Date.now());
+    expect(Date.parse(frank.expires.toISOString())).toBe(at * 1000);
   });
 
   it("501s vindex, because serve.py implements index and get only", async () => {
@@ -581,9 +621,10 @@ describe.skipIf(!python.ok)("the directory Basilisk actually serves", () => {
     const body = await r.text();
 
     // The claim URL is the only place the fingerprint appears, and there is no
-    // `Fingerprint:` line. `publishArmoredKey` looks for one; see the browser
-    // half. Note the host is the *server's* `BASILISK_BASE_URL`, not the origin
-    // the request arrived on, so a proxied deployment hands back its own name.
+    // `Fingerprint:` line — `publishArmoredKey` reads the claim URL's last
+    // segment, which is what this line pins for it. Note the host is the
+    // *server's* `BASILISK_BASE_URL`, not the origin the request arrived on, so
+    // a proxied deployment hands back its own name.
     expect(body).toMatch(/^Ok\nClaim: http:\/\/[^/]+\/claim\/[0-9A-F]{40}\n$/);
     expect(body).not.toMatch(/[Ff]ingerprint:/);
     expect(body).toContain(fpr);
@@ -732,21 +773,34 @@ describe.skipIf(!python.ok || !chromium.ok)(
         expect(r.value.meta.err).toBe("No encryption-capable subkey");
       });
 
-      it("DEFECT: calls an expired key a key with no encryption subkey", async () => {
+      it("calls an expired key expired, not a key with no encryption subkey", async () => {
         await clearCache();
         const frank = corpus.byId("frank");
         const r = await callOp(page, "execHkpGet", { fpr: frank.fingerprint });
         expect(r.ok, r.error).toBe(true);
         expect(r.value.meta.valid).toBe(false);
-        // `buildRecipient` classifies every `getEncryptionKey()` refusal as a
-        // missing subkey. openpgp's own reason here is "Primary key is expired",
-        // and the directory said so too — `key_expiration` is in the past on the
-        // JSON this op already fetched. A person told "no encryption-capable
-        // subkey" about a key that has one will go looking in the wrong place.
-        // Should read "Key is expired". Reported, not fixed.
-        expect(r.value.meta.err).toBe("No encryption-capable subkey");
+
+        // `buildRecipient` used to classify every `getEncryptionKey()` refusal
+        // as a missing subkey. openpgp's own reason here is "Primary key is
+        // expired", and the directory said so too — `key_expiration` is in the
+        // past on the JSON this op already fetched. A person told "no
+        // encryption-capable subkey" about a key that *has* one goes looking
+        // for a missing subkey that was never missing.
+        expect(r.value.meta.err).toBe("Key is expired");
+        expect(r.value.meta.err).not.toBe("No encryption-capable subkey");
         const record = await keyRecord(fixture.origin, frank.fingerprint);
         expect(Date.parse(record.key_expiration)).toBeLessThan(Date.now());
+
+        // The two states stay distinguishable in both directions: `erin` is
+        // signing-only and unexpired, and still reads as the missing subkey he
+        // genuinely is (asserted in full one spec above). Naming expiry by
+        // collapsing the other case into it would be the same defect wearing
+        // the opposite label.
+        const erin = corpus.byId("erin");
+        expect(frank.encryptCapable).toBe(false);
+        expect(erin.encryptCapable).toBe(false);
+        expect(frank.expires).toBeInstanceOf(Date);
+        expect(erin.expires).toBeNull();
       });
     });
 
@@ -788,18 +842,19 @@ describe.skipIf(!python.ok || !chromium.ok)(
         ]);
       });
 
-      it("DEFECT: drops the user id, showing a fingerprint where a name belongs", async () => {
+      it("reads the same off the wire as it does out of the cache", async () => {
         await clearCache();
         const carol = corpus.byId("carol");
         const r = await callOp(page, "execHkpSearch", { query: "carol@corp.test" });
         const hit = r.value.data[0];
 
-        // `recipientFromSearchHit` reads `row.label || row.uid || row.userLabel`
-        // and `row.email`. `key_summary` sends none of those three: it sends
-        // `approved_uids: [{ raw, name, email }]` and a `label` that is the
-        // owner's friendly label, null until someone sets one. So every
-        // directory hit arrives anonymous and falls back to its own fingerprint
-        // — with the address it should have shown sitting in the same payload.
+        // `recipientFromSearchHit` used to read `row.label || row.uid ||
+        // row.userLabel` and `row.email`. `key_summary` sends none of those
+        // four: it sends `approved_uids: [{ raw, name, email }]` and a `label`
+        // that is the owner's friendly label, null until someone sets one. So
+        // every directory hit arrived anonymous and fell back to its own
+        // fingerprint — with the address it should have shown sitting unread in
+        // the same payload. The payload has not changed; the reading has.
         const raw = await (
           await fetch(`${fixture.origin}/api/v1/search?q=carol@corp.test`)
         ).json();
@@ -808,14 +863,24 @@ describe.skipIf(!python.ok || !chromium.ok)(
         expect(raw.results[0].uid).toBeUndefined();
         expect(raw.results[0].email).toBeUndefined();
 
-        expect(hit.email).toBe("");
-        expect(hit.label).toBe(hit.fingerprint);
         expect(hit.fingerprint).toBe(carol.fingerprint);
+        expect(hit.email).toBe("carol@corp.test");
+        expect(hit.label).toBe(carol.uids[0]);
+        expect(hit.label).not.toBe(hit.fingerprint);
 
-        // `cacheRecordToSearchHit` does populate `email`, so the same key looks
-        // right once it is in the device cache and wrong when it comes off the
-        // wire — which is why this has survived: the second search of a session
-        // reads better than the first. Reported, not fixed.
+        // Why this survived so long: `cacheRecordToSearchHit` populated `email`
+        // all along, so the same key read right once it was in the device cache
+        // and wrong when it came off the wire — the second search of a session
+        // was better than the first, and nobody searches once. Asserted as
+        // equality between the two paths rather than twice against a literal,
+        // because "these agree" is the property that was missing.
+        const cachedHit = await (async () => {
+          await callOp(page, "execHkpGet", { fpr: carol.fingerprint });
+          const cached = await callOp(page, "execHkpCache", { action: "list" });
+          return cached.value.data.find((x) => x.fingerprint === carol.fingerprint);
+        })();
+        expect(cachedHit.email).toBe(hit.email);
+        expect(cachedHit.label).toBe(hit.label);
       });
 
       it("narrows a result set: the revoked key does not survive the filter", async () => {
@@ -1051,17 +1116,33 @@ describe.skipIf(!python.ok || !chromium.ok)(
           approval_state: "pending",
         });
 
-        // DEFECT: `publishArmoredKey` parses the reply with
+        // `publishArmoredKey` used to parse the reply with
         // /[Ff]ingerprint:\s*([0-9A-Fa-f]{16,64})/, and Basilisk's `/pks/add`
-        // answers "Ok\nClaim: <base>/claim/<fpr>" — no such label. So the match
-        // fails, the fingerprint comes back empty, and `directoryUrl` degrades
+        // answers "Ok\nClaim: <base>/claim/<fpr>" — no such label. The match
+        // failed, the fingerprint came back empty, and `directoryUrl` degraded
         // to the bare lookup endpoint instead of a link to the key just
-        // published. `useNotebook.publishArtifact` then writes that empty string
-        // to `tile.publishedAs`. The fingerprint is right there in the claim
-        // URL. Reported, not fixed.
-        expect(r.value.fingerprint).toBe("");
-        expect(r.value.directoryUrl).toBe(`${fixture.origin}/pks/lookup`);
-        expect(r.value.directoryUrl).not.toContain(judyFingerprint);
+        // published. The fingerprint was right there in the claim URL, and
+        // `keys.js`'s upload form has always read the same reply correctly —
+        // this file was the only end of the repo that disagreed with a format
+        // its own upload form parses. The client was fixed, not the server.
+        expect(r.value.fingerprint).toBe(judyFingerprint);
+        expect(r.value.directoryUrl).toBe(
+          `${fixture.origin}/pks/lookup?op=get&search=0x${judyFingerprint}`
+        );
+        expect(r.value.directoryUrl).toContain(judyFingerprint);
+
+        // The hop that matters, not the op's return value: `publishedAs` is
+        // what a person actually sees on the tile, and it is what
+        // `useNotebook.publishArtifact` writes there. It read `$pub` — the
+        // placeholder for "the directory did not name what it took" — for every
+        // anonymous publish this repo has ever done, which is the whole visible
+        // shape of this defect.
+        const publishedAs = await page.evaluate(
+          (fpr) => window.__hkp.publishedHandle(fpr),
+          r.value.fingerprint
+        );
+        expect(publishedAs).toBe(`@${judyFingerprint.slice(-8)}`);
+        expect(publishedAs).not.toBe("$pub");
       });
 
       it("a just-published key is fetchable but not yet usable", async () => {

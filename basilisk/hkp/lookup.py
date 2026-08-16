@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
+from datetime import datetime, timezone
 
 from basilisk.cache.pubkey_lru import PubkeyLRU
 from basilisk.config import Settings, get_settings
@@ -8,10 +10,11 @@ from basilisk.db.blob_store import LocalBlobStore
 from basilisk.db.factory import get_blob_store as _factory_blob
 from basilisk.db.factory import get_cert_store
 from basilisk.db.sqlite_store import sha256_hex
-from basilisk.db.store import CertStore
+from basilisk.db.store import CertRecord, CertStore
 from basilisk.hkp.cors import cors_get_headers, http_cors
 from basilisk.hkp.response import HttpResponse
 from basilisk.openpgp.canonical import emails_from_uids, filter_armored_by_uids
+from basilisk.openpgp.keyinfo import is_expired
 from basilisk.openpgp.ingest import IngestError, parse_search, strip_uids_for_pending
 
 _lru: PubkeyLRU | None = None
@@ -144,7 +147,80 @@ def lookup_get(
     return HttpResponse(200, data, headers, "application/pgp-keys")
 
 
+def _index_expiration(iso: str | None) -> datetime | None:
+    """A stored ISO expiration as a datetime, or None when there is not one.
+
+    A timestamp that will not parse is the same case as one that was never
+    stored: the record does not tell us when this key expires. The index says
+    so by leaving the field empty rather than by guessing, which is the rule
+    `basilisk/openpgp/keyinfo.py` already states for the v2 index.
+    """
+    if not iso:
+        return None
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _index_flags(record: CertRecord, expiration: datetime | None) -> str:
+    """The draft's flags column: `r` revoked, `e` expired, in that order.
+
+    This is the whole reason the format below changed. Without a flags column a
+    revoked record and a live one differ only in their fingerprint, so a client
+    that reads the index -- which is all `gpg --search-keys` reads before it
+    offers a key to import -- cannot tell that a key has been withdrawn. That is
+    the most dangerous thing a keyserver can be quiet about.
+
+    `e` is computed from the expiration rather than read off `approval_state`,
+    because the two are not the same fact. `mark_expired` moves a record to the
+    `expired` state and `lookup_index` 404s it well before reaching here; a key
+    whose own expiration has passed but which the expiry sweep has not visited
+    yet is still `approved`, and that window is exactly when a client needs
+    telling.
+    """
+    flags = "r" if record.revoked else ""
+    if is_expired(expiration):
+        flags += "e"
+    return flags
+
+
 def lookup_index(search: str, store: CertStore | None = None) -> HttpResponse:
+    """The machine-readable index, in the format an HKP client parses.
+
+    `draft-shaw-openpgp-hkp-00` §5.2 spells the two record lines:
+
+        pub:<keyid>:<algo>:<keylen>:<created>:<expires>:<flags>
+        uid:<url-encoded uid>:<created>:<expires>:<flags>
+
+    What this used to send was `pub:255:0::::::20:<fpr>` -- ten fields with the
+    identifier *last*, two literals where the algorithm and key length belong,
+    and the fingerprint's byte length in a tenth field of its own invention --
+    over a uid line carrying a character count and then the raw user id, so a
+    user id containing a colon shifted every field after it.
+
+    It survived because nothing parsed it. Nothing in `web/src` requests
+    `op=index` at all, and the one test over the surface asserted `"pub:" in
+    r.text`, which every one of those forms satisfies. On its own that is an
+    argument for leaving it alone: conformance with no consumer buys nothing.
+
+    What changes the answer is the flags column. A revoked key has to be
+    *distinguishable* from a live one here, and the only thing that can act on
+    that is a real HKP client -- `gpg --search-keys`, which this repo already
+    drives in `tests/e2e/test_hkp_index.py`. A flag in a column no parser can
+    find is not a warning, so the field order is not separable from the warning
+    that needs to ride in it: making the revocation legible *is* making the
+    format conformant. They are one fix, and this is it.
+
+    Algorithm, key length and creation date stay empty because `CertRecord`
+    genuinely does not hold them -- there is no column for any of the three, and
+    inventing `255:0` is precisely what the old form did. They are derivable, by
+    parsing the stored certificate the way `basilisk/openpgp/keyinfo.py` does
+    for the v2 index, but that turns a metadata read into a blob read on every
+    request, and v2's JSON index is where a caller that wants those facts should
+    be looking. Empty is legal and true; a guessed number is neither.
+    """
     store = store or get_cert_store()
     try:
         kind, ident = parse_search(search)
@@ -174,7 +250,16 @@ def lookup_index(search: str, store: CertStore | None = None) -> HttpResponse:
 
     fpr = record.fingerprint
     uid = record.approved_uids[0] if record.approved_uids else "unknown"
-    body = f"info:1:1\npub:255:0::::::{len(fpr)//2}:{fpr.lower()}\nuid:{len(uid)}:{uid}\n"
+    expiration = _index_expiration(record.key_expiration)
+    # Lowercase hex, as before: a fingerprint is case-insensitive and no client
+    # compares it as a string, so changing the case here would churn every
+    # assertion over this route to say nothing.
+    expires = str(int(expiration.timestamp())) if expiration else ""
+    body = (
+        "info:1:1\n"
+        f"pub:{fpr.lower()}::::{expires}:{_index_flags(record, expiration)}\n"
+        f"uid:{urllib.parse.quote(uid, safe='')}:::\n"
+    )
     return http_cors(200, body, mimetype="text/plain")
 
 

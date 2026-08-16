@@ -604,8 +604,13 @@ which must be searched for, not assumed absent.
 
 Order of work, bug fixes first:
 
-1. **Comments survive serialization.** Small, and it is the readability premise
-   everything else rests on.
+1. **Comments survive serialization** — done. A comment belongs to the cell it
+   was written in and is kept exactly once however the cell is re-serialized. A
+   trailing comment normalizes to the line above rather than staying at the end,
+   which is a choice worth stating: it means `random 32 | out $a # why` and
+   `# why` on its own line converge on one canonical text, so two authors who
+   annotated the same pipeline differently still digest to the same agreement.
+   Round-trips are fixed points, comments included.
 2. **The quorum becomes an argument** (`split 2/3`) — done, on `sss.split`.
    The degenerate quorums refuse identically in both spellings (`1/3` in
    `ceremonyIssues`' own words, via one shared constant), and the K-of-K

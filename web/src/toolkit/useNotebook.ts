@@ -1094,9 +1094,11 @@ export function useNotebook() {
     if (tile.role !== "public-key" || !(tile.tags || []).includes("openpgp")) {
       throw new Error("publishArtifact: only OpenPGP public keys are publishable");
     }
-    const { publishArmoredKey } = await import("../lib/toolkit/hkp-ops.js");
+    const { publishArmoredKey, publishedHandle } = await import(
+      "../lib/toolkit/hkp-ops.js"
+    );
     const { fingerprint, directoryUrl } = await publishArmoredKey(tile.content);
-    tile.publishedAs = fingerprint ? `@${fingerprint.slice(-8)}` : "$pub";
+    tile.publishedAs = publishedHandle(fingerprint);
     tile.directoryUrl = directoryUrl;
     setKernelEpoch((n) => n + 1);
     // Returned, not just stored: the Activity log records where an outward

@@ -24,6 +24,58 @@ import {
 } from "./recipients-ops.js";
 
 /**
+ * The fingerprint out of a `/pks/add` reply.
+ *
+ * Basilisk answers `Ok\nClaim: <base>/claim/<fpr>` — the fingerprint is in the
+ * claim URL's last segment, and there is no `Fingerprint:` line anywhere in the
+ * body. This used to look for that label, matched nothing, and handed back an
+ * empty string, which `directoryUrl` degraded into the bare lookup endpoint and
+ * `useNotebook.publishArtifact` wrote to `tile.publishedAs` as `$pub` — a
+ * person who had just published a key was shown no link to it.
+ *
+ * The client is what was wrong, not the server: `keys.js` reads the same reply
+ * with `/^Claim:\s*(.+)$/m` and has always read it correctly, so this file was
+ * the only end of the repo that disagreed with a format its own upload form
+ * already parses.
+ *
+ * Sixty-four hex is tried before forty so a v6 fingerprint is never sliced down
+ * to a v4-length prefix; a 16-hex long key id is deliberately not matched at
+ * all, because a key id is not a fingerprint and `search=0x<keyid>` is a
+ * different, ambiguous query.
+ *
+ * @param {string} body
+ * @returns {string} uppercase fingerprint, or "" when the reply carries none
+ */
+function fingerprintFromAddReply(body) {
+  const claim = String(body).match(
+    /^Claim:\s*\S*\/claim\/([0-9A-Fa-f]{64}|[0-9A-Fa-f]{40})\b/m
+  );
+  return claim ? claim[1].toUpperCase() : "";
+}
+
+/**
+ * The handle an artifact tile shows once its key is in the directory.
+ *
+ * It lives here, beside the call that produces the fingerprint, rather than in
+ * `useNotebook.publishArtifact` where it was written inline, for two reasons.
+ * A tile whose handle read `$pub` was reporting the *parse* failure above and
+ * not anything about the key, and nothing could see that from the hook; and the
+ * rule for turning a fingerprint into a handle is now stated once, where the
+ * fingerprint comes from, instead of at the one call site that happened to need
+ * it. `$pub` remains the reading for "published, but the directory did not name
+ * what it took" — an honest placeholder, not a fingerprint.
+ *
+ * @param {string} fingerprint
+ * @returns {string}
+ */
+export function publishedHandle(fingerprint) {
+  const fpr = String(fingerprint || "")
+    .toUpperCase()
+    .replace(/[^0-9A-F]/g, "");
+  return fpr ? `@${fpr.slice(-8)}` : "$pub";
+}
+
+/**
  * Publish an armored public key to This site's directory (design v2 §21b) —
  * the same `/pks/add` / `/api/v1/me/keys` write path `keys.js`'s upload form
  * uses, factored out so `useNotebook().publishArtifact` can call it headlessly.
@@ -62,8 +114,7 @@ export async function publishArmoredKey(armoredKey) {
       status: r.status,
     });
   }
-  const fprMatch = body.match(/[Ff]ingerprint:\s*([0-9A-Fa-f]{16,64})/);
-  const fpr = fprMatch ? fprMatch[1].toUpperCase() : "";
+  const fpr = fingerprintFromAddReply(body);
   return {
     fingerprint: fpr,
     directoryUrl: fpr

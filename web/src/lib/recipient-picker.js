@@ -68,8 +68,6 @@ function thisSiteLookupGetUrl(search) {
   return `/pks/lookup?${q}`;
 }
 
-const ENCRYPT_FLAG = 0x04 | 0x08;
-
 /**
  * @typedef {{
  *   fingerprint: string,
@@ -103,17 +101,62 @@ function uidLabel(uids) {
   return typeof uid === "string" ? uid : "";
 }
 
-function hasEncryptCapability(pgpKey) {
+/**
+ * Whether this certificate has expired, according to the certificate.
+ *
+ * `getExpirationTime()` answers a Date, `Infinity` for a key that never
+ * expires, or `null` for one it cannot date at all; only a Date already past is
+ * an expiry. The directory's `key_expiration` is the same fact, read by the
+ * server at ingest, and it is consulted second rather than not at all: it is
+ * the only source for a key openpgp declines to date, and it costs nothing
+ * because `loadRecipientKey` already fetched the JSON it sits in.
+ *
+ * @param {import("openpgp").Key} pgpKey
+ * @param {object} meta
+ * @returns {Promise<boolean>}
+ */
+async function hasExpired(pgpKey, meta) {
   try {
-    const keys = [pgpKey, ...(pgpKey.subkeys || []).map((s) => s)];
-    for (const k of keys) {
-      const pkt = k.keyPacket || k;
-      if (pkt && pkt.flags != null && pkt.flags & ENCRYPT_FLAG) return true;
-    }
+    const at = await pgpKey.getExpirationTime();
+    if (at instanceof Date) return at.getTime() <= Date.now();
   } catch (_) {
-    /* fall through */
+    /* fall through to what the directory said */
   }
-  return false;
+  const stated = Date.parse(meta.key_expiration || meta.keyExpiration || "");
+  return Number.isFinite(stated) && stated <= Date.now();
+}
+
+/**
+ * Why this key cannot be encrypted to, named as the state that is true.
+ *
+ * openpgp collapses distinct conditions into one rejection: a certificate with
+ * no encryption-capable subkey at all, and a certificate whose subkey is
+ * perfectly good but whose primary key has expired, both arrive here as a
+ * throw. Reporting the first for the second is the `47e7ffa` defect — a person
+ * told "no encryption-capable subkey" about a key that has one goes looking for
+ * a missing subkey that was never missing, when what they actually need is a
+ * re-issued certificate from the key's owner.
+ *
+ * There used to be a flags scan (`hasEncryptCapability`) ahead of this, but it
+ * decided nothing: both of its branches ended in the same `getEncryptionKey()`
+ * call and the same message, so the only thing it changed was how many times
+ * the key was asked. What distinguishes the two states is the expiry, and that
+ * is now what is asked.
+ *
+ * @param {import("openpgp").Key} pgpKey
+ * @param {object} meta
+ * @returns {Promise<string>} the refusal, or "" when the key can encrypt
+ */
+async function encryptionRefusal(pgpKey, meta) {
+  try {
+    await pgpKey.getEncryptionKey();
+    return "";
+  } catch (_) {
+    /* below: which of the two states this actually is */
+  }
+  return (await hasExpired(pgpKey, meta))
+    ? "Key is expired"
+    : "No encryption-capable subkey";
 }
 
 /**
@@ -141,21 +184,9 @@ async function buildRecipient(pgpKey, meta, prov = {}) {
   } else if (origin === "basilisk" && approvalState && approvalState !== "approved") {
     valid = false;
     err = `Key is ${approvalState}`;
-  } else if (!hasEncryptCapability(pgpKey)) {
-    try {
-      await pgpKey.getEncryptionKey();
-    } catch (_) {
-      valid = false;
-      err = "No encryption-capable subkey";
-    }
-  }
-  if (valid) {
-    try {
-      await pgpKey.getEncryptionKey();
-    } catch (_) {
-      valid = false;
-      err = "No encryption-capable subkey";
-    }
+  } else {
+    err = await encryptionRefusal(pgpKey, meta);
+    valid = !err;
   }
   const modernCapable = valid ? await supportsSeipdV2(pgpKey) : false;
   return {

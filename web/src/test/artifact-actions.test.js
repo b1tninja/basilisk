@@ -20,6 +20,7 @@ import {
   gatedRowReason,
 } from "../lib/toolkit/artifact-actions.js";
 import { downloadArtifactFile } from "../lib/toolkit/download-service.js";
+import { publishedHandle } from "../lib/toolkit/hkp-ops.js";
 import "../lib/toolkit/registry.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
@@ -1200,5 +1201,28 @@ describe("Publish is outward, declared once, and states its consequences (§34a/
     });
     expect(res.receipt).toBe("Published");
     expect(res.detail).toBe("https://x/pks/lookup");
+  });
+
+  it("takes the tile's handle from the directory call, not from a copy of it", () => {
+    // `tile.publishedAs` is what a person sees once a key is out, and the rule
+    // for building it used to be written inline in `useNotebook.publishArtifact`
+    // — one hop away from the only thing that knows whether the directory named
+    // a fingerprint at all. It read `$pub` for every anonymous publish this repo
+    // ever did, because `publishArmoredKey` was parsing the wrong reply, and
+    // nothing at this hop could see that. The rule now lives beside the parse.
+    const HOOK = stripComments(read("../toolkit/useNotebook.ts"));
+    expect(HOOK).toMatch(/tile\.publishedAs = publishedHandle\(fingerprint\)/);
+    expect(HOOK).toMatch(/publishArmoredKey, publishedHandle/);
+    expect(HOOK).not.toMatch(/publishedAs = fingerprint \?/);
+    expect(HOOK).not.toMatch(/fingerprint\.slice\(-8\)/);
+
+    expect(publishedHandle("3F2AB19C4D7E0518A2B6C93D4E7F0A1B2C3D4E5F")).toBe("@2C3D4E5F");
+    // Lowercase and spaced forms are the same fingerprint; the handle is not a
+    // second spelling of one.
+    expect(publishedHandle("3f2ab19c 4d7e0518 a2b6c93d 4e7f0a1b 2c3d4e5f")).toBe("@2C3D4E5F");
+    // No fingerprint is not an empty one: `$pub` says the directory did not
+    // name what it took, which is a different thing from a key with no name.
+    expect(publishedHandle("")).toBe("$pub");
+    expect(publishedHandle(null)).toBe("$pub");
   });
 });

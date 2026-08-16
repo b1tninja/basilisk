@@ -18,6 +18,33 @@ import { SLOT_SIGIL } from "./recipe-parse.js";
  */
 
 /**
+ * The first user id of a row, as a display label and an address.
+ *
+ * Every producer of a row here sends the directory's structured shape —
+ * `approved_uids: [{ raw, name, email }]` — because both of them are that
+ * shape: `key_summary(include_uids=True)` builds it on the server, and
+ * `cacheRecordToSearchHit` rebuilds it from the device cache. Reading it is
+ * what makes the two paths agree.
+ *
+ * @param {object} row
+ * @returns {{ label: string, email: string }}
+ */
+function uidOf(row) {
+  const uid = (row.approved_uids || row.pending_uids || row.uids || [])[0];
+  if (!uid) return { label: "", email: "" };
+  if (typeof uid === "string") {
+    const m = uid.match(/<([^>]+)>/);
+    return { label: uid, email: m ? m[1].toLowerCase() : "" };
+  }
+  const email = String(uid.email || "").toLowerCase();
+  const name = String(uid.name || "").trim();
+  return {
+    label: name && email ? `${name} <${email}>` : email || String(uid.raw || ""),
+    email,
+  };
+}
+
+/**
  * @param {object} row  portal search hit or loadRecipientKey result
  * @returns {ToolkitRecipient|null}
  */
@@ -36,11 +63,18 @@ export function recipientFromSearchHit(row) {
       : origin === "upstream" || origin === "import"
         ? !row.revoked
         : approvalState === "approved" && !row.revoked;
+  // The user id, after any friendly label someone set and before the last
+  // resort of showing a fingerprint where a name belongs. `row.email` used to
+  // be the only address this read, and only the device cache sends one — so a
+  // key looked anonymous the first time it was searched for and correct the
+  // second, once it was cached, with the address it should have shown sitting
+  // unread in the same payload both times.
+  const uid = uidOf(row);
   return {
     fingerprint: fpr,
     armoredPublic: String(row.armoredKey || row.armoredPublic || row.public || ""),
-    label: String(row.label || row.uid || row.userLabel || fpr),
-    email: String(row.email || ""),
+    label: String(row.label || row.uid || row.userLabel || uid.label || fpr),
+    email: String(row.email || uid.email || ""),
     approvalState,
     origin,
     sourceKeyserver: String(row.source_keyserver || row.sourceKeyserver || ""),
