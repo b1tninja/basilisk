@@ -4186,6 +4186,67 @@ export function ToolkitShell() {
                         );
                       }}
                     />
+                    {/* **The state that had no surface, which is why nobody
+                        could act on it.** A person joins a room that is already
+                        working on a notebook. They are holding nothing, and they
+                        cannot know a notebook exists — there is nothing on their
+                        screen to ask about. The dealer cannot see it either:
+                        their own notebook is right in front of them, and the
+                        share note above is the outcome of a press they made
+                        before this peer arrived.
+
+                        The session now replays a shared notebook to peers who
+                        verify afterwards, which covers the ordinary case — press
+                        Share, then people arrive. What it will not do is deliver
+                        text the dealer has since edited away from: that would
+                        land silently in an empty notebook and leave both ends
+                        believing they had agreed on a notebook only one of them
+                        held. So the retention lapses on the first keystroke, and
+                        *this line is what stands in for it* — the one remaining
+                        path from that state back to a working room.
+
+                        It names the remedy that can actually be performed: the
+                        button is directly above this sentence, and pressing it
+                        signs the notebook now on screen and sends it. No other
+                        wording would be honest, because there is nothing else
+                        either person can do.
+
+                        Drawn here rather than passed into `NotebookShare` as a
+                        note: `note` is the outcome of the last press, and a
+                        standing fact about the room overwriting it would erase
+                        the answer to something the reader just did.
+
+                        Rendered only while the notebook is non-empty — a dealer
+                        with nothing to share is not withholding anything, and
+                        the Share button already refuses that case in its own
+                        words. */}
+                    {sessionLive &&
+                    nb.source.trim() &&
+                    nb.peersWithoutNotebook.length > 0 ? (
+                      <p
+                        className="text-[10.5px] leading-snug text-[var(--muted-foreground)]"
+                        data-notebook-unshared
+                      >
+                        {nb.peersWithoutNotebook.length === 1
+                          ? "A peer in this room has not been given this notebook: "
+                          : "Peers in this room have not been given this notebook: "}
+                        {nb.peersWithoutNotebook.map((fpr, i) => (
+                          <span key={fpr}>
+                            {i > 0 ? ", " : ""}
+                            {/* Whole, never a compact form: there is no name for
+                                this key on this browser, and the row telling
+                                somebody which peer to act about is the last
+                                place to print part of who they are. */}
+                            <Fingerprint fpr={fpr} />
+                          </span>
+                        ))}
+                        {". They joined after it was shared, or it has been " +
+                          "edited here since — either way nothing has sent them " +
+                          "the text on this screen, so every cell handed to them " +
+                          "will be refused as a notebook they have not seen. "}
+                        {"Share this notebook to send it."}
+                      </p>
+                    ) : null}
                   </section>
 
                   {/* Below the connections, because it is what the connections

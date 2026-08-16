@@ -215,6 +215,24 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   A record that a claim arrived, never that it was believed: whether the cell
  *   was theirs to run and whether the values may be registered are questions for
  *   a plan this layer does not hold. Bounded the same way `attested` is.
+ * @property {boolean} notebookSent
+ *   Whether this session has written its shared notebook into this peer's
+ *   channel — at the press, or on the late delivery `_deliverSharedNotebook`
+ *   makes when they verified afterwards.
+ *
+ *   **A fact about this machine, and phrased as one.** It is not "they are
+ *   holding it": a browser that closed never fires `onclose`, so a write can
+ *   land in a channel whose far end is gone, and nothing acknowledges a
+ *   notebook — the same limit the share note already refuses to overclaim past.
+ *   What it can be trusted for is the direction that matters: `false` means
+ *   this browser has certainly not given them the notebook, which is the state
+ *   the reader has to be told about and the only one the panel speaks up on.
+ *
+ *   **Kept across a transport reset**, with `attested`, `offered` and
+ *   `returned`, and for the reason that bounds this whole mechanism rather than
+ *   theirs: a peer flapping on the relay must not be able to pull the retained
+ *   proposal out of this room on every pass. Cleared only by a fresh press,
+ *   which is a person deciding to send a notebook again.
  */
 
 /**
@@ -380,6 +398,58 @@ export class NotebookSession {
      * @type {Set<string>}
      */
     this._knocked = new Set();
+    /**
+     * The last notebook proposal a person on this machine pressed Share on,
+     * verbatim, or `""`.
+     *
+     * **Why anything is retained at all.** `_publishDocument` writes to the
+     * peers who are confirmed at the instant it runs, which made a proposal a
+     * point-in-time broadcast with no record and no replay. Press Share before
+     * your peer has meshed — which is the ordering a person reaches by
+     * accident, because the button is on the panel the moment the room opens —
+     * and the notebook went nowhere; the joiner then arrived and nothing ever
+     * gave it to them. Running did not repair it either: a run offers cells,
+     * and every cell is checked against a manifest derived from the receiving
+     * notebook, so an empty joiner refused all of them. This is `d1e8b0f`'s
+     * defect in a second place — a mechanism that exists, works, and reaches no
+     * consumer at the moment it is needed. The invite grew `knock`/`_invited`
+     * for it. The notebook proposal never did.
+     *
+     * **Replayed, never re-signed, and that is the consent argument.** These
+     * are the bytes a person pressed Share on, signed under the key the session
+     * was opened with at the moment of the press — the boundary `shareNotebook`
+     * in `useNotebook.ts` argues is stronger than `sendCellResult`'s, because
+     * the receiving end has nothing of its own to check a notebook against.
+     * Handing the identical armored document to a peer who was not there is the
+     * same act reaching the audience it was aimed at; the recipient's check is
+     * bit-for-bit the check they would have made had they been meshed at the
+     * press. Signing again on delivery would be the opposite: this session
+     * putting a person's name on bytes at a moment they pressed nothing. So
+     * this field holds the *document*, not the text — there is nothing here
+     * that could be re-signed even by mistake.
+     *
+     * **It is not an ambient broadcast**, and the difference is this field
+     * going empty. `retireSharedNotebook` is called by the editor the instant
+     * the text on screen moves, so what is retained is only ever a notebook
+     * somebody pressed Share on and is still holding. A dealer who types after
+     * pressing Share has no retention, and a newcomer gets nothing — because
+     * delivering the older text silently is worse than delivering none of it:
+     * the joiner would adopt into an empty notebook without being asked, both
+     * ends would believe they had agreed, and the digest gate would refuse
+     * every cell for a reason neither of them could see. The reader is told
+     * instead, through `notebookSent` on the roster.
+     *
+     * **Not persisted, and not outliving the session.** `stop()` drops it with
+     * the room key and the invite material. It is recipe text, which is exactly
+     * what must not go near `localStorage` — and `buildNotebookProposal` has
+     * already refused anything `recipeLooksSecret` flags before this could ever
+     * hold it. What it adds to this page's memory is a second string copy of a
+     * notebook whose first copy is the editor's own state for the whole
+     * session, so `memory-safety.js`'s rule 1 has nothing to bite on here;
+     * rule 5 is why the teardown drops the reference.
+     * @type {string}
+     */
+    this._sharedNotebook = "";
     /**
      * Whether `stop()` has run. Read only by `_sealAndSend`, which explains
      * there why a torn-down session's late signalling is dropped in silence
@@ -794,6 +864,12 @@ export class NotebookSession {
     this.inviteNonce = "";
     this._invited.clear();
     this._knocked.clear();
+    // The retained proposal goes with the room key and the invite material, and
+    // for the same reason: it is session-scoped state that must not outlive the
+    // session. It is also the only notebook text this class holds — dropping
+    // the reference is `memory-safety.js`'s rule 5 on a string this room has no
+    // further use for.
+    this._sharedNotebook = "";
     for (const fpr of this.peers.keys()) {
       // Out of the shared inventory before the transports go: the session owns
       // these connections and is tearing them down itself, so `deregisterLink`
@@ -936,11 +1012,118 @@ export class NotebookSession {
    * that needs everybody to hold the notebook must compare it against the
    * roster. Nothing here can make an unmeshed peer appear.
    *
+   * **What it does do is remember**, which is the whole of the fix for a press
+   * made before the room meshed. The document is retained as `_sharedNotebook`
+   * and replayed to each peer at the instant they verify — unchanged, unsigned
+   * again, once per member — so the count above stops being the last word on
+   * who ever receives this. See `_sharedNotebook` for the consent argument and
+   * `retireSharedNotebook` for the edit that ends it.
+   *
    * @param {string} signed  armored cleartext-signed notebook proposal
    * @returns {Promise<number>} peers written to
    */
   async shareNotebook(signed) {
-    return this._publishDocument("notebook", signed);
+    const doc = String(signed ?? "");
+    // Before anything is retained or cleared, so a document that cannot be sent
+    // leaves this session exactly as it found it — still holding whatever the
+    // last good press put there, still knowing who has it.
+    this._assertDocumentSendable("notebook", doc);
+    // A new document, so nobody has this one. Set before the write rather than
+    // after it, and that ordering is the whole of the race: a peer who verifies
+    // *during* the loop is either reached by it and marked, or is not yet
+    // confirmed when the loop passes them and is reached by
+    // `_deliverSharedNotebook` on the strength of this field. There is no
+    // instant at which the retention is absent and the loop has moved on.
+    this._sharedNotebook = doc;
+    for (const peer of this.peers.values()) peer.notebookSent = false;
+    const sent = await this._publishDocument("notebook", doc);
+    // `notebookSent` moved on both sides of that call — cleared above, set again
+    // for everyone it reached — and it is a peer fact the reader is shown. So
+    // the roster is told. Without this line the panel naming who is holding
+    // nothing went on naming somebody the press had just written to, until an
+    // unrelated event happened to refresh it: a warning that outlives the
+    // condition it is about, which is worse than no warning, because the reader
+    // presses the button again and nothing they can see changes.
+    this._emitRoster();
+    return sent;
+  }
+
+  /**
+   * Stop holding the last shared notebook, because it is no longer this
+   * machine's.
+   *
+   * Called by the editor whenever the notebook on screen moves — a keystroke, a
+   * cell added, a peer's notebook adopted. **The session cannot see that
+   * itself**: it holds a signed document, not the text, and comparing the two
+   * would mean this layer parsing a proposal to re-derive a decision the layer
+   * above already has in front of it.
+   *
+   * This is what keeps the retention from becoming an ambient broadcast of
+   * whatever the dealer is typing. What is retained is only ever a notebook
+   * somebody pressed Share on *and is still holding*; the moment those two come
+   * apart there is nothing to deliver, and a peer who joins into that gap is
+   * reported to the reader rather than handed text that has gone stale.
+   *
+   * Deliberately does not touch `notebookSent`. That records what was actually
+   * written to whom, and forgetting it because the author typed a character
+   * would re-send the same document to everybody on their next reconnect.
+   *
+   * @returns {boolean} whether anything was being held
+   */
+  retireSharedNotebook() {
+    const had = !!this._sharedNotebook;
+    this._sharedNotebook = "";
+    return had;
+  }
+
+  /**
+   * Hand the retained proposal to one peer who has just proved their key.
+   *
+   * **The same broadcast, narrowed to the peer who missed it.** It goes through
+   * `_publishDocument` with `only` rather than through a second sender, so
+   * there is one piece of code that puts a notebook on the wire and no way for
+   * a late delivery to differ from the press in framing, in encryption, or in
+   * what the far end has to check. The bytes are the ones that were signed; see
+   * `_sharedNotebook` for why they are replayed and never re-signed.
+   *
+   * Three things bound it, and none of them is a timer — the shape `_onKnock`
+   * argues for the invite:
+   *
+   * *Whether there is anything to give.* An empty `_sharedNotebook` is a
+   * session where nobody has pressed Share, or one where they have typed since,
+   * and both are states with nothing anyone consented to send.
+   *
+   * *Who has been served.* `notebookSent` is per peer and survives a transport
+   * reset, so a peer flapping on the relay cannot pull the proposal out of this
+   * room on every pass, and a reconnect is not a second delivery. Only a fresh
+   * press clears it.
+   *
+   * *Whether this session is still up.* `_stopped` is checked because
+   * everything `stop()` does makes an in-flight send fail, and this one is
+   * reached from a channel callback that can outlive the press that armed it.
+   *
+   * Errors are reported and swallowed: this is not a call anybody made, so
+   * there is no caller to hand a rejection to, and letting one escape a message
+   * handler would tear down the frame loop for the whole room.
+   *
+   * @param {string} peerFpr
+   * @param {NotebookPeerState} peer
+   */
+  async _deliverSharedNotebook(peerFpr, peer) {
+    if (this._stopped || !this._sharedNotebook || peer.notebookSent) return;
+    try {
+      const sent = await this._publishDocument("notebook", this._sharedNotebook, {
+        only: peerFpr,
+      });
+      // Named as the write it is. "Sent them the notebook" would be the claim
+      // the share note already refuses to make: nothing acknowledges a
+      // notebook, so what this end knows is that bytes went into a channel.
+      if (sent) {
+        this.onStatus?.("Wrote the shared notebook to a peer who joined after it was shared");
+      }
+    } catch (err) {
+      this.onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
   /**
@@ -1084,8 +1267,46 @@ export class NotebookSession {
    * @param {string} signed
    * @returns {Promise<number>}
    */
-  async _publishDocument(kind, signed) {
+  async _publishDocument(kind, signed, { only = "" } = {}) {
     const doc = String(signed ?? "");
+    this._assertDocumentSendable(kind, doc);
+    const body = JSON.stringify({ kind, doc, ts: Date.now() });
+    let sent = 0;
+    for (const [peerFpr, peer] of this.peers) {
+      if (only && peerFpr !== only) continue;
+      if (
+        !peer.channel ||
+        peer.channel.readyState !== "open" ||
+        !peer.sessionKey ||
+        !peer.kcVerified
+      ) {
+        continue;
+      }
+      const blob = await encryptSessionPayload(peer.sessionKey, body);
+      peer.channel.send(JSON.stringify({ v: 1, blob }));
+      // Written down here rather than by either caller, so the record cannot
+      // disagree with what actually left: a late delivery that fell out of the
+      // loop on a closed channel must not be remembered as one that happened,
+      // or the peer it silently skipped would never be reported as empty.
+      if (kind === "notebook") peer.notebookSent = true;
+      sent += 1;
+    }
+    return sent;
+  }
+
+  /**
+   * Whether this document may go on the wire at all, asked without sending it.
+   *
+   * Split out of `_publishDocument` because `shareNotebook` has to know the
+   * answer *before* it retains anything: a document this session would refuse
+   * to send is not one it may hold on to and hand somebody later. Both checks
+   * are pure, so asking twice costs nothing and asking in the wrong order would
+   * cost a retained document that can never be delivered.
+   *
+   * @param {"attestation"|"notebook"} kind
+   * @param {string} doc
+   */
+  _assertDocumentSendable(kind, doc) {
     // The kind is the wire's word for the document; this is the reader's. They
     // differ for exactly one of the two, and letting the wire's word into a
     // sentence would produce "notebook: notebook must arrive already signed",
@@ -1101,22 +1322,6 @@ export class NotebookSession {
           "peers; it does not sign on anyone's behalf."
       );
     }
-    const body = JSON.stringify({ kind, doc, ts: Date.now() });
-    let sent = 0;
-    for (const peer of this.peers.values()) {
-      if (
-        !peer.channel ||
-        peer.channel.readyState !== "open" ||
-        !peer.sessionKey ||
-        !peer.kcVerified
-      ) {
-        continue;
-      }
-      const blob = await encryptSessionPayload(peer.sessionKey, body);
-      peer.channel.send(JSON.stringify({ v: 1, blob }));
-      sent += 1;
-    }
-    return sent;
   }
 
   /**
@@ -1624,6 +1829,7 @@ export class NotebookSession {
       attested: new Map(),
       offered: new Set(),
       returned: new Set(),
+      notebookSent: false,
     };
   }
 
@@ -1798,6 +2004,18 @@ export class NotebookSession {
           this._emitRoster();
           this.onStatus?.("Peer verified — secure channel ready");
           await this._maybeSendKeyConfirm(peerFpr);
+          // The one place `kcVerified` becomes true, which is why the late
+          // delivery hangs here and nowhere else: it is the instant a peer
+          // becomes somebody `_publishDocument` would have written to, and the
+          // whole defect was that the press had already happened by then.
+          // After the key confirmation, because a peer who has not had ours
+          // cannot read what we send.
+          await this._deliverSharedNotebook(peerFpr, peer);
+          // The delivery moved `notebookSent`, and that is a peer fact the
+          // reader is shown — so the roster is emitted again rather than
+          // leaving the panel reporting this peer as empty until the next
+          // unrelated event happened to refresh it.
+          this._emitRoster();
         } else {
           peer.status = "failed";
           this.onError?.(new Error("Key confirmation failed"));

@@ -412,7 +412,10 @@ describe("the notebook on the wire", () => {
     );
 
     expect(await creator.session.shareNotebook(signed)).toBe(1);
-    expect(await until(() => joiner.notebooks.length > 0)).toBe(true);
+    expect(
+      await until(() => joiner.notebooks.length > 0, 3000),
+      "the notebook was never given to the peer who joined after the press"
+    ).toBe(true);
 
     const got = joiner.notebooks[0];
     // Who sent it is the channel's answer, not a field the sender chose — the
@@ -488,6 +491,230 @@ describe("the notebook on the wire", () => {
 
     expect(joiner.notebooks).toHaveLength(0);
     expect(joiner.errors).toEqual([]);
+  });
+});
+
+/* ───────────────── shared before the other end had arrived ───────────────── */
+
+/**
+ * A creator alone in an open room, with every introduction already spent.
+ *
+ * `settle()` between the two starts is the point rather than a precaution — it
+ * is `startCreatorFirst`'s own argument, and here it buys the specific state the
+ * owner reported: a session that is up, has published everything it has to
+ * publish, and has nobody confirmed. Share pressed here reaches zero peers, and
+ * that count was the last word on who would ever receive the notebook.
+ */
+async function creatorAlone() {
+  pair = await makeQuorumPair();
+  await pair.creator.session.start();
+  await pair.settle();
+  return pair;
+}
+
+/** Bring the joiner in and wait until both ends have confirmed each other. */
+async function joinerArrives() {
+  await pair.joiner.session.start();
+  const ok = await until(
+    () =>
+      pair.creator.session.peers.get(pair.joiner.fpr)?.kcVerified === true &&
+      pair.joiner.session.peers.get(pair.creator.fpr)?.kcVerified === true
+  );
+  expect(
+    ok,
+    `errors: ${[...pair.creator.errors, ...pair.joiner.errors].map((e) => e.message)}`
+  ).toBe(true);
+  await pair.settle();
+}
+
+describe("a notebook shared before anybody had meshed", () => {
+  it("reaches nobody at the press, and says so with a count of zero", async () => {
+    const { creator } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    // The reported failure's first half, and it was never the wrong answer:
+    // there is genuinely nobody to write to. What was wrong is what happened
+    // next, which was nothing.
+    expect(await creator.session.shareNotebook(signed)).toBe(0);
+  });
+
+  it("reaches the peer who arrives afterwards, with no second press", async () => {
+    const { creator, joiner } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    await creator.session.shareNotebook(signed);
+    expect(joiner.notebooks).toHaveLength(0);
+
+    await joinerArrives();
+
+    // The whole defect, inverted. Nothing was pressed between the share above
+    // and this line; the joiner simply turned up.
+    expect(
+      await until(() => joiner.notebooks.length > 0, 3000),
+      "the notebook was never given to the peer who joined after the press"
+    ).toBe(true);
+    expect(joiner.notebooks[0].proposal.source).toBe(HANDED);
+    expect(joiner.notebooks[0].proposal.title).toBe(TITLE);
+    expect(joiner.notebooks[0].from).toBe(creator.fpr);
+    expect(joiner.errors).toEqual([]);
+  });
+
+  it("replays the very bytes that were signed, rather than signing again", async () => {
+    const { creator, joiner } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    await creator.session.shareNotebook(signed);
+    await joinerArrives();
+    expect(
+      await until(() => joiner.notebooks.length > 0, 3000),
+      "the notebook was never given to the peer who joined after the press"
+    ).toBe(true);
+
+    // **This is the consent argument, as an assertion.** What arrives is
+    // byte-for-byte the document a person pressed Share on — same signature,
+    // same signing moment, same bytes — so the recipient's check is exactly the
+    // check they would have made had they been in the room at the press. A
+    // delivery that re-signed would produce a different armor here (two
+    // signatures over identical text never match), and would mean this session
+    // putting somebody's name on a document at a moment they pressed nothing.
+    expect(joiner.notebooks[0].signed).toBe(signed);
+  });
+
+  it("hands it over once per member, so a reconnect cannot pull it again", async () => {
+    const { creator, joiner } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    await creator.session.shareNotebook(signed);
+    await joinerArrives();
+    expect(
+      await until(() => joiner.notebooks.length > 0, 3000),
+      "the notebook was never given to the peer who joined after the press"
+    ).toBe(true);
+
+    // The bound `_invited` and `_knocked` put on the two invite halves, on this
+    // half: a peer flapping on the relay re-verifies, and must not draw the
+    // proposal out of the room on every pass. Driven by calling the delivery
+    // again rather than by tearing a transport down, because the guard is what
+    // is being asked about and a rebuilt transport would also be asking whether
+    // the mesh heals.
+    const peer = creator.session.peers.get(joiner.fpr);
+    expect(peer.notebookSent).toBe(true);
+    await creator.session._deliverSharedNotebook(joiner.fpr, peer);
+    await pair.settle();
+    expect(joiner.notebooks).toHaveLength(1);
+  });
+
+  it("is re-armed by a fresh press, which is a person deciding again", async () => {
+    const { creator, joiner } = await creatorAlone();
+    await creator.session.shareNotebook(
+      await cleartext(
+        proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+        creator.privateKey
+      )
+    );
+    await joinerArrives();
+    expect(
+      await until(() => joiner.notebooks.length > 0, 3000),
+      "the notebook was never given to the peer who joined after the press"
+    ).toBe(true);
+
+    // The once-per-member bound is scoped to a document, not to a session — the
+    // remedy the panel names has to work. A second press is a second act of
+    // consent over different text and clears what the first one recorded.
+    const revised = "bytes c0ffee | encode hex | out $seed";
+    await creator.session.shareNotebook(
+      await cleartext(
+        proposalToJson(buildNotebookProposal({ title: TITLE, source: revised })),
+        creator.privateKey
+      )
+    );
+    expect(
+      await until(() => joiner.notebooks.length > 1, 3000),
+      "a second press did not re-arm the retention"
+    ).toBe(true);
+    expect(joiner.notebooks[1].proposal.source).toBe(revised);
+  });
+
+  it("delivers nothing once the dealer has typed past what they signed", async () => {
+    const { creator, joiner } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    await creator.session.shareNotebook(signed);
+    // What the editor says when the text on screen moves. Delivering the older
+    // document here is the failure that would be worse than the one being
+    // fixed: the joiner's notebook is empty, so `decideProposal` adopts it
+    // *without asking*, and both ends then believe they agreed on a notebook
+    // only one of them is holding.
+    expect(creator.session.retireSharedNotebook()).toBe(true);
+
+    await joinerArrives();
+    await pair.settle();
+
+    expect(joiner.notebooks).toHaveLength(0);
+    expect(joiner.errors).toEqual([]);
+    // And the peer is reported as one this browser has not written to, which is
+    // the fact the panel turns into a sentence with a remedy on it.
+    expect(creator.session.peers.get(joiner.fpr).notebookSent).toBe(false);
+  });
+
+  it("tells the roster when a press changes who is holding it", async () => {
+    const { creator, joiner } = await creatorAlone();
+    await joinerArrives();
+    const before = creator.rosters.length;
+    await creator.session.shareNotebook(
+      await cleartext(
+        proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+        creator.privateKey
+      )
+    );
+    // **The panel is drawn from the roster, and `notebookSent` moves inside the
+    // press.** Without an emit here the line naming who is holding nothing went
+    // on naming a peer the press had just written to, until some unrelated
+    // event refreshed it — a warning that outlives its own condition, which
+    // teaches the reader that pressing the button does nothing. Caught by the
+    // browser suite pressing Share a second time, not by anything below it.
+    //
+    // The *count* and not the contents: `onRoster` hands out the live peer map,
+    // so every entry is the same object and only the fact that an emit happened
+    // is observable from here.
+    expect(creator.rosters.length).toBeGreaterThan(before);
+    expect(creator.session.peers.get(joiner.fpr).notebookSent).toBe(true);
+  });
+
+  it("retains nothing it would have refused to send", async () => {
+    const { creator } = await creatorAlone();
+    const raw = proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED }));
+    await expect(creator.session.shareNotebook(raw)).rejects.toThrow(
+      /notebook proposal must arrive here already signed/
+    );
+    // A document this session refuses to put on the wire is not one it may hold
+    // and hand somebody later — so the refusal happens before anything is kept.
+    expect(creator.session._sharedNotebook).toBe("");
+  });
+
+  it("does not outlive the session that held it", async () => {
+    const { creator } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    await creator.session.shareNotebook(signed);
+    expect(creator.session._sharedNotebook).toBe(signed);
+    // Recipe text, session-scoped, dropped with the room key and the invite
+    // material — `memory-safety.js`'s rule 5 on the one notebook string this
+    // class holds.
+    creator.session.stop();
+    expect(creator.session._sharedNotebook).toBe("");
   });
 });
 
@@ -585,6 +812,64 @@ describe("who consumes this", () => {
     // learned about.
     expect(FRAGMENT).toMatch(/from "\.\/recipe-secrets\.js"/);
     expect(FRAGMENT).not.toMatch(/BEGIN PGP PRIVATE KEY BLOCK/);
+  });
+
+  it("retires the retained notebook from the editor, on every mutation at once", () => {
+    // **The retention is only honest while something invalidates it**, and the
+    // session cannot: it holds a signed document and cannot see the editor. If
+    // this effect went missing the mechanism would stop being a fix and become
+    // a worse bug — a newcomer silently adopting text the dealer had typed past.
+    //
+    // The dependency list is the assertion, not the call. `source` is the
+    // re-serialisation of whatever the notebook compiled to, so every mutator
+    // that exists or ever will — typing, adding a cell, deleting one, adopting
+    // a peer's — moves it, and none of them has to remember this. A boolean
+    // "has been edited" maintained per mutator is the shape whose failure mode
+    // is silent and destructive; `decideProposal` refuses one for the same
+    // reason and says so at length.
+    expect(HOOK).toMatch(
+      /useEffect\(\(\) => \{\s*getLiveSession\(\)\?\.retireSharedNotebook\(\);\s*\}, \[source, title\]\);/
+    );
+    // Half the manifest digest is the title, so a rename is a different
+    // notebook to every check on the receiving end.
+    expect(HOOK).toMatch(/\}, \[source, title\]\);/);
+    // And the editor never hands the session replacement text — that would be
+    // a share on every keystroke, which is the ambient broadcast this must not
+    // become. `retireSharedNotebook` takes no argument, and this is the line
+    // that keeps it that way.
+    expect(HOOK).not.toMatch(/retireSharedNotebook\(\s*[^)\s]/);
+  });
+
+  it("tells the dealer which peers are holding nothing, and names a remedy", () => {
+    // The other half of the design, and the half with no mechanism before this:
+    // a newcomer with an empty notebook in a room that has a shared one is a
+    // state *nothing surfaced*, and a person cannot act on what nothing tells
+    // them. The dealer's own screen is full of the notebook; the joiner has
+    // nothing to ask about.
+    expect(HOOK).toMatch(/const peersWithoutNotebook = useMemo/);
+    // Verified peers only — one still meshing has missed nothing, and naming
+    // them would ask the reader to act on a race.
+    expect(HOOK).toMatch(/peer\.kcVerified && !peer\.notebookSent/);
+    // Reachable by a person: exported from the hook and drawn by the shell.
+    expect(HOOK).toMatch(/^\s{4}peersWithoutNotebook,$/m);
+    expect(SHELL).toMatch(/nb\.peersWithoutNotebook\.length > 0/);
+    expect(SHELL).toMatch(/data-notebook-unshared/);
+    // The sentence names the state that is true and a remedy that can be
+    // performed — the button is directly above it. "Ask them to share" would
+    // name an act the other end has no way to know it should make.
+    expect(SHELL).toMatch(/has not been given this notebook/);
+    expect(SHELL).toMatch(/Share this notebook to send it/);
+    // Whole keys. The row telling somebody which peer to act about is the last
+    // place to print part of who they are, so it is the `Fingerprint` placard
+    // and never a hand-rolled abbreviation.
+    const line = /\{sessionLive &&[\s\S]*?\) : null\}/.exec(SHELL);
+    expect(line, "the unshared-peers line is not where this test thinks it is").toBeTruthy();
+    expect(line[0]).toMatch(/<Fingerprint fpr=\{fpr\} \/>/);
+    expect(line[0]).not.toMatch(/slice\(|substring\(|…/);
+    // Not folded into the share note: that is the outcome of the last press,
+    // and a standing fact about the room overwriting it would erase the answer
+    // to something the reader just did.
+    expect(line[0]).not.toMatch(/setNotebookShareNote/);
   });
 
   it("says in the codec that an invite still carries no recipe, and how one travels now", () => {

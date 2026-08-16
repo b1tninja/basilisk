@@ -19,6 +19,7 @@ import {
   buildNotebookProposal,
   decideProposal,
   proposalToJson,
+  sameNotebook,
 } from "../lib/toolkit/notebook-share.js";
 import {
   attestationToJson,
@@ -2817,6 +2818,13 @@ export function useNotebook() {
           "nowhere. It is still here — share it again once a peer is verified.",
       };
     }
+    // The session retains this document and replays it, unchanged, to any peer
+    // who verifies later — which is the whole of the fix for a press made
+    // before the room had meshed, and is `shareNotebook`'s own business rather
+    // than anything this call has to arrange. What *is* this layer's business
+    // is the effect below, which tells the session to stop holding it the
+    // moment the text on screen stops being what was signed here.
+    //
     // `adoptedRef` is deliberately not touched. It records what this browser
     // took from a peer, and sharing is the other direction — writing this
     // browser's own text into it would make the *next* proposal from whoever it
@@ -2825,6 +2833,102 @@ export function useNotebook() {
     // `considerProposal`, which needs no record at all.
     return { ok: true, sent };
   }, [source, title]);
+
+  /**
+   * Tell the session to stop holding the last shared notebook, because this one
+   * has moved.
+   *
+   * **This is what keeps the retention honest, and without it the feature would
+   * be a bug rather than a fix.** The session replays the document a person
+   * pressed Share on to peers who arrive afterwards. That is defensible exactly
+   * as long as the document is still what the person is looking at: replaying
+   * it is the same act reaching the audience it was aimed at. The moment they
+   * type, it stops being that — the retained text is a revision behind, and a
+   * newcomer with an empty notebook would adopt it *without being asked*
+   * (`decideProposal`'s rule, correctly, since they have no work to lose) and
+   * end up holding a notebook the dealer is not. Both ends would believe they
+   * had agreed. Every cell handed across would then be refused by the digest
+   * gate, for a reason neither of them could see, which is precisely the state
+   * the whole notebook-sharing feature exists to get people out of.
+   *
+   * So the rule is: never deliver text the person is no longer holding. The
+   * session cannot enforce that — it holds a signed document and has no idea
+   * what the editor is showing — so the editor says so, here.
+   *
+   * **The session is not told what the new text is**, only that the old
+   * agreement lapsed. Handing it the current text would be this effect sharing
+   * a notebook on every keystroke, which is the ambient auto-broadcast that
+   * must not exist: what leaves this machine leaves because somebody pressed
+   * Share.
+   *
+   * Runs for `title` as well as `source` because half the manifest digest is
+   * made of the title, so a renamed notebook is a different notebook to every
+   * check on the receiving end.
+   *
+   * A newcomer who arrives into that lapsed state gets nothing, and that is
+   * where `peersWithoutNotebook` takes over: the reader is told, and re-pressing
+   * Share is a remedy that works.
+   */
+  useEffect(() => {
+    getLiveSession()?.retireSharedNotebook();
+  }, [source, title]);
+
+  /**
+   * Verified peers this browser has not written its notebook to.
+   *
+   * **A state nothing in this product used to surface, which is why the bug it
+   * comes from could not be acted on.** A person joins a room that is already
+   * working on a notebook, holds nothing, and has nothing to ask about — they
+   * cannot know a notebook exists. The dealer cannot see it either: their own
+   * screen is full of the notebook, and the share note is the outcome of a press
+   * they made minutes ago. Both ends are stuck and neither is told.
+   *
+   * Read off the live session rather than out of `quorumState.peers`, which
+   * carries a projection this fact is not in. `quorumState` is still the
+   * dependency, because it is the snapshot the roster dispatches on — so the
+   * event says *the room changed, look again* and the session answers what
+   * changed. Reading the session and re-rendering on a mirror of it would be
+   * two answers to one question.
+   *
+   * `kcVerified` and not merely present: a peer still meshing has not missed
+   * anything, and naming them here would ask the reader to act on a race.
+   *
+   * The claim is deliberately about this machine — *not written to* — and never
+   * "they do not have a notebook". Somebody else in a three-way room may have
+   * given them one, nothing acknowledges a notebook, and a browser that closed
+   * still reads as an open channel. `false` is the direction this can be trusted
+   * in, and it is the direction that needs a sentence.
+   *
+   * **The one peer who is excluded is the one this notebook came from**, while
+   * it is still their text. Without that line every joiner who adopted a
+   * notebook would be told that the person who *sent* it to them is not holding
+   * it — true in the narrow sense that this browser has written nothing to
+   * them, and useless in every sense that matters, because the two ends are
+   * exactly in sync. A warning that fires hardest on the room that is working
+   * correctly is how readers learn to stop reading warnings.
+   *
+   * `sameNotebook` and not a flag: the moment the reader edits what they
+   * adopted, the two ends really have diverged and the sender goes back on the
+   * list. That is the same text-to-text comparison `decideProposal` uses to
+   * detect an edit, and for the reason argued there — a boolean maintained at
+   * every mutator fails silently when somebody adds a mutator.
+   */
+  const peersWithoutNotebook = useMemo<string[]>(() => {
+    const session = getLiveSession();
+    if (!session) return [];
+    const adopted = adoptedRef.current;
+    const cameFrom =
+      adopted && sameNotebook(adopted, { title, source }) ? adopted.from : "";
+    const out: string[] = [];
+    for (const [fpr, peer] of session.peers) {
+      if (peer.kcVerified && !peer.notebookSent && fpr !== cameFrom) out.push(fpr);
+    }
+    return out;
+    // `adoptedRef` is a ref and cannot be a dependency; `source`/`title` are
+    // what move when its answer changes, and `quorumState` is the snapshot the
+    // roster dispatches on. Between them every input to this is covered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quorumState, source, title]);
 
   /**
    * The attestation this browser signed over its own run manifest, or null.
@@ -3525,6 +3629,7 @@ export function useNotebook() {
     sendCellResult,
     acceptHandoff,
     shareNotebook,
+    peersWithoutNotebook,
     attestManifest,
     attestation,
     proposedNotebook,
