@@ -357,8 +357,20 @@ describe("toolkit recover / shares", () => {
         },
       },
     });
-    expect(out[0].content.length).toBeGreaterThan(20);
-    expect(base64ToBytes(out[0].content).length).toBe(32);
+    // By slot, not by position. The recovery template tees a digest of what it
+    // recombined into `$recovered` — a plain Shamir recombination of a
+    // mismatched set returns a *different* secret rather than an error, so the
+    // digest is the only thing that says the right bytes came back — and a tee
+    // branch emits before the stem continues, so `out[0]` is that digest now.
+    // The assertion was always about `$secret`.
+    const secretArt = out.find((a) => /\bsecret\b/.test(a.label || ""));
+    expect(secretArt, "the $secret tile").toBeTruthy();
+    expect(secretArt.content.length).toBeGreaterThan(20);
+    expect(base64ToBytes(secretArt.content).length).toBe(32);
+    // And the check the branch exists for: the digest is of those same bytes.
+    const recoveredArt = out.find((a) => /\brecovered\b/.test(a.label || ""));
+    expect(recoveredArt, "the $recovered digest tile").toBeTruthy();
+    expect(recoveredArt.content).toMatch(/^[0-9a-f]{64}$/);
   }, 30_000);
 
   it("preset rebuild-p256 recovers scalar split", async () => {

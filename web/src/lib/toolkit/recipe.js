@@ -2747,7 +2747,7 @@ export const PRESET_GROUP_ORDER = Object.freeze([
  * `group` is the only field read, and it is read with a fallback — so this
  * takes anything that names one. `typeof PRESETS` demanded the whole inferred
  * literal union, which the Templates menu's own rows do not satisfy.
- * @param {{ group?: string }[]} [presets]
+ * @param {readonly { group?: string }[]} [presets]
  * @returns {string[]}
  */
 export function listPresetGroups(presets = PRESETS) {
@@ -2760,11 +2760,92 @@ export function listPresetGroups(presets = PRESETS) {
 }
 
 /**
+ * The company a notebook needs before it can do anything.
+ *
+ * `solo` is a machine standing alone — which is what the overwhelming majority
+ * of this gallery is, and why the field is omitted there rather than typed out
+ * seventy times. `room` is a live `quorum.offer`/`quorum.join` exchange with
+ * somebody else meshed into it.
+ *
+ * There is deliberately **no `peer` value**, and the absence is the finding
+ * rather than an oversight. A `peer.*`-shaped tier would have exactly zero
+ * members: `peer.offer`/`peer.answer`/`peer.accept`/`peer.wait` are the
+ * *managed hand-carried* layer, and `sdp-hand-carried` — the template that uses
+ * all of them — runs both ends in one notebook on purpose ("both ends live in
+ * this notebook, so it connects to itself"). `rtc.ice`, `rtc.gather` and
+ * `rtc.certificate` likewise run alone; `rtc.gather`'s own doc says "run it
+ * standalone to see why a later connection failed". A category with no members
+ * is a label that can only ever be applied wrongly, so it is not offered.
+ *
+ * @typedef {"solo"|"room"} Company
+ */
+
+/**
+ * What company this recipe's own text requires — derived, never taken on trust.
+ *
+ * Two things put a notebook in a room, and both are read structurally rather
+ * than by matching op names against a prefix:
+ *
+ * 1. **A `@peer` header.** A placed cell runs on somebody else's machine, so
+ *    the notebook needs that somebody.
+ * 2. **A step whose registry entry declares `company`.** That is where the
+ *    knowledge lives, because the op's own doc string is where it was already
+ *    written down — and because a prefix rule gets it wrong in this registry:
+ *    `rtc.check` needs the exchange and `rtc.gather` explicitly does not.
+ *
+ * Bodies and `tee` branches are walked, because `scatter to=room` keeps its
+ * only interesting step (`send to=each`) inside one.
+ *
+ * @param {string|{ chains?: *[], steps?: *[] }} astOrSource
+ * @returns {Company}
+ */
+export function recipeCompany(astOrSource) {
+  const ast =
+    typeof astOrSource === "string"
+      ? parseRecipe(astOrSource).ast
+      : astOrSource;
+  if (!ast) return "solo";
+  for (const chain of recipeChains(ast)) {
+    if (String(chain?.peer || "").trim()) return "room";
+    if (stepsWantCompany(chain?.steps)) return "room";
+  }
+  return "solo";
+}
+
+/**
+ * Whether any step here — or in any body or branch below it — declares that it
+ * reads a live exchange.
+ * @param {*[]} [steps]
+ * @returns {boolean}
+ */
+function stepsWantCompany(steps) {
+  for (const step of steps || []) {
+    if (getStep(step?.name)?.company === "room") return true;
+    if (stepsWantCompany(step?.body)) return true;
+    for (const br of step?.branches || []) {
+      if (stepsWantCompany(br?.body)) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Preset recipes for the Templates menu.
  *
  * `group` clusters presets under a category. Presets sharing a `pair` value are
  * companion pipelines (forward ⇄ inverse, e.g. split/recover or encrypt/decrypt)
  * and render side by side; the one listed first appears on the left.
+ *
+ * `company` declares what the recipe needs before it can run, and is **checked
+ * against the recipe's own steps** by `preset-company.test.js` rather than
+ * believed. That check is the whole value of the field: three templates in this
+ * list were named for rooms they never entered for as long as nothing compared
+ * the name to the pipeline. Absent means `solo`, so a room template that forgets
+ * to declare fails the same comparison as one that declares the wrong thing.
+ *
+ * Every entry here is recipe *text* that compiles — that is what the sweeps in
+ * `recipe-roundtrip`, `run-plan-differential` and `recipe.test.js` assert over
+ * this array. The gallery shows more than this: see `ROOM_TEMPLATES`.
  */
 export const PRESETS = [
   {
@@ -3100,9 +3181,12 @@ in $cek | export jwk | out $cek-jwk`,
     id: "slip39-split",
     group: "Split & recover",
     pair: "slip39-secret",
-    title: "SSS + BLIP39 split a secret",
-    blurb: "Generate 32 random bytes, Shamir-split 2-of-3, encode as BLIP39 mnemonics.",
-    recipe: `random 32 | sss.split 2/3 | blip39 | foreach
+    title: "Split a secret onto cards, on this machine",
+    blurb:
+      "The dealt split for a room that is not online: this machine draws the secret, sees all three mnemonics, and you write them onto cards. The tee is what makes that survivable — a SHA-256 of the master goes to $expected while the master itself reaches no slot, so a recovery years later can be checked without the secret being shown again. When the holders are in a live room instead, deal it over the wire from “Deal a split across a room” — that one never leaves a share behind.",
+    recipe: `random 32 | tee
+  - digest sha-256 | encode hex | out $expected
+| sss.split 2/3 | blip39 | foreach
   - out $share`,
   },
   {
@@ -3110,17 +3194,22 @@ in $cek | export jwk | out $cek-jwk`,
     group: "Split & recover",
     pair: "slip39-secret",
     title: "Recover secret from BLIP39 shares",
-    blurb: "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64.",
-    recipe: "shares | blip39.decode | sss.combine | base64 | out $secret",
+    blurb:
+      "Paste K-of-N mnemonics, decode to raw SSS, reconstruct the 16/32-byte master as Base64. The digest branch is the half that tells you it worked: recombining a corrupted or mismatched set returns a *different* secret rather than an error, so $recovered is what you compare against the $expected the split kept.",
+    recipe: `shares | blip39.decode | sss.combine | tee
+  - digest sha-256 | encode hex | out $recovered
+| base64 | out $secret`,
   },
   {
     id: "ceremony-receipt",
     group: "Ceremony",
     pair: "ceremony-audit",
-    title: "Sign a run receipt",
+    title: "Sign a receipt for a solo split",
     blurb:
-      "Split a secret, then mint a receipt of the run — recipe, timestamps, and digests of every output, never the outputs — and OpenPGP-sign it with a vault key.",
-    recipe: `random 32 | sss.split 2/3 | blip39 | foreach
+      "A run to have a receipt of, and then the receipt: one machine splits a secret onto cards — nobody else is involved and no room is opened — and `run.receipt` mints the record of what it did, recipe and timestamps and digests of every output, never the outputs. Sign it with a vault key and it says who vouched for the run as well as what ran.",
+    recipe: `random 32 | tee
+  - digest sha-256 | encode hex | out $expected
+| sss.split 2/3 | blip39 | foreach
   - out $share
 
 run.receipt | gpg.sign | out $receipt`,
@@ -3156,12 +3245,18 @@ run.receipt | gpg.sign | out $receipt`,
       "shares | blip39.decode | sss.combine | import scalar alg=ec/p256 | export pkcs8 | pem | out $private",
   },
   {
+    // The id keeps its spelling, and it is now the only place the word
+    // "quorum" survives on this template. Retiring it would break the `#t=`
+    // links people hold, and `useNotebook` answers an unknown preset id by
+    // doing nothing at all — so a renamed id is a link that silently opens
+    // whatever notebook was already there. The title and blurb are what a
+    // reader sees, and those say what the recipe does.
     id: "quorum-gpg",
     group: "Split & recover",
     pair: "quorum-gpg",
-    title: "P-256 scalar + quorum-share to GPG",
+    title: "Split a P-256 key, one share encrypted per holder",
     blurb:
-      "Tee the public PEM, SSS-split the 32-byte scalar 2-of-3, BLIP39-encode, encrypt each share to a different recipient.",
+      "The out-of-band way to hand shares out: tee the public PEM, split the 32-byte scalar 2-of-3, and encrypt each mnemonic to a different key, so each armored message can be mailed to its holder. No `quorum.*` op runs and no room is opened — the transport is you. Nothing is kept: the foreach body has no `out`, so the shares leave as ciphertext and this machine ends holding none of them.",
     recipe: `genkey ec/p256 | tee
   - public | export spki | pem | out $public
 | export scalar | sss.split 2/3 | blip39 | foreach
@@ -3275,6 +3370,13 @@ peer.recv b | out $heard`,
   {
     id: "rtc-live-diagnostics",
     group: "WebRTC",
+    // The one shipped template that cannot run on a machine standing alone,
+    // and the one that is still honest as text: it names nobody. `rtc.state`,
+    // `rtc.check` and `rtc.quality` read whatever exchange is open, so there is
+    // no roster to bake in and nothing here goes stale when the room changes.
+    // That is why it loads into the notebook like any other template and only
+    // wears the badge — see `ROOM_TEMPLATES` for the entries that cannot.
+    company: "room",
     title: "Diagnose a live exchange",
     blurb:
       "Needs a running `quorum.offer` / `quorum.join` in another cell — these read the exchange that is already open. State first, then the candidate-pair matrix (why ICE chose the route it did), then quality. `rtc.restart` renegotiates in place without losing the room.",
@@ -3518,3 +3620,86 @@ $jwe | jose.decrypt key=$cek | out $plain`,
     recipe: `random 10 | base32 | out $id`,
   },
 ];
+
+/**
+ * The shared notebooks — shown in the gallery, generated rather than pasted.
+ *
+ * ## Why they are in the gallery at all
+ *
+ * Because until they were, nothing in the Templates menu said the shared
+ * notebook exists. Seventy templates, all of them solo, and the two notebooks
+ * this product spent four commits building were reachable only by opening a
+ * sheet nobody had a reason to open. A person browsing templates for "split a
+ * key between us" found the card path and concluded that was the answer.
+ *
+ * ## Why they carry no recipe
+ *
+ * Because a room notebook names people, and this file cannot know them. The
+ * deal is one cell per holder, each headed `@<whole fingerprint>`, with the
+ * receive slots numbered by `canonicalAudience` — none of it writable before
+ * the audience exists. The obvious escape, a template full of `@peer1`
+ * placeholders resolved later, does not work and the reason is recorded in
+ * `ROOM_CEREMONY_PLACEHOLDERS`: `@` is not legal in a param value, so
+ * `quorum.recv from=@holder1` does not parse, and a notebook of placeholders
+ * would draw a compile error at the reader while it waited to be filled in.
+ *
+ * So choosing one of these opens the picker that already exists — the deal's in
+ * `SessionStart`, the recovery's in `RoomRecovery` — and the notebook falls out
+ * of the roster. **One road to a shared notebook**, which is also why nothing
+ * here duplicates the generators' copy: the picker prints
+ * `roomCeremonySummary` beside the recipe it is about to write.
+ *
+ * `company` is declared here too, and checked the same way as a preset's — by
+ * deriving it from what the generator this entry opens actually writes. A
+ * declaration verified against a sample of the real output is the only kind
+ * worth having on an entry that has no text of its own.
+ *
+ * @typedef {object} GalleryEntry
+ * @property {string} id
+ * @property {string} [group]
+ * @property {string} title
+ * @property {string} [blurb]
+ * @property {string} [recipe]  absent exactly on the generated entries
+ * @property {string} [pair]
+ * @property {Company} [company]  absent means `solo`
+ * @property {"ceremony"|"recovery"} [opens]  the picker a generated entry opens
+ */
+
+/** @type {readonly GalleryEntry[]} */
+export const ROOM_TEMPLATES = Object.freeze([
+  {
+    id: "room-deal",
+    group: "Ceremony",
+    title: "Deal a split across a room",
+    blurb:
+      "The shared version of the split below: the secret is drawn on one machine and each share goes straight from the split onto the wire to the person it belongs to, so no machine is left holding the set. It is written for the people you pick — one cell each, addressed by whole fingerprint — which is why there is no text to load here. Choosing this opens the room list, and the notebook is generated from it.",
+    company: "room",
+    opens: "ceremony",
+  },
+  {
+    id: "room-recover",
+    group: "Ceremony",
+    title: "Put a dealt secret back together",
+    blurb:
+      "The other agreement, written when the day comes rather than at the deal: who is contributing is the one question, and the threshold, the count and the set id are read off your own share's header. Also the road in for a custodian holding nothing but words on paper, which needs no room and no vault at all.",
+    company: "room",
+    opens: "recovery",
+  },
+]);
+
+/**
+ * Everything the Templates menu shows, in menu order.
+ *
+ * The room entries lead their category rather than trailing it: a reader who
+ * opens "Ceremony" looking for a way to split a key between people should meet
+ * the one that deals over the wire before the one that leaves every mnemonic on
+ * their own screen.
+ *
+ * Kept separate from `PRESETS` rather than merged into it, because `PRESETS`
+ * carries a promise the room entries cannot keep — every member is recipe text
+ * that compiles, which is what four sweeps assert over it. Teaching those
+ * sweeps to skip the recipe-less members would have weakened each of them
+ * against a preset that lost its recipe by accident.
+ * @type {readonly GalleryEntry[]}
+ */
+export const GALLERY_ENTRIES = Object.freeze([...ROOM_TEMPLATES, ...PRESETS]);

@@ -45,8 +45,15 @@ describe("inputs-bridge pairs (SSS / envelope)", () => {
     );
     expect(stitch.mode).toBe("inputs");
     expect(mnemonics.length).toBeGreaterThanOrEqual(2);
-    const secretB64 = findArtifactContent(revArts, /^[A-Za-z0-9+/=]+$/);
-    expect(secretB64).toBeTruthy();
+    // Named rather than matched by shape. `/^[A-Za-z0-9+/=]+$/` also matches a
+    // hex digest, so as soon as the recovery template grew the `$recovered`
+    // digest branch — the check that says the recombination produced the right
+    // bytes rather than merely some bytes — this took the digest and asserted
+    // its length. The slot is what the assertion was always about.
+    const secretArt = revArts.find((a) => /\bsecret\b/.test(a.label || ""));
+    expect(secretArt, "the $secret tile").toBeTruthy();
+    const secretB64 = String(secretArt.content || "");
+    expect(secretB64).toMatch(/^[A-Za-z0-9+/=]+$/);
     // Forward emits share tiles; recovered 32-byte secret as base64.
     const bytes = base64ToBytes(secretB64);
     expect(bytes.byteLength).toBe(32);

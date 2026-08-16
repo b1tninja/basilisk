@@ -235,6 +235,20 @@ import {
  *   is in `SECRET_BEARING_OUTPUTS` — that is the population where declaring
  *   `none` by reflex would be the expensive mistake, so the author has to say
  *   something rather than leave the field off and be quietly safe.
+ * @property {"room"} [company]  the company this step needs before it can do
+ *   anything: `room` means a live `quorum.offer`/`quorum.join` exchange with
+ *   somebody else meshed into it. Absent means the step runs on a machine
+ *   standing alone — which is the great majority, and is why the field is
+ *   declared on the exceptions rather than on all two hundred.
+ *
+ *   Declared here and nowhere else because **this is the only place that knows
+ *   it**, and because guessing it from the op's name is wrong in this
+ *   registry: `rtc.gather`'s own doc says "run it standalone", while
+ *   `rtc.check` two entries below says "Needs a live `quorum.offer`" — one
+ *   prefix, two answers. `presetCompany` in `recipe.js` folds this over a
+ *   recipe's steps to decide whether a template can run alone, so a new op
+ *   that reads the exchange gets the Templates gallery's warning the day it
+ *   lands rather than the day somebody notices.
  * @property {ParamSpec[]} [params]
  * @property {boolean} [flowControl]
  * @property {boolean} [unresolvedRecipients]  needs runtime recipient binding
@@ -2550,6 +2564,10 @@ export const STEPS = [
     input: "shares",
     output: "bundle",
     entropy: "none",
+    // `to=room` is the only value the param accepts, so there is no spelling of
+    // this verb that does not read the live audience — the requirement is
+    // unconditional rather than a function of the params.
+    company: "room",
     params: [
       {
         name: "to",
@@ -2867,6 +2885,11 @@ export const STEPS = [
     input: "item",
     output: "text",
     entropy: "keying",
+    // Inherited rather than independent: this step is legal only inside a
+    // `scatter` body, and `scatter` reads the room. Declared anyway so the
+    // fold in `presetCompany` never depends on the walk reaching the enclosing
+    // flow step — a body examined on its own still answers correctly.
+    company: "room",
     params: [
       {
         name: "to",
@@ -4926,6 +4949,9 @@ export const STEPS = [
     input: "none",
     output: "stats",
     entropy: "none",
+    // The pairs only exist once both sides have exchanged candidates, which
+    // is the doc string's own sentence made machine-readable.
+    company: "room",
     params: [],
   },
   {
@@ -4962,6 +4988,8 @@ export const STEPS = [
     input: "none",
     output: "connstate",
     entropy: "none",
+    // "Needs a live `quorum.offer`/`quorum.join`" — its own doc, declared.
+    company: "room",
     params: [],
   },
   {
@@ -4975,6 +5003,9 @@ export const STEPS = [
     output: "connstate",
     // keying: an ICE restart's whole purpose is fresh ICE credentials.
     entropy: "keying",
+    // Restarts ICE on the exchange's connections; with no exchange there are
+    // none to restart.
+    company: "room",
     params: [],
   },
   {
@@ -4987,6 +5018,8 @@ export const STEPS = [
     input: "none",
     output: "stats",
     entropy: "none",
+    // Back-pressure counters of the exchange's data channels.
+    company: "room",
     params: [],
   },
   {
@@ -4999,6 +5032,8 @@ export const STEPS = [
     input: "none",
     output: "stats",
     entropy: "none",
+    // `getStats()` over the exchange's connected peers.
+    company: "room",
     params: [],
   },
 
@@ -5026,6 +5061,10 @@ export const STEPS = [
     output: "session",
     // keying: forming the mesh mints a throwaway DTLS certificate per link.
     entropy: "keying",
+    // Opening is not standing alone: this cell pauses the run until `peers`
+    // have meshed, so a machine with nobody to mesh with waits and then
+    // times out.
+    company: "room",
     params: [
       {
         name: "to",
@@ -5074,6 +5113,8 @@ export const STEPS = [
     output: "session",
     // keying: joining the mesh mints a throwaway DTLS certificate per link.
     entropy: "keying",
+    // Joining needs somebody to have offered.
+    company: "room",
     params: [
       {
         name: "to",
@@ -5121,6 +5162,8 @@ export const STEPS = [
     input: "text",
     output: "text",
     entropy: "none",
+    // Closes the exchange this run opened; without one there is nothing to end.
+    company: "room",
     params: [],
   },
   {
@@ -5142,6 +5185,9 @@ export const STEPS = [
     input: "text",
     output: "text",
     entropy: "none",
+    // Writes to the exchange's key-confirmed channels — its own doc: "Requires
+    // a `quorum.offer`/`quorum.join` earlier in this run".
+    company: "room",
     params: [
       {
         name: "to",
@@ -5162,6 +5208,8 @@ export const STEPS = [
     input: "none",
     output: "text",
     entropy: "none",
+    // Reads the exchange's channels, pausing until enough messages arrive.
+    company: "room",
     params: [
       {
         name: "from",
@@ -5216,6 +5264,9 @@ export const STEPS = [
     input: "item",
     output: "text",
     entropy: "none",
+    // The pair verb of a `scatter to=room` body: it delivers over the
+    // exchange, and the body it lives in reads the room to begin with.
+    company: "room",
     params: [
       {
         name: "to",

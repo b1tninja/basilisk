@@ -13,6 +13,9 @@ import {
 } from "../../lib/toolkit/conjugate-stitch.js";
 import { listPresetGroups } from "../../lib/toolkit/recipe.js";
 
+/** Where a room entry hands off to — the panel that knows the roster. */
+export type RoomHandoff = "ceremony" | "recovery";
+
 export type PresetMenuItem = {
   id: string;
   group?: string;
@@ -20,16 +23,51 @@ export type PresetMenuItem = {
   blurb?: string;
   recipe?: string;
   pair?: string;
+  /**
+   * What this template needs before it can run — `recipe.js`'s `Company`,
+   * derived from its own steps and checked by `preset-company.test.js`.
+   *
+   * Read here so the gallery can say it **before** the card is pressed. The
+   * failure this removes is the one this menu had for seventy templates: a
+   * notebook that loads, looks fine, and then refuses at the run because there
+   * is no exchange behind it — a state named after the choice instead of
+   * before it.
+   */
+  company?: "solo" | "room";
+  /**
+   * Set on the entries that carry no recipe, naming the picker they open.
+   *
+   * The presence of this field is the whole difference in how a card behaves:
+   * with it there is nothing to load, append or preview, because the notebook
+   * does not exist until a roster does.
+   */
+  opens?: RoomHandoff;
 };
 
 type Props = {
-  presets: PresetMenuItem[];
+  // Readonly because nothing here mutates it and the gallery arrives frozen —
+  // `GALLERY_ENTRIES` is `Object.freeze`d so a widget cannot reorder the menu
+  // for everybody else by sorting in place.
+  presets: readonly PresetMenuItem[];
   /** Optional override; defaults to listPresetGroups(presets). */
   groups?: string[];
   label?: ReactNode;
   onLoad: (id: string) => void;
   onAppend: (id: string) => void;
   onAddBoth: (pairId: string) => void;
+  /** Open the picker a room entry names. Required once any entry has `opens`. */
+  onOpenRoom?: (opens: RoomHandoff, id: string) => void;
+  /**
+   * Why a handoff cannot be performed right now, per target — one sentence, or
+   * absent when it can.
+   *
+   * The deal picker lives inside the session sheet's *idle* half, so while an
+   * exchange is live it is not on screen at all. A card that opened a sheet
+   * without the panel it promised would be this menu's own version of the
+   * defect it is fixing, so the reason is stated on the card and the press
+   * declines.
+   */
+  roomRefusal?: Partial<Record<RoomHandoff, string>>;
   align?: "start" | "center" | "end";
   className?: string;
   triggerClassName?: string;
@@ -45,7 +83,7 @@ type PairBundle = {
 };
 
 function groupPresets(
-  presets: PresetMenuItem[],
+  presets: readonly PresetMenuItem[],
   groups: string[],
   q: string
 ): Map<string, PresetMenuItem[]> {
@@ -71,7 +109,7 @@ function groupPresets(
   return byGroup;
 }
 
-function packItems(presets: PresetMenuItem[]): Array<
+function packItems(presets: readonly PresetMenuItem[]): Array<
   | { kind: "single"; preset: PresetMenuItem }
   | { kind: "pair"; bundle: PairBundle }
 > {
@@ -95,6 +133,73 @@ function packItems(presets: PresetMenuItem[]): Array<
   return out;
 }
 
+/**
+ * The one fact about a template that has to be readable before it is chosen.
+ *
+ * Only drawn when there is something to say: `solo` is the state of almost
+ * every card here, and a badge on all seventy would say nothing about any of
+ * them.
+ */
+function CompanyBadge({ preset }: { preset: PresetMenuItem }) {
+  if (preset.opens) {
+    return (
+      <span className="badge preset-company-badge" data-company="written">
+        Written for your room
+      </span>
+    );
+  }
+  if (preset.company !== "room") return null;
+  return (
+    <span className="badge preset-company-badge" data-company="room">
+      Needs a live room
+    </span>
+  );
+}
+
+/**
+ * A room entry — the notebook is generated, so the card offers the picker.
+ *
+ * No Append and no "Show recipe", because both would be lying about something
+ * that does not exist yet: there is no text until an audience has been chosen,
+ * which is the reason this card exists in the shape it does rather than as a
+ * seventy-first template.
+ */
+function RoomCard({
+  preset,
+  onOpenRoom,
+  refusal,
+}: {
+  preset: PresetMenuItem;
+  onOpenRoom: (opens: RoomHandoff, id: string) => void;
+  refusal?: string;
+}) {
+  const declined = useRefusal(refusal);
+  return (
+    <div className="preset-card-wrap">
+      <button
+        type="button"
+        className="preset-card"
+        data-room-template={preset.id}
+        {...declined.aria}
+        onClick={declined.guard(() =>
+          onOpenRoom(preset.opens as RoomHandoff, preset.id)
+        )}
+      >
+        <strong>{preset.title}</strong>
+        <CompanyBadge preset={preset} />
+        <span className="muted">{preset.blurb}</span>
+        {/* The press, named on the control rather than left to the arrow: this
+            one opens a panel instead of replacing the notebook, and that is a
+            different promise from every other card in the menu. */}
+        <span className="muted fs-xs preset-company-act">
+          Opens the room list — nothing you have open is replaced.
+        </span>
+      </button>
+      {declined.note}
+    </div>
+  );
+}
+
 function PresetCard({
   preset,
   onLoad,
@@ -114,6 +219,7 @@ function PresetCard({
         onClick={() => onLoad(preset.id)}
       >
         <strong>{preset.title}</strong>
+        <CompanyBadge preset={preset} />
         <span className="muted">{preset.blurb}</span>
       </button>
       <div className="preset-card-actions">
@@ -211,6 +317,8 @@ export function PresetMenu({
   onLoad,
   onAppend,
   onAddBoth,
+  onOpenRoom,
+  roomRefusal,
   align = "start",
   className,
   triggerClassName,
@@ -255,31 +363,50 @@ export function PresetMenu({
     setFilter("");
   };
 
-  const renderPacked = (list: PresetMenuItem[]) => {
+  const renderPacked = (list: readonly PresetMenuItem[]) => {
     const packed = packItems(list);
     if (!packed.length) {
       return (
         <p className="muted fs-sm preset-menu-empty">No templates in this category.</p>
       );
     }
-    return packed.map((entry) =>
-      entry.kind === "pair" ? (
-        <CompanionPair
-          key={entry.bundle.pairId}
-          bundle={entry.bundle}
-          onLoad={(id) => runAndClose(() => onLoad(id))}
-          onAppend={(id) => runAndClose(() => onAppend(id))}
-          onAddBoth={(pairId) => runAndClose(() => onAddBoth(pairId))}
-        />
-      ) : (
+    return packed.map((entry) => {
+      if (entry.kind === "pair") {
+        return (
+          <CompanionPair
+            key={entry.bundle.pairId}
+            bundle={entry.bundle}
+            onLoad={(id) => runAndClose(() => onLoad(id))}
+            onAppend={(id) => runAndClose(() => onAppend(id))}
+            onAddBoth={(pairId) => runAndClose(() => onAddBoth(pairId))}
+          />
+        );
+      }
+      // A room entry with nobody wired to receive the handoff would be a card
+      // that swallows its own press. Falling through to `PresetCard` would be
+      // worse — it would offer Load and Append for a recipe that is
+      // `undefined` — so the entry is simply not drawn, which is the honest
+      // rendering of "this build has no picker".
+      if (entry.preset.opens) {
+        if (!onOpenRoom) return null;
+        return (
+          <RoomCard
+            key={entry.preset.id}
+            preset={entry.preset}
+            refusal={roomRefusal?.[entry.preset.opens]}
+            onOpenRoom={(opens, id) => runAndClose(() => onOpenRoom(opens, id))}
+          />
+        );
+      }
+      return (
         <PresetCard
           key={entry.preset.id}
           preset={entry.preset}
           onLoad={(id) => runAndClose(() => onLoad(id))}
           onAppend={(id) => runAndClose(() => onAppend(id))}
         />
-      )
-    );
+      );
+    });
   };
 
   let panel: ReactNode;

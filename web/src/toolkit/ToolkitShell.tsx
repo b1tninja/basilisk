@@ -109,6 +109,7 @@ import type {
   PoolParticipantState,
 } from "./widgets/PoolPanel";
 import {
+  GALLERY_ENTRIES,
   compileRecipe,
   outSlotLabels,
   projectTypeForMember,
@@ -890,6 +891,17 @@ export function ToolkitShell() {
     () => new Set()
   );
   const [presetMenuOpen, setPresetMenuOpen] = useState(false);
+  /**
+   * Which part of the session sheet the last press asked for, or null.
+   *
+   * Set by the Templates gallery's room entries and by nothing else: the
+   * Share tier, the Connections tab and an invite link open the whole window
+   * and have no section to name. Cleared when the sheet closes so a later
+   * door does not inherit an earlier door's destination.
+   */
+  const [sessionFocus, setSessionFocus] = useState<
+    "ceremony" | "recovery" | null
+  >(null);
   const [trayOpen, setTrayOpen] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
   const [trayTab, setTrayTab] = useState<
@@ -2352,7 +2364,12 @@ export function ToolkitShell() {
           suiteDetail={suiteDetail}
         >
             <PresetMenu
-              presets={nb.presets}
+              // The gallery, not `nb.presets`: the two room entries are not
+              // recipes and `loadPreset` will never be asked for one. They are
+              // here because a menu of seventy solo notebooks was the only
+              // evidence this product offered about whether a shared one
+              // existed, and it said no.
+              presets={GALLERY_ENTRIES}
               label="Templates"
               open={presetMenuOpen}
               onOpenChange={setPresetMenuOpen}
@@ -2364,6 +2381,23 @@ export function ToolkitShell() {
               onAppend={(id) => nb.appendPreset(id)}
               onAddBoth={(pairId) => {
                 nb.appendPresetPair(pairId);
+              }}
+              // One road to a shared notebook: the entry opens the picker that
+              // knows the roster, and the picker writes the notebook. Nothing
+              // is pasted and nothing anybody has open is replaced by pressing
+              // this — the generators' own Write buttons still ask for that.
+              onOpenRoom={(opens) => {
+                setSessionFocus(opens);
+                nb.setSheet("session");
+              }}
+              roomRefusal={{
+                // Named because it is true and performable, not to be tidy: the
+                // deal picker is inside the session sheet's idle half, so while
+                // an exchange is live there is no picker to open. Closing the
+                // session is the move, and it is the one this sentence names.
+                ceremony: sessionLive
+                  ? "A deal is written before the room opens, so the picker is not on this sheet while an exchange is live — the session panel takes its place. Close the session to write one, or use the notebook you already dealt from."
+                  : undefined,
               }}
               triggerClassName="h-auto rounded-[6px] px-[11px] py-[5px] text-[length:11.5px] font-medium"
             />
@@ -4850,7 +4884,11 @@ export function ToolkitShell() {
             all three directions. */}
         <SessionSheet
           open={nb.sheet === "session"}
-          onOpenChange={(o) => nb.setSheet(o ? "session" : null)}
+          focus={sessionFocus}
+          onOpenChange={(o) => {
+            if (!o) setSessionFocus(null);
+            nb.setSheet(o ? "session" : null);
+          }}
           live={
             sessionLive
               ? {

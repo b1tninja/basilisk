@@ -3062,6 +3062,20 @@ input[type=file] { display: none; }
   font-size: 0.72rem;
   font-weight: 600;
 }
+/* What a template needs before it will run, on the card rather than after the
+   press. `pending` for both states on purpose: neither is a failure — one says
+   an exchange has to exist, the other that the notebook is generated from a
+   roster — and the approved/refused tokens would read as a verdict on the
+   template. */
+.preset-company-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: var(--badge-pending-bg);
+  color: var(--badge-pending-fg);
+}
+.preset-company-act {
+  opacity: 0.9;
+}
 .preset-bridge-badge[data-bridge="inputs"] {
   background: var(--badge-pending-bg);
   color: var(--badge-pending-fg);

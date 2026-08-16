@@ -660,6 +660,99 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     }
   });
 
+  /* ── 8. the gallery, from inside a live room ──────────────────────── */
+
+  /**
+   * The Templates gallery is where a person goes looking for "split a key
+   * between us", and for seventy templates the honest answer to that search was
+   * not in it. The two entries added for it are not recipes — the deal is one
+   * cell per holder addressed by whole fingerprint, so it cannot exist before
+   * the roster does — and this is the assertion that choosing one lands on the
+   * picker that *can* write it rather than on unrunnable text.
+   *
+   * Driven here, at the end, because this file is the only place in the suite
+   * that holds a live exchange in a real browser: the deal picker lives in the
+   * session sheet's idle half and is therefore *not on screen* while a session
+   * runs. A card that opened a window without the panel it promised would be
+   * this gallery's own version of the defect it was added to fix, so the state
+   * is named on the card and the press declines.
+   */
+  it("offers the room notebooks in the gallery, and refuses the one it cannot open", async () => {
+    await dealer.keyboard.press("Escape");
+    await dealer.locator(".toolkit-presets-summary").click();
+    await dealer.locator(".preset-cat-btn", { hasText: "Ceremony" }).first().click();
+
+    const deal = dealer.locator('[data-room-template="room-deal"]');
+    const recover = dealer.locator('[data-room-template="room-recover"]');
+    await deal.waitFor({ state: "visible", timeout: 20000 });
+    // Shown, not hidden: a reader has to be able to learn the shared notebook
+    // exists even in the state where they cannot write one right now.
+    expect(await recover.count()).toBe(1);
+    // Neither card offers text — there is none to offer. Matched
+    // case-insensitively because `.badge` upper-cases in CSS, and what is being
+    // asserted is that the sentence reaches the reader, not which layer chose
+    // its capitals.
+    expect(await deal.innerText()).toMatch(/written for your room/i);
+    expect(await deal.innerText()).toMatch(/opens the room list/i);
+
+    // Refused, with the reason reachable the way `useRefusal` requires: a
+    // description id pointing at a sentence that is on screen, not a `title`
+    // and not a `disabled` attribute that would take the button out of reach
+    // of the reader the sentence was written for.
+    expect(await deal.getAttribute("aria-disabled")).toBe("true");
+    const reasonId = await deal.getAttribute("aria-describedby");
+    expect(reasonId).toBeTruthy();
+    const reason = await dealer.locator(`#${reasonId}`).innerText();
+    expect(reason).toContain("while an exchange is live");
+    expect(reason).toContain("Close the session");
+
+    // And the press really declines. Reached by keyboard rather than by
+    // `click()`, which is the stronger check and the only one Playwright will
+    // perform: `aria-disabled` is used precisely so the control keeps its place
+    // in the tab order — the `disabled` attribute would put the sentence out of
+    // reach of the reader it was written for — and Playwright treats
+    // `aria-disabled` as "not enabled" and refuses to click it. Focus and Enter
+    // is what a person in that position actually does, and it proves both
+    // halves at once: the button is still reachable, and `guard` still stops it.
+    await deal.focus();
+    await dealer.keyboard.press("Enter");
+    expect(await dealer.locator("[data-session-sheet]").count()).toBe(0);
+    expect(await deal.count()).toBe(1);
+
+    // The recovery half is performable from inside a live room — that is the
+    // room a recoverer is usually standing in — and it lands on its own
+    // section rather than on whatever the sheet happens to show first.
+    expect(await recover.getAttribute("aria-disabled")).toBeNull();
+    await recover.click();
+    const sheet = dealer.locator("[data-session-sheet]");
+    await sheet.waitFor({ state: "visible", timeout: 20000 });
+    expect(await sheet.getAttribute("data-session-focus")).toBe("recovery");
+    const recovery = dealer.locator("[data-room-recovery]");
+    await recovery.waitFor({ state: "visible", timeout: 20000 });
+    expect(await recovery.innerText()).toContain("Recover a dealt secret");
+    await dealer.keyboard.press("Escape");
+    await sheet.waitFor({ state: "detached", timeout: 20000 });
+
+    // The other half of the declaration, on the one template that is honest as
+    // text and still cannot run alone: `rtc.state`/`rtc.check`/`rtc.quality`
+    // read whatever exchange is open and name nobody, so it loads like any
+    // other template — and the gallery says what it needs *before* it is
+    // chosen rather than letting the run be the thing that says so. Its
+    // neighbours in the same category are `rtc.*` too and carry no badge,
+    // which is the distinction a name-prefix rule could not have drawn.
+    await dealer.locator(".toolkit-presets-summary").click();
+    await dealer.locator(".preset-cat-btn", { hasText: "WebRTC" }).first().click();
+    const webrtc = dealer.locator(".preset-menu-panel");
+    await webrtc.waitFor({ state: "visible", timeout: 20000 });
+    const live = webrtc.locator(".preset-card", { hasText: "Diagnose a live exchange" });
+    expect(await live.locator('[data-company="room"]').innerText()).toMatch(
+      /needs a live room/i
+    );
+    const gather = webrtc.locator(".preset-card", { hasText: "Gather ICE candidates" });
+    expect(await gather.locator("[data-company]").count()).toBe(0);
+    await dealer.keyboard.press("Escape");
+  }, 120_000);
+
   /* ── what the journey cost ───────────────────────────────────────────────── */
 
   it("drove a generated notebook without tripping the production CSP", async () => {
