@@ -876,6 +876,17 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     // behind would carry a live "Review and accept" for a document that is no
     // longer there, and the second press would answer "That handoff is no longer
     // pending" for a value the reader can see registered in the tray beside it.
+    //
+    // **Turned over, and it is worth more than it was.** *When* the take happens
+    // has moved: `acceptHandoff` used to call it on its first line, before any
+    // verdict, so this assertion held for a refusal too — the document was spent
+    // whatever the answer, which is the defect step 7b reproduces. The take now
+    // sits on the branch that registers. So this line has stopped being "the
+    // press removes the row" and become the narrower, truer claim that it was
+    // always meant to be: **an accepted document is spent.** Step 7b asserts the
+    // complement on the same queue two steps later — a refused one is not — and
+    // between them the exactly-once property is pinned at both ends rather than
+    // at whichever end a press happened to reach.
     expect(
       await pending.count(),
       "the accepted offer is still in the queue with the press still on it"
@@ -1021,6 +1032,195 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
     expect(await cell(creator, 2).innerText()).toContain(EXPECTED_B64);
     // The same bytes are on the joiner's screen, where they were made.
     expect(await cell(joiner, 1).innerText()).toContain(EXPECTED_B64);
+  });
+
+  /* ── 7b. a refusal that keeps the document, and a remedy that works ─────── */
+
+  /**
+   * The state this arrives in is reached by pressing Run twice, and nothing else.
+   *
+   * Step 7 ends with the creator pressing Run all. The gate declines cell 1
+   * again — it is still the joiner's — and `handOffPlaced` hands every declined
+   * cell this machine is an end of straight back over the wire as the run ends.
+   * So a second offer for cell 1 lands on the joiner carrying `$seed`, which the
+   * joiner accepted in step 6 and still holds. `reviewOffer` is given `hasSlot`
+   * and refuses it `slot-present`. No contrivance: two Runs on one machine and
+   * the second offer is on the other person's screen.
+   *
+   * **What this used to do, and why it was the worst place for it.**
+   * `acceptHandoff` called `takeHandoff(id)` on its first line and computed the
+   * verdict afterwards, so by the time anything had decided, the only copy of
+   * the document was already out of the queue — `takeHandoff` succeeds exactly
+   * once and is the only way a document leaves it. A refusal therefore consumed
+   * what it refused. On this path the thing consumed is another person's work:
+   * an offer carries the values a cell reads, and a *result* carries what their
+   * machine computed. Recovering it means asking them to run the cell again.
+   *
+   * The sentence made it worse. `slot-present` reads "`$seed` already holds a
+   * value on this machine … Clear the slot if the offered value is the one you
+   * want" — and the Slots tray has a Clear button, so a reader would do exactly
+   * that and find nothing left to accept. A remedy naming a press that cannot
+   * complete is `47e7ffa`'s defect class, aimed at a peer's cell.
+   *
+   * A second finding, and it is why the note is asserted here rather than only
+   * the count: **that sentence never reached a screen**. `summarizeHandoff`
+   * returns `handoff refused at cell 1 (needs)` for any refusal — a locator, no
+   * remedy — and the shell put that in the handoff note. The message field
+   * where handoff.js does its careful wording was dropped by the projection, so
+   * the promise this step is named for was one only a reader of the source
+   * could see. Both halves are asserted, because fixing the ordering alone
+   * would leave a person correctly told nothing.
+   */
+  it("refuses the second offer without spending it, and says what to do", async () => {
+    await trayTab(joiner, "Connections");
+    const pending = tray(joiner).locator("[data-handoff-pending] li");
+    // The creator's second run handed it over by itself; nobody pressed for it.
+    await expect.poll(async () => await pending.count(), { timeout: 20000 }).toBe(1);
+    expect(await pending.first().getAttribute("data-handoff-kind")).toBe("offer");
+    expect(await pending.first().innerText()).toContain("cell 1");
+    // The collision, stated: this machine already holds what the offer carries.
+    expect(await answerSlots(joiner)).toEqual(["b64", "seed"]);
+
+    await trayTab(joiner, "Connections");
+    await joiner.getByRole("button", { name: "Review and accept" }).click();
+    const note = joiner.locator("[data-handoff-note]");
+    // Polled on `handoff.js`'s own words rather than on anything this fix
+    // added, so the wait is not satisfied by the sentence it is here to check.
+    await expect
+      .poll(async () => await note.innerText(), { timeout: 20000 })
+      .toMatch(/Clear the slot/);
+
+    // The remedy, on screen. Not "handoff refused at cell 1 (needs)".
+    const said = await note.innerText();
+    expect(said, "the refusal names a slot the reader can act on").toContain("$seed");
+    // And the sentence that makes the remedy performable: it is still here.
+    expect(said, "the note does not say the document survived the refusal").toMatch(
+      /still in the queue|Nothing was taken/i
+    );
+
+    // **On the row as well as in the note**, which is a separate mechanism and
+    // would otherwise be one nothing checks. The note is one paragraph for the
+    // whole panel and the next press anywhere overwrites it; the row is where a
+    // reader looks to find out why *this* document is still sitting there. A
+    // refusal that reached only the note would leave the row looking like one
+    // nobody has touched — the ambiguity keeping a refused document creates.
+    const rowRefusal = pending.first().locator("[data-handoff-refusal]");
+    await expect.poll(async () => await rowRefusal.count(), { timeout: 20000 }).toBe(1);
+    expect(await rowRefusal.innerText()).toContain("$seed");
+
+    // **The row survived its own refusal**, which is the whole of the fix. The
+    // reader can clear the slot and press again, and the peer's document is
+    // where they left it.
+    expect(
+      await pending.count(),
+      "the refusal spent the document it refused — the peer's work is gone"
+    ).toBe(1);
+
+    // Perform the remedy the sentence named, through the product's own button,
+    // and press accept again. This is the assertion that the sentence is true:
+    // a promise a suite does not carry out is a promise nobody checked.
+    await trayTab(joiner, "Slots");
+    await tray(joiner)
+      .locator("li")
+      .filter({ hasText: "@seed" })
+      .getByRole("button", { name: "Clear" })
+      .click();
+    expect(await answerSlots(joiner)).toEqual(["b64"]);
+    await trayTab(joiner, "Connections");
+    await joiner.getByRole("button", { name: "Review and accept" }).click();
+    await expect
+      .poll(async () => await note.innerText(), { timeout: 20000 })
+      .toMatch(/Accepted — 1 value registered/);
+    expect(await answerSlots(joiner)).toEqual(["b64", "seed"]);
+    // Accepted, so *now* it is spent — step 6's invariant, on a document that
+    // had already been refused once.
+    expect(
+      await pending.count(),
+      "the accepted offer is still in the queue with the press still on it"
+    ).toBe(0);
+  });
+
+  /* ── 7c. and a refusal a person can put down ────────────────────────────── */
+
+  /**
+   * The other half of keeping a refused document: something has to end it.
+   *
+   * A document that stays pending after a refusal is honest — it *is* still
+   * pending, and 7b is the case where that is the whole point. But a refusal
+   * whose cause never changes would leave a row with a live "Review and accept"
+   * on it for the rest of the session, and the queue would stop being a list of
+   * things waiting on a person. So the row also carries Dismiss.
+   *
+   * It is a press and never anything else, and it sends nothing: `offerAwaiting`
+   * already says there is no decline message on the wire, and a peer who
+   * declines and a peer who never looked are the same state from the other end.
+   * Dismiss drops it here and tells nobody, which is what this asserts — the
+   * creator's outgoing row must be exactly as it was.
+   *
+   * The exactly-once property is untouched by it. `takeHandoff` is still the
+   * only way a document leaves the queue and still succeeds once; what changed
+   * is that two presses reach it — accept and dismiss — and `quorum-ops` already
+   * said taking and accepting were separate acts for this reason.
+   */
+  it("lets a person put a pending document down, and tells nobody", async () => {
+    // One more offer, by the press the panel offers for it.
+    await trayTab(creator, "Connections");
+    const outgoing = tray(creator).locator("[data-handoff-outgoing] li");
+    await expect.poll(async () => await outgoing.count(), { timeout: 20000 }).toBe(1);
+    await outgoing.getByRole("button", { name: /^Hand cell 1 to/ }).click();
+
+    await trayTab(joiner, "Connections");
+    const pending = tray(joiner).locator("[data-handoff-pending] li");
+    await expect.poll(async () => await pending.count(), { timeout: 20000 }).toBe(1);
+
+    // Refuse it, the same way and for the same reason: 7b put `$seed` back, so
+    // this offer collides exactly as that one did. Now the row is annotated and
+    // still pending — the state a dismissal is for.
+    await joiner.getByRole("button", { name: "Review and accept" }).click();
+    await expect
+      .poll(async () => await pending.first().locator("[data-handoff-refusal]").count(), {
+        timeout: 20000,
+      })
+      .toBe(1);
+
+    // **A second document, while the first one's refusal is on screen.** This is
+    // what makes the annotation's keying checkable at all: the map is non-empty,
+    // a new row arrives, and the reason must stay on the document it was about.
+    // An annotation drawn per *panel* rather than per document would label this
+    // one too, and tell the reader a fresh offer had already been refused.
+    await trayTab(creator, "Connections");
+    await outgoing.getByRole("button", { name: /^Hand cell 1 to/ }).click();
+    await trayTab(joiner, "Connections");
+    await expect.poll(async () => await pending.count(), { timeout: 20000 }).toBe(2);
+    expect(
+      await pending.locator("[data-handoff-refusal]").count(),
+      "a document nobody has pressed is drawn as one that was already refused"
+    ).toBe(1);
+
+    // Put both down. Two presses, because two documents — there is no "dismiss
+    // all", and inventing one would be a single press discarding several
+    // people's work.
+    await pending.first().getByRole("button", { name: "Dismiss without accepting" }).click();
+    await expect
+      .poll(async () => await joiner.locator("[data-handoff-note]").innerText(), {
+        timeout: 20000,
+      })
+      .toMatch(/Dismissed/);
+    await expect.poll(async () => await pending.count(), { timeout: 20000 }).toBe(1);
+    // And the refusal went with the document it belonged to.
+    expect(await pending.locator("[data-handoff-refusal]").count()).toBe(0);
+    await pending.first().getByRole("button", { name: "Dismiss without accepting" }).click();
+    await expect.poll(async () => await pending.count(), { timeout: 20000 }).toBe(0);
+    // Nothing was registered by putting it down — the two slots are the ones
+    // this machine had before the row arrived.
+    expect(await answerSlots(joiner)).toEqual(["b64", "seed"]);
+
+    // And the other end was not told. There is no decline on this wire, by
+    // design, so the creator's row still reads as an offer that went out.
+    await trayTab(creator, "Connections");
+    expect(
+      await outgoing.locator("[data-offer-state]").getAttribute("data-offer-state")
+    ).toBe("sent");
   });
 
   /* ═══════════════════════════ the ceremony ═════════════════════════════════

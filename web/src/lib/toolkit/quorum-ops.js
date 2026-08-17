@@ -315,12 +315,6 @@ export function getQuorumState() {
 }
 
 /**
- * Offers and results a peer has sent, still waiting on a person.
- *
- * Read-only and a copy: the shell renders these, and the *only* way one leaves
- * the list is `takeHandoff`, which a caller reaches because somebody clicked.
- */
-/**
  * Cleartext-sign a document with the key this session was opened under.
  *
  * The key, not a copy of it, and never handed out: `sendResult` refuses
@@ -339,6 +333,27 @@ export async function signSessionDocument(text) {
   return armored;
 }
 
+/**
+ * Offers and results a peer has sent, still waiting on a person.
+ *
+ * Read-only and a copy: the shell renders these, and the *only* way one leaves
+ * the list is `takeHandoff`, which a caller reaches because somebody clicked.
+ *
+ * **The copy is what lets a caller decide before consuming**, and that is no
+ * longer only a rendering convenience. `acceptHandoff` reads its document from
+ * here, judges it, and calls `takeHandoff` on the branch that registers — so a
+ * refusal leaves the document in the list for the person to act on, and only an
+ * acceptance spends it. The two functions being separate calls is what makes
+ * that possible without weakening the exactly-once rule either of them keeps.
+ *
+ * A copy per read, not a shared array: a caller judging a document must not be
+ * able to edit the record a later press will read, and two presses in flight
+ * must each be judging their own.
+ *
+ * This paragraph sat above `signSessionDocument`, two declarations up, so the
+ * function it describes carried no comment at all and the one it was attached
+ * to had two — the same misfiling `acceptHandoff`'s own header records.
+ */
 export function getPendingHandoffs() {
   return current ? current.handoffs.map((h) => ({ ...h })) : [];
 }
@@ -389,6 +404,24 @@ export function clearProposedNotebook() {
  * Taking is separate from accepting on purpose. `acceptHandoffOffer` and
  * `acceptCellResult` return bindings a caller registers, and registering is
  * the consent; this only stops the same document being acted on twice.
+ *
+ * **Two presses reach it, which is that separation finally being used.** The
+ * shell's `acceptHandoff` calls it on the branch that goes on to register, and
+ * `dismissHandoff` calls it to put a document down having registered nothing.
+ * Both are somebody clicking. The property is unchanged by there being two:
+ * one document, one successful take, whichever press arrives first — the other
+ * gets `null` and does nothing.
+ *
+ * It used to have one caller, and that caller ran it *before* deciding, so a
+ * refused document was spent by its own refusal — on the offer path, that is a
+ * value another machine computed, gone, with the refusal naming a remedy there
+ * was no longer anything to perform it on. `useNotebook` argues the fix where
+ * the ordering lives; what belongs here is why this function did not change to
+ * accommodate it. Restoring a taken document would have made a second take
+ * succeed for the same document and there is no version of that which keeps
+ * the sentence above true. Reading a copy costs nothing and is already
+ * provided: `getPendingHandoffs` maps, so a caller can judge a copy and come
+ * back here only once it has decided.
  *
  * @param {string} id
  */

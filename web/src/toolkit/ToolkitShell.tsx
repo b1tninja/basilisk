@@ -110,6 +110,7 @@ import type {
 } from "./widgets/PoolPanel";
 import {
   GALLERY_ENTRIES,
+  ROOM_TEMPLATES,
   compileRecipe,
   outSlotLabels,
   projectTypeForMember,
@@ -418,6 +419,17 @@ function describeCaretPosition(
 }
 
 const PGP_ENCRYPT_STEPS = new Set(["gpg.encrypt", "gpg.symencrypt"]);
+
+/**
+ * Why the deal's picker cannot be opened right now, in one place.
+ *
+ * Two doors reach it — the Templates card and a `#t=room-deal` link — and a
+ * closed door that gave two accounts of itself would be worse than one that
+ * gave none. It names the press that works (close the session) rather than the
+ * one that does not, which is the rule every refusal in this file keeps.
+ */
+const CEREMONY_PICKER_LIVE =
+  "A deal is written before the room opens, so the picker is not on this sheet while an exchange is live — the session panel takes its place. Close the session to write one, or use the notebook you already dealt from.";
 
 /** Every step (including tee/foreach nests) whose `profile` param overrides the session default. */
 function collectProfileOverrides(chains: RecipeChain[]): ChipPath[] {
@@ -737,6 +749,20 @@ export function ToolkitShell() {
    * happens.
    */
   const [owedBack, setOwedBack] = useState<OwedBack[]>([]);
+  /**
+   * Why accepting a still-pending document was refused, by handoff id.
+   *
+   * Beside `owedBack` because it is the same kind of thing: a record of presses
+   * this shell made, which `quorum-ops` and the session both deliberately keep
+   * none of. Session-scoped and never persisted — it dies with the exchange, in
+   * the same effect that empties `owedBack`.
+   *
+   * It exists because a refusal no longer consumes. `acceptHandoff` used to take
+   * the document on its first line and judge afterwards, so a refused row simply
+   * vanished and there was nothing left to annotate; now the row stays, and a
+   * row that has been refused once must not look like one nobody has touched.
+   */
+  const [handoffRefusals, setHandoffRefusals] = useState<Record<string, string>>({});
   /**
    * The live `dkg.run`, or null when none has spoken.
    *
@@ -1582,12 +1608,68 @@ export function ToolkitShell() {
     return () => window.removeEventListener("hashchange", openFromHash);
   }, []);
 
+  /**
+   * `/toolkit#t=room-deal` — a template link for a notebook that has no text.
+   *
+   * The third hash a shell answers and `useNotebook` does not, for the reason
+   * the other two are here: this opens a *panel*, and panels are the shell's.
+   * `loadFromHash` handles every `#t=` that names recipe text and says so when
+   * one names nothing at all; the two room entries name a generator instead,
+   * and this is the half that reaches it.
+   *
+   * The entry's own `opens` decides which picker, rather than a branch on the
+   * id — `ROOM_TEMPLATES` declares it and `PresetMenu` presses the same field,
+   * so a third room entry added tomorrow is reachable by link on the day it is
+   * reachable by menu. `preset-company.test.js` derives each entry's
+   * declaration from what its generator actually writes, so `opens` is a
+   * checked field rather than a trusted one.
+   *
+   * **On `hashchange` as well as at mount**, which is where this link is
+   * likeliest to arrive: somebody with the toolkit already open clicks it, the
+   * URL changes, no document loads, and a mount-only effect never runs again.
+   * That is the defect `4027326` closed for `#j=`, and it would be the same one
+   * here.
+   *
+   * The live-session case refuses instead of opening, in the menu's own words.
+   * `SessionSheet` shows `SessionStart` only while nothing is live, so the
+   * deal's picker is not on that sheet during an exchange — opening it anyway
+   * would scroll at an element that is not there and leave a reader looking at
+   * the session panel wondering what their link did. That is the failure
+   * `6575aba` found by browser one layer down, and the answer is to name the
+   * state rather than to open something.
+   */
+  useEffect(() => {
+    const openFromHash = () => {
+      const action = parseToolkitHash(window.location.hash || "");
+      if (action.kind !== "preset") return;
+      const room = ROOM_TEMPLATES.find((t) => t.id === action.id);
+      if (!room?.opens) return;
+      if (room.opens === "ceremony" && sessionLive) {
+        nb.refuse(CEREMONY_PICKER_LIVE);
+        return;
+      }
+      setSessionFocus(room.opens);
+      nb.setSheet("session");
+    };
+    openFromHash();
+    window.addEventListener("hashchange", openFromHash);
+    return () => window.removeEventListener("hashchange", openFromHash);
+  }, [sessionLive, nb.refuse, nb.setSheet]);
+
   // An answer owed to a peer is owed *on a session*. When the exchange ends
   // there is no channel to send it on and no peer to send it to, and a button
   // still offering to would fail with a transport error rather than saying the
   // room is gone.
+  //
+  // The refusals go with them, and for a plainer reason: `closeQuorumExchange`
+  // empties `handoffs`, so every id these are keyed by names a document that no
+  // longer exists. Keeping them would be keeping a note about a row nothing can
+  // draw.
   useEffect(() => {
-    if (!sessionLive) setOwedBack([]);
+    if (!sessionLive) {
+      setOwedBack([]);
+      setHandoffRefusals({});
+    }
   }, [sessionLive]);
 
   /**
@@ -2395,9 +2477,11 @@ export function ToolkitShell() {
                 // deal picker is inside the session sheet's idle half, so while
                 // an exchange is live there is no picker to open. Closing the
                 // session is the move, and it is the one this sentence names.
-                ceremony: sessionLive
-                  ? "A deal is written before the room opens, so the picker is not on this sheet while an exchange is live — the session panel takes its place. Close the session to write one, or use the notebook you already dealt from."
-                  : undefined,
+                //
+                // Hoisted to a const because a `#t=room-deal` link reaches the
+                // same closed door from the other side, and the two doors must
+                // not describe it differently.
+                ceremony: sessionLive ? CEREMONY_PICKER_LIVE : undefined,
               }}
               triggerClassName="h-auto rounded-[6px] px-[11px] py-[5px] text-[length:11.5px] font-medium"
             />
@@ -4296,6 +4380,7 @@ export function ToolkitShell() {
                       placedAway={placedAway}
                       owedBack={owedBack}
                       note={handoffNote}
+                      refusals={handoffRefusals}
                       onOffer={(cell) => {
                         void nb.offerCell(cell).then((r) => {
                           setHandoffNote(
@@ -4306,9 +4391,10 @@ export function ToolkitShell() {
                         });
                       }}
                       onAccept={(id) => {
-                        // The row is read *before* the accept, because
-                        // `takeHandoff` removes it and the shell needs the
-                        // sender to know who is owed an answer afterwards.
+                        // The row is read *before* the accept, because an accept
+                        // that succeeds removes it and the shell needs the sender
+                        // to know who is owed an answer afterwards. A refusal
+                        // leaves it, but reading it up here covers both.
                         const row = pendingHandoffs.find((h) => h.id === id);
                         void nb.acceptHandoff(id).then((r) => {
                           if (r.ok && row?.kind === "offer") {
@@ -4321,12 +4407,63 @@ export function ToolkitShell() {
                               { cell: row.cell, to: row.from, label: String(label).replace(/^@/, "") },
                             ]);
                           }
+                          // Written onto the row that is still there.
+                          //
+                          // Set on *refusal* specifically, not on any falsy
+                          // `ok`: the other way to fail is "no longer pending",
+                          // which is about a row that has already gone and has
+                          // no row to annotate.
+                          //
+                          // Dropping it on success is housekeeping and is
+                          // described as that rather than as a guard. A handoff
+                          // id carries the sender, the cell and the timestamp,
+                          // so it names one document and no later one can
+                          // collide with it — a kept entry would be unreachable
+                          // rather than wrong. What it buys is that the map is
+                          // bounded by the queue instead of by how many presses
+                          // a session has seen. The property a reader might
+                          // expect it to protect — that a reason stays on the
+                          // document it was about — is the *keying*, and that
+                          // holds whether or not this branch runs.
+                          setHandoffRefusals((prev) => {
+                            if (r.ok) {
+                              if (!(id in prev)) return prev;
+                              const { [id]: _gone, ...rest } = prev;
+                              return rest;
+                            }
+                            return "refused" in r && r.refused && r.why
+                              ? { ...prev, [id]: r.why }
+                              : prev;
+                          });
                           setHandoffNote(
                             r.ok
                               ? `Accepted — ${r.registered} value${r.registered === 1 ? "" : "s"} registered. Run the notebook to use them.`
                               : r.why || "That handoff was refused."
                           );
                         });
+                      }}
+                      /**
+                       * Putting a document down, which the queue had no way to do.
+                       *
+                       * The note names the cell rather than saying "dismissed",
+                       * because the reader may have several rows and the one that
+                       * left is the fact. It also says the other end was not told:
+                       * there is no decline on this wire, so a person who dropped
+                       * a row and then wondered why their peer kept waiting would
+                       * otherwise have no way to find that out.
+                       */
+                      onDismiss={(id) => {
+                        const r = nb.dismissHandoff(id);
+                        setHandoffRefusals((prev) => {
+                          if (!(id in prev)) return prev;
+                          const { [id]: _gone, ...rest } = prev;
+                          return rest;
+                        });
+                        setHandoffNote(
+                          r.ok
+                            ? `Dismissed the ${r.kind} for cell ${r.cell}. Nothing was registered and nothing was sent — they have not been told.`
+                            : r.why || "That handoff is no longer pending."
+                        );
                       }}
                       onSendResult={(cell, label) => {
                         void nb.sendCellResult(cell, label).then((r) => {

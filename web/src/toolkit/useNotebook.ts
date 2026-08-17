@@ -41,6 +41,7 @@ import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-g
 import { clearActivity } from "../lib/toolkit/activity-log.js";
 import {
   PRESETS,
+  ROOM_TEMPLATES,
   compileRecipe,
   migrateRecipe,
   serializeRecipe,
@@ -860,16 +861,73 @@ export function useNotebook() {
     }
     if (action.kind === "preset") {
       const p = PRESETS.find((x: { id: string }) => x.id === action.id);
-      if (!p) return;
-      loadRecipeText(p.title, p.recipe);
-      seedCiphertext();
+      if (p) {
+        loadRecipeText(p.title, p.recipe);
+        seedCiphertext();
+        return;
+      }
+      /**
+       * A `#t=` this build cannot load, said out loud instead of returned from.
+       *
+       * `if (!p) return;` was the whole handling, and the silence it left was
+       * total: the link loads nothing, says nothing, and then the address bar
+       * rewrites itself to the notebook's own `#r=` — which for the empty
+       * notebook a stale link lands on is `""`, because `hashForToolkitState`
+       * reads `#t=` as one of its own forms and clears it. So the link a person
+       * followed disappeared out of the bar in front of them and no sentence
+       * appeared anywhere on the page. There is no state in this product harder
+       * to act on than one that erases the evidence of itself.
+       *
+       * No preset id has ever been retired, so nothing this product generates
+       * produces such a link. What made it reachable is `6575aba`: the two room
+       * entries are gallery members with ids of exactly this shape and are
+       * deliberately **not** in `PRESETS`, so `#t=room-deal` is a thing a person
+       * can type, bookmark off a screenshot, or guess from the menu — and it
+       * behaved identically to a typo.
+       *
+       * The room entries are answered rather than refused, because unlike a typo
+       * they name something that exists and there is exactly one thing the link
+       * can have meant. They carry no recipe and cannot: a room notebook is one
+       * cell per holder addressed by whole fingerprint, and this file cannot
+       * know the audience. So nothing is loaded here — `ToolkitShell` reads the
+       * same hash and opens the picker the entry names, the way it already does
+       * for `#j=` and `#keys`. This half says what happened, because a sheet
+       * opening on its own with a notebook untouched is not self-explanatory.
+       *
+       * The sentence stops at what this layer did and does not promise the
+       * picker appears. Whether it can is the shell's to know — the deal's
+       * picker is on the session sheet's idle half, so a live exchange has
+       * none — and a message written here saying "opening the picker" would be
+       * a claim this file cannot check, which is the class of defect the whole
+       * change is about.
+       *
+       * Nothing is invented for an id that matches neither. A redirect to
+       * something plausible would be this product guessing at what a person
+       * meant with their notebook as the stake, and `narrate` cannot say which
+       * template was intended because nothing knows.
+       */
+      const room = ROOM_TEMPLATES.find((x: { id: string }) => x.id === action.id);
+      if (room) {
+        narrate(
+          `"${room.title}" is written for the people in a room, so a link ` +
+            "cannot carry its text — the picker writes it from whoever is in " +
+            "the room. Nothing in your notebook has been replaced."
+        );
+        return;
+      }
+      refuse(
+        `No template called "${action.id}" is in this build, so nothing was ` +
+          "loaded and your notebook is untouched. Templates lists everything " +
+          "there is; if this link came from somewhere else, the name may have " +
+          "been retired or mistyped."
+      );
       return;
     }
     if (action.kind === "recipe") {
       loadRecipeText("Shared notebook", action.recipe);
       seedCiphertext();
     }
-  }, [loadRecipeText]);
+  }, [loadRecipeText, narrate, refuse]);
 
   useEffect(() => {
     loadFromHash();
@@ -3278,10 +3336,48 @@ export function useNotebook() {
    * This paragraph sat three declarations up, stacked above `handoffWho` with
    * nothing of its own beneath it, so the function it describes had no comment
    * and the one it was attached to had two.
+   *
+   * ## Read, decide, and take only on the way to registering
+   *
+   * **This used to take on its first line and judge afterwards**, and a refusal
+   * therefore spent what it refused. `takeHandoff` succeeds exactly once and is
+   * the only way a document leaves the queue — that is the anti-replay property
+   * `quorum-ops` argues, `placed-journey.e2e.js` pins and nothing here weakens —
+   * so once the verdict came back negative there was no second copy anywhere.
+   * The document was gone and the run that produced it had happened on somebody
+   * else's machine.
+   *
+   * The refusals made it a promise rather than merely a loss. `slot-present`
+   * says "`$x` already holds a value on this machine … Clear the slot if the
+   * offered value is the one you want", and the Slots tray has a Clear button on
+   * every row, so the sentence names a press a reader can actually make — and
+   * making it left them with a cleared slot and nothing to accept into it. The
+   * only recovery was to ask the peer to run the cell again.
+   *
+   * So the order is inverted, using the shape `quorum-ops` had already provided
+   * for it: `getPendingHandoffs` copies, `takeHandoff` removes, and the two are
+   * separate calls. This reads the copy, decides against it, and takes only on
+   * the branch that goes on to register. Nothing about exactly-once moves: the
+   * take is still the one that spends the document, and two presses racing the
+   * same row still have exactly one of them find it — the loser gets the same
+   * "no longer pending" it always got, having registered nothing.
+   *
+   * **A refused document therefore stays pending, which is the state that is
+   * actually true**: nothing has been done with it, and the remedy its refusal
+   * names is now performable — clear the slot, press again. What "pending" must
+   * not be allowed to mean is *untouched*, so the shell keeps the refusal beside
+   * the row and `dismissHandoff` is the press that ends one whose cause will
+   * never change. Restoring a taken document — take, judge, push back on refusal
+   * — was the other spelling and is refused: it would make `takeHandoff` succeed
+   * for a document that is still in the list, which is the exact property four
+   * comments and an e2e assertion exist to hold, and a caller that failed
+   * between the take and the restore would lose the document anyway.
    */
   const acceptHandoff = useCallback(
     async (id: string) => {
-      const doc = takeHandoff(id);
+      // A copy, not the queue's own record: `getPendingHandoffs` maps to fresh
+      // objects, so nothing decided below can edit what a later press will read.
+      const doc = getPendingHandoffs().find((h: { id: string }) => h.id === id);
       if (!doc) return { ok: false, why: "That handoff is no longer pending." };
 
       const { roster, me } = handoffWho();
@@ -3338,7 +3434,54 @@ export function useNotebook() {
               hasSlot: (l: string) => slots.has(l),
             });
 
-      if (!verdict.ok) return { ok: false, why: summarizeHandoff(verdict) };
+      /**
+       * Refused, and the document is still where the peer put it.
+       *
+       * Two sentences, because `summarizeHandoff` alone was not one a person
+       * could act on. It answers "a one-line human summary" with the locator —
+       * `handoff refused at cell 1 (needs)` — and drops `refusals[].message`,
+       * which is where `handoff.js` does the careful wording: which slot, why
+       * the two values cannot be reconciled, and what to clear. That message
+       * had no reader anywhere in the product. It is the projection defect this
+       * codebase keeps closing, and it meant the promise this ordering fix is
+       * about was one only somebody reading the source would ever have been
+       * made — so fixing the order without this would leave a person correctly
+       * told nothing.
+       *
+       * The first refusal, not all of them, for the reason `summarizeHandoff`
+       * counts the rest rather than printing them: they are one document's
+       * worth of reasons about one cell, and the first is the one to act on.
+       *
+       * The closing clause is the fact the ordering change bought and the only
+       * one worth spending words on here, because every remedy the messages
+       * name is worthless without it. It states what happened to the document
+       * and stops — it does not promise the retry will succeed, because whether
+       * it can is per-refusal and this sentence cannot know: clearing a slot is
+       * a press away, and being outside a room's audience is not.
+       */
+      if (!verdict.ok) {
+        const first = verdict.refusals?.[0];
+        const said = summarizeHandoff(verdict);
+        return {
+          ok: false,
+          refused: true,
+          why:
+            `${first?.message || said} Nothing was taken: it is still in the queue, ` +
+            "so you can accept it again if what it was refused for changes, or " +
+            "dismiss it.",
+        };
+      }
+      /**
+       * Spent here, on the one branch that goes on to register it.
+       *
+       * The take is the consumption and it has moved to meet the consent, which
+       * is what the paragraph above this function argues at length. It can still
+       * answer null — a second press, or a dismissal, that got here first — and
+       * that branch must return before the loop below, because registering
+       * bindings out of a document somebody else already spent is precisely the
+       * replay the exactly-once rule exists to stop.
+       */
+      if (!takeHandoff(id)) return { ok: false, why: "That handoff is no longer pending." };
       /**
        * Registered plainly, because a handoff binding must never replace.
        *
@@ -3384,6 +3527,44 @@ export function useNotebook() {
     },
     [handoffWho, source, title]
   );
+
+  /**
+   * Put a pending document down without accepting it.
+   *
+   * The other half of a refusal that no longer consumes. Keeping a refused
+   * document is right — it is still pending, and the remedy its refusal names
+   * needs it to be there — but a refusal whose cause never changes would leave a
+   * row wearing a live "Review and accept" for the rest of the session, and a
+   * queue that cannot be emptied stops being a list of things waiting on
+   * somebody. This is how one ends.
+   *
+   * **`takeHandoff` is exactly the right call and this is not a second door
+   * onto acceptance.** `quorum-ops` says so in the function's own comment:
+   * "Taking is separate from accepting on purpose… registering is the consent;
+   * this only stops the same document being acted on twice." Taking it and
+   * registering nothing is what putting it down *is*. The exactly-once property
+   * is untouched — one document, one take, whichever press gets there — and the
+   * two presses cannot both succeed on one row.
+   *
+   * It sends nothing, and that is a rule rather than an omission. `handoff.js`
+   * is explicit that there is no decline on this wire: "a peer who declines
+   * sends nothing and a peer who never looked sends nothing, and a document
+   * saying 'I declined' would be a claim the offerer could not check against a
+   * peer who simply stayed quiet."
+   *
+   * Never automatic, for the reason every other act in this arc is a press: it
+   * discards a document a person on another machine is waiting on the answer to,
+   * and nothing here can tell a document that will never be acceptable from one
+   * whose obstacle is about to be cleared.
+   */
+  const dismissHandoff = useCallback((id: string) => {
+    const doc = takeHandoff(id);
+    if (!doc) return { ok: false, why: "That handoff is no longer pending." };
+    // No `kernelEpoch` bump: nothing was registered, so no slot changed. The
+    // queue's own `basilisk:quorum-handoffs` event is what redraws the list,
+    // and `takeHandoff` emitted it.
+    return { ok: true, cell: doc.cell, kind: doc.kind as "offer" | "result" };
+  }, []);
 
   const copyShareLink = useCallback(async () => {
     const result = hashForNotebook(source);
@@ -3582,6 +3763,11 @@ export function useNotebook() {
     // of the same sentence a fresh announcement rather than a silent no-op.
     announcement,
     announce,
+    // The error line, for the one caller outside this file that has a refusal
+    // only *it* can word: a `#t=` naming a room template whose picker is not on
+    // screen while an exchange is live. `loadFromHash` cannot say that — whether
+    // the picker exists is the sheet's fact, not the hash's.
+    refuse,
     busy,
     runProgress,
     stopRun,
@@ -3656,6 +3842,7 @@ export function useNotebook() {
     offerCell,
     sendCellResult,
     acceptHandoff,
+    dismissHandoff,
     shareNotebook,
     peersWithoutNotebook,
     attestManifest,

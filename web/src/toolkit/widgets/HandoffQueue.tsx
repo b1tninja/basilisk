@@ -53,8 +53,23 @@ export type HandoffQueueProps = {
   placedAway: PlacedAway[];
   owedBack: OwedBack[];
   onAccept: (id: string) => void;
+  onDismiss: (id: string) => void;
   onOffer: (cell: number) => void;
   onSendResult: (cell: number, label: string) => void;
+  /**
+   * What accepting each row was refused for, by handoff id.
+   *
+   * Session-scoped shell state, like `owedBack` beside it and for the same
+   * reason — nothing about a document a peer sent is written down past the
+   * exchange it arrived on.
+   *
+   * A row is here because `acceptHandoff` refused it and **did not consume
+   * it**: a refusal leaves the document pending, so the remedy its sentence
+   * names is one the reader can still perform. That makes "pending" ambiguous
+   * in a way it was not before — a row that has been refused once looks
+   * exactly like one nobody has touched — and this is what separates them.
+   */
+  refusals?: Record<string, string>;
   /** The last attempt's outcome, in the words the handoff layer used. */
   note?: string | null;
   className?: string;
@@ -135,9 +150,11 @@ export function HandoffQueue({
   placedAway,
   owedBack,
   onAccept,
+  onDismiss,
   onOffer,
   onSendResult,
   note,
+  refusals,
   className,
 }: HandoffQueueProps) {
   const empty = !pending.length && !placedAway.length && !owedBack.length;
@@ -253,11 +270,45 @@ export function HandoffQueue({
                   ? "Signed by that peer and checked against their key. That says who made the claim — not that it answers a cell you handed out, and not that the values may be used. Accepting is what checks both and registers them."
                   : "Parsed and held. Nothing has been checked against your plan and no cell has run. Accepting checks it and registers what it carries."}
               </span>
+              {/* The refusal this row already collected, kept on the row rather
+                  than only in the note at the foot of the panel. The note holds
+                  one sentence for the whole queue, so a second press anywhere
+                  would overwrite the reason this particular document is still
+                  sitting here — and it is sitting here *because* it was refused,
+                  which is a thing the reader has to be able to see next to it
+                  rather than remember. */}
+              {refusals?.[h.id] ? (
+                <span
+                  className="text-[10px] leading-snug text-[var(--error)]"
+                  data-handoff-refusal
+                >
+                  {refusals[h.id]}
+                </span>
+              ) : null}
               <div className="flex flex-wrap gap-1.5">
                 <Button size="sm" variant="secondary" onClick={() => onAccept(h.id)}>
                   Review and accept
                 </Button>
+                {/* Named for what it does to the document rather than "Dismiss",
+                    which would read as dismissing the *notice*. It discards a
+                    thing another person is waiting on the answer to, so the
+                    label says which of the two presses this is.
+
+                    It tells nobody, and the sentence under it says so: there is
+                    no decline on this wire by design — `offerAwaiting` argues it
+                    — and a button that let a reader believe the other end had
+                    been informed would be the lie this panel is built to avoid. */}
+                <Button size="sm" variant="ghost" onClick={() => onDismiss(h.id)}>
+                  Dismiss without accepting
+                </Button>
               </div>
+              <span className="text-[10px] leading-snug text-[var(--muted-foreground)]">
+                Dismissing drops it on this machine and sends nothing — there is
+                no decline message on this wire, so from their end a document you
+                put down and one you have not read yet look the same. Accepting
+                is the only press that registers anything, and a refused document
+                stays here until you dismiss it.
+              </span>
             </li>
           ))}
         </ul>
