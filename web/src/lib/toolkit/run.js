@@ -115,8 +115,30 @@
  *   reports, in decline order — was `skippedRef`
  * @property {RunOfferVerdict[]} offers  latest verdict per declined cell —
  *   was the source `autoOffered` had to be
- * @property {Set<string>} sent          offer keys already handed out, marked
- *   before the send is awaited — was `offersSentRef.sent`
+ * @property {Map<string, SentOffer>} sent  every offer handed out this run,
+ *   keyed by {@link module:lib/toolkit/run-offers~offerKey}, written before the
+ *   send is awaited — was `offersSentRef.sent`, a bare set of the same keys
+ */
+
+/**
+ * One offer that left this machine, and the manifest it left under.
+ *
+ * Keyed by cell *and* peer, and never overwritten per cell, because this is
+ * the record `acceptCellResult` judges a returning result against. `offers`
+ * above cannot serve it: `noteOfferVerdicts` keeps the latest verdict *per
+ * cell*, so a cell offered to one peer and then to another remembers only the
+ * second, and the first peer's honest answer would come back to `not-offered`.
+ *
+ * The manifest digest rides along because the question is "this cell, to this
+ * person, under this agreement". Recording it at the moment of the send is
+ * what makes this a record rather than a restatement — deriving it at accept
+ * time from the notebook as it stands would judge the result against whatever
+ * is on screen now, which is the fabrication this replaces.
+ *
+ * @typedef {object} SentOffer
+ * @property {number} cell
+ * @property {string} peer      the label the plan placed it on
+ * @property {string} manifest  digest the offer went out under
  */
 
 /**
@@ -153,7 +175,7 @@ export function createRun({ cause, scope }) {
       cells: [],
       declined: [],
       offers: [],
-      sent: new Set(),
+      sent: new Map(),
     },
     plan: null,
   };

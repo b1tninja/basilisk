@@ -37,6 +37,7 @@ import {
 } from "../lib/toolkit/run-offers.js";
 import { cellsInScope, createRun, noteOfferVerdicts } from "../lib/toolkit/run.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
+import { manifestDigest } from "../lib/toolkit/manifest.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
 import { clearActivity } from "../lib/toolkit/activity-log.js";
 import {
@@ -2676,6 +2677,27 @@ export function useNotebook() {
    * claimed and knows only about the `aside` half. A replace there would
    * erase this run's record of what went out.
    */
+  /**
+   * Every offer this run has actually sent, in the shape `acceptCellResult`
+   * judges a result against.
+   *
+   * Entries with no manifest are dropped: those are offers whose send was
+   * attempted and refused, and a cell that never left must not admit a result
+   * claiming it did.
+   *
+   * Read from `runRef` rather than taken as an argument because the accept
+   * path is a click handler on a document that arrived on its own schedule —
+   * there is no run in hand at that moment, only the one this machine last
+   * performed, which is precisely the run whose offers are outstanding.
+   */
+  const offeredThisRun = useCallback(
+    () =>
+      [...(runRef.current?.record.sent.values() ?? [])]
+        .filter((o) => o.manifest)
+        .map((o) => ({ manifest: o.manifest, cell: o.cell, to: o.peer })),
+    []
+  );
+
   const noteOffers = useCallback(
     (
       run: Run,
@@ -3171,7 +3193,16 @@ export function useNotebook() {
       } catch (err) {
         return { ok: false, why: err instanceof Error ? err.message : String(err) };
       }
-      return { ok: true, cell, peer: built.peer };
+      // The digest this offer actually went out under, returned so the caller
+      // can write it down. `built.json` carries the same value, but reaching
+      // into a signed document to re-read what was just sent would make the
+      // record a reading of that document rather than of the act.
+      return {
+        ok: true,
+        cell,
+        peer: built.peer,
+        manifest: await manifestDigest(ctx.manifest),
+      };
     },
     [handoffWho, source, title]
   );
@@ -3256,8 +3287,19 @@ export function useNotebook() {
         // on the line above its own await for the same reason: the failure this
         // prevents is two passes overlapping, and a mark written after the
         // answer comes back is not written during the window that matters.
-        run.record.sent.add(o.key);
+        // Claimed with the cell and the peer, not just the key, because this
+        // map is what a returning result is judged against — see `SentOffer`.
+        // The manifest is filled in below rather than here: it is not known
+        // until the offer is built, and a record claiming an agreement the
+        // send never reached would be worse than no record.
+        run.record.sent.set(o.key, { cell: o.cell, peer: o.peer, manifest: "" });
         const r = await offerCell(o.cell);
+        // Only a send that happened writes a manifest. A refused offer leaves
+        // the entry with an empty one, which `offeredThisRun` drops — so a
+        // cell whose offer never left cannot admit a result claiming it did.
+        if (r.ok && r.manifest) {
+          run.record.sent.set(o.key, { cell: o.cell, peer: o.peer, manifest: r.manifest });
+        }
         outcomes.push({ cell: o.cell, peer: o.peer, ok: !!r.ok, why: r.ok ? undefined : r.why });
       }
       noteOffers(
@@ -3418,19 +3460,25 @@ export function useNotebook() {
           ? await reviewOffer(ctx, doc.offer, (l: string) => slots.has(l))
           : await reviewResult(ctx, doc.result, {
               by,
-              // **This is not a bound, and saying so is the point.** Every field
-              // of it is read off the document being judged, so
-              // `acceptCellResult`'s `not-offered` refusal — "an answer to a
-              // question nobody asked" — cannot fire here however wrong the
-              // result is. A real record would be what *this* machine handed out
-              // and to whom; `offerCell` knows both and writes neither down past
-              // the current run, and `HandoffQueue` already states in writing
-              // that the shell's memory of a handoff does not survive a reload.
-              // So the check is left standing rather than quietly deleted, and
-              // named as the hole it is: closing it needs a durable record of
-              // outgoing offers, which is its own decision and not a corner of
-              // this one.
-              offered: [{ manifest: doc.manifest, cell: doc.cell, to: by }],
+              // What this machine actually handed out, from the run that
+              // handed it out — not, as it was until now, the three fields
+              // read straight off the document being judged, which made
+              // `not-offered` unable to fire however wrong the result was.
+              //
+              // `record.sent` is the right record and `record.offers` is not:
+              // the latter keeps one verdict per cell, so a cell offered to
+              // two peers forgets the first, and that peer's honest answer
+              // would be refused as unsolicited.
+              //
+              // The known bound: it is this session's memory, so a reload
+              // empties it and a result arriving after one is refused as
+              // unsolicited rather than admitted on the strength of its own
+              // say-so. That is the safe direction — absence is not
+              // permission, and `HandoffQueue` already tells a reader the
+              // shell's memory of a handoff does not survive a reload — but
+              // it is a refusal a person can hit by doing nothing wrong, so
+              // it is named here rather than discovered.
+              offered: offeredThisRun(),
               hasSlot: (l: string) => slots.has(l),
             });
 
@@ -3525,7 +3573,7 @@ export function useNotebook() {
       setKernelEpoch((n) => n + 1);
       return { ok: true, cell: doc.cell, registered: (verdict.bindings || []).length };
     },
-    [handoffWho, source, title]
+    [handoffWho, offeredThisRun, source, title]
   );
 
   /**

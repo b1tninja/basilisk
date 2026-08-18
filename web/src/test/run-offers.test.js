@@ -359,18 +359,22 @@ describe("the run is what hands them over, not a second press", () => {
     // `NotebookSession._onKnock`'s order, and its reason: the failure being
     // prevented is two passes overlapping, and a mark written after the answer
     // comes back is not written during the window that matters.
+    // Pinned against the *order*, not the spelling: this used to match
+    // `sent.add(o.key)` literally and broke the day the record began carrying
+    // who and under what — a pin describing one way of writing the rule
+    // rather than the rule.
     expect(HOOK).toMatch(
-      /run\.record\.sent\.add\(o\.key\);\s*\n\s*const r = await offerCell\(o\.cell\);/
+      /run\.record\.sent\.set\(o\.key,[^;]*\);\s*\n\s*const r = await offerCell\(o\.cell\);/
     );
   });
 
   it("bounds re-offering by what went out, and by the run, rather than by a clock", () => {
     // The bound is a field of the run object now (`lib/toolkit/run.js`), and
-    // a fresh run means a fresh set — `createRun` mints `sent: new Set()`, so
+    // a fresh run means a fresh record — `createRun` mints `sent: new Map()`, so
     // pressing Run again is a real retry for a peer who was not meshed.
     expect(HOOK).toMatch(/const runRef = useRef<Run \| null>\(null\);/);
     expect(HOOK).toMatch(/runRef\.current = run;/);
-    expect(RUNJS).toMatch(/sent: new Set\(\),/);
+    expect(RUNJS).toMatch(/sent: new Map\(\),/);
     // The guard that stops a stale run's offers being marked against a fresh
     // bound — identity now, not a counter kept in step.
     expect(HOOK).toMatch(/if \(runRef\.current !== run\) return;/);
