@@ -136,6 +136,7 @@
 import {
   assertInvite,
   buildInvitePayload,
+  KNOCK_MAX_AGE_MS,
   combineDtlsFingerprints,
   derivePairwiseSessionKey,
   decryptSessionPayload,
@@ -399,6 +400,17 @@ export class NotebookSession {
      */
     this._knocked = new Set();
     /**
+     * Knock nonces already seen this session.
+     *
+     * Bounded, because it is fed by anyone who can put a frame on the relay:
+     * an unbounded set would let a stranger replaying captured knocks grow
+     * this browser's memory without limit. The oldest are dropped, which
+     * narrows the window a very old nonce could be replayed in rather than
+     * closing it — the clock check is what closes that, and this set is only
+     * here to stop a replay *inside* the window.
+     */
+    this._knockNonces = new Set();
+    /**
      * The last notebook proposal a person on this machine pressed Share on,
      * verbatim, or `""`.
      *
@@ -591,7 +603,14 @@ export class NotebookSession {
       // asserting before it has verified who it is talking to. It is a signed
       // envelope to the audience and its whole content is that an audience
       // member is here without an introduction.
-      await this._broadcast({ type: "knock" });
+      // A nonce and a clock, like every other payload type carries. The knock
+      // was exempt, and being exempt is what let a captured one replay into a
+      // later meeting of the same room — see `KNOCK_MAX_AGE_MS`.
+      await this._broadcast({
+        type: "knock",
+        nonce: randomNonceHex(32),
+        ts: Date.now(),
+      });
       this.onStatus?.("Waiting for signed invite…");
     }
   }
@@ -1479,6 +1498,12 @@ export class NotebookSession {
     }
 
     if (payload.type === "knock") {
+      // Dropped in silence, never answered and never surfaced. A refusal that
+      // travelled would tell whoever replayed the frame that somebody is
+      // listening, which is the presence question this room does not answer;
+      // a refusal on screen would put a stranger's traffic in front of a
+      // reader who can do nothing about it. Line noise, treated as such.
+      if (!this._knockIsFresh(payload)) return;
       await this._onKnock(signerFpr);
       return;
     }
@@ -1695,6 +1720,37 @@ export class NotebookSession {
    *
    * @param {string} peerFpr
    */
+  /**
+   * Is this knock one nobody has sent before, recently enough to mean it?
+   *
+   * Two questions and both are needed. The clock alone would let a frame
+   * captured a minute ago be replayed a hundred times inside its own window;
+   * the nonce alone would let a frame captured last year be replayed once,
+   * forever, into every future meeting of this room.
+   *
+   * Recording the nonce is the last thing, so a knock refused for its clock
+   * does not spend the nonce it carried — otherwise a stranger could burn a
+   * member's future knock by replaying it early against a skewed clock.
+   *
+   * @param {*} payload
+   * @returns {boolean}
+   */
+  _knockIsFresh(payload) {
+    const nonce = String(payload?.nonce || "");
+    if (!/^[0-9a-f]{16,128}$/i.test(nonce)) return false;
+    const ts = Number(payload?.ts) || 0;
+    if (!ts || Math.abs(Date.now() - ts) > KNOCK_MAX_AGE_MS) return false;
+    if (this._knockNonces.has(nonce)) return false;
+    if (this._knockNonces.size >= 512) {
+      // Oldest first: a Set iterates in insertion order, so this is the
+      // earliest nonce still held.
+      const oldest = this._knockNonces.values().next().value;
+      if (oldest !== undefined) this._knockNonces.delete(oldest);
+    }
+    this._knockNonces.add(nonce);
+    return true;
+  }
+
   async _onKnock(peerFpr) {
     // Everything already sent to this peer went into a room they were not in —
     // the invite, the `hello`, and (when this end is the offerer) an offer and

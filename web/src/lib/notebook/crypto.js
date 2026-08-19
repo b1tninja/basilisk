@@ -24,6 +24,28 @@ import { canonicalAudience, deriveRoomId } from "./room.js";
 export const INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Max age for a knock (ms), and far shorter than an invite's for the reason
+ * the two documents differ: an invite is a standing offer somebody may open
+ * tomorrow, while a knock claims *I am here now*. A window wide enough to be
+ * kind to a slow clock is the whole requirement.
+ *
+ * Until this existed the knock was the one payload with no freshness at all —
+ * `sealSignalingEnvelope` signs it, so nobody outside the audience can mint
+ * one, but a captured frame replays byte for byte, and `_knocked`/`_invited`
+ * are fresh in a new session, so the per-session bounds do not stop a replay
+ * into the *next* meeting of the same room. What that bought an attacker was
+ * a presence lie: a roster line saying an audience member is here when they
+ * are not. It could never reach a share — `kcVerified` needs live ECDH and
+ * `scatter to=room` refuses an unverified member — which is why this is a
+ * two-minute window and a seen-set rather than a challenge and a response.
+ *
+ * A challenge would also have made the room answer a stranger holding a
+ * captured frame, turning "is anyone in this room" into a question the room
+ * replies to. Silence is the property being kept.
+ */
+export const KNOCK_MAX_AGE_MS = 2 * 60 * 1000;
+
+/**
  * @typedef {object} NotebookEnvelopePayload
  * @property {1} v
  * @property {"invite"|"knock"|"hello"|"offer"|"answer"|"ice"|"rotate"} type
