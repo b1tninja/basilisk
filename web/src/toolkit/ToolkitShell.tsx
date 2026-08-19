@@ -3900,7 +3900,11 @@ export function ToolkitShell() {
             <div
               role="tablist"
               aria-label="Session tray"
-              className="flex items-center gap-1 border-b border-[var(--border)] px-2 pt-2"
+              // `min-w-0` with the scroll: a flex item defaults to its content
+              // width, so without it `overflow-x-auto` has nothing to scroll and the
+              // strip pushes the whole page sideways instead. At 375px this row was
+              // 799px wide and took the document with it.
+              className="flex min-w-0 items-center gap-1 overflow-x-auto border-b border-[var(--border)] px-2 pt-2"
             >
               {(
                 [

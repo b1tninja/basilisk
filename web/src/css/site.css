@@ -6416,6 +6416,13 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
     order: 3;
     flex-basis: 100%;
     overflow-x: auto;
+    /* A flex item defaults to `min-width: auto`, which is its *content* width,
+       so `overflow-x: auto` above had nothing to scroll: the row simply stayed
+       as wide as its links and pushed the page instead. Only the toolkit
+       showed it, because it carries the most nav links -- the shorter rows
+       elsewhere happened to fit, which is why this read as a toolkit bug for
+       as long as it did. */
+    min-width: 0;
   }
   .auth-widget {
     margin-left: 0;

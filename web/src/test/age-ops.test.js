@@ -41,6 +41,22 @@ async function identityPair() {
   return { identity: String(id.data), recipient: String(rec.data) };
 }
 
+/**
+ * Budget for a test that runs age's scrypt more than once.
+ *
+ * scrypt is slow on purpose, and these are not stubs — a single one of these
+ * tests spends about 1.8s of CPU alone. Vitest's 5s default was never sized
+ * for three of them, and under a full-suite run the workers compete for the
+ * same cores, so the deficit only appears when everything runs together. That
+ * made it look like a flake for months: green alone, red in CI, and no
+ * assertion ever wrong.
+ *
+ * Generous rather than tight, because the failure this prevents is a red
+ * suite nobody trusts, and the cost of an over-large budget is only that a
+ * genuinely hung test takes longer to say so.
+ */
+const SCRYPT_MS = 30_000;
+
 describe("age.keygen / age.recipient", () => {
   it("mints an AGE-SECRET-KEY-1 identity and marks it sensitive", async () => {
     const v = await execAgeKeygen();
@@ -140,7 +156,7 @@ describe("round trips", () => {
     const ct = await execAgeEncrypt(bytesValue(utf8("pw")), { passphrase: "$pw" }, bound);
     const out = await execAgeDecrypt(ct, { passphrase: "$pw" }, bound);
     expect(text(out.data)).toBe("pw");
-  });
+  }, SCRYPT_MS);
 
   it("keeps the whitespace a passphrase was bound with", async () => {
     // `paramText` trims, because a recipient read off a file arrives with a
@@ -155,7 +171,7 @@ describe("round trips", () => {
     await expect(
       execAgeDecrypt(ct, { passphrase: "$pw" }, slots({ $pw: "two spaces" }))
     ).rejects.toThrow();
-  });
+  }, SCRYPT_MS);
 
   it("refuses a literal rather than encrypting under the characters typed", async () => {
     // Unreachable through the parser (`slot: "required"`), and refused here
