@@ -446,6 +446,66 @@ body.layout-app:has(#app > .toolkit-shell) {
   width: var(--run-progress, 0%);
 }
 
+/*
+ * Narrow viewports: three columns of chrome and no notebook.
+ *
+ * The workspace row is `[Toolkit panel][splitter][notebook][session tray]`,
+ * and the notebook is the only one of the four that gives ground — the panel
+ * rides `--ops-width`, the tray is a fixed 328px, and both are `shrink-0`. So
+ * the three of them claim 553px before the page's actual subject gets any.
+ * Measured at a 375px viewport: panel 220, splitter 5, notebook **0**, tray
+ * 328, and the surplus pushed the document to 553px wide. The notebook was
+ * not narrow, it was absent, and the page scrolled sideways to show you the
+ * chrome that displaced it.
+ *
+ * 1000px is not a new breakpoint: site.css already switches
+ * `body.layout-app` from a fixed `100dvh` workspace to `height: auto;
+ * overflow: auto` at exactly that width, and stacks `.chef-workspace` in the
+ * same block. This row was the one part of the app shell that never got the
+ * memo — it stayed a fixed three-column strip inside a body that had already
+ * become an ordinary scrolling page.
+ *
+ * The splitter goes away with the columns. It drags a *vertical* divider, and
+ * once the panes are stacked above and below each other there is nothing for
+ * it to mean; the same block in site.css hides `.pane-splitter` for that
+ * reason. Nothing is lost by hiding it — width is no longer adjustable
+ * because width is no longer shared.
+ *
+ * The `max-height` is the other half of the fix and not a nicety. Both side
+ * panes scroll internally through a `ScrollArea` that is `min-h-0 flex-1`,
+ * which only scrolls when something above it bounds the height — in the
+ * column layout the `100dvh` shell did. Stacked, nothing does, so the shelf
+ * simply grew to fit all 122 operations: 4342px of it, measured, above a
+ * notebook you would have had to scroll past a screen and a half of tools to
+ * reach. Bounding each pane hands the scrolling back to the `ScrollArea` it
+ * was always meant to happen in.
+ */
+@media (max-width: 1000px) {
+  .toolkit-workspace {
+    flex-direction: column;
+  }
+  .toolkit-workspace > .ops-panel,
+  .toolkit-workspace > .ops-rail,
+  .toolkit-workspace > .toolkit-tray {
+    width: auto;
+  }
+  .toolkit-workspace > .ops-panel,
+  .toolkit-workspace > .toolkit-tray {
+    max-height: 45dvh;
+  }
+  .toolkit-workspace > .ops-splitter {
+    display: none;
+  }
+  /* The collapsed rail's label is set sideways because the rail is a 28px
+     vertical strip. Stacked it is a full-width bar 36px tall, and a word
+     rotated ninety degrees inside one is unreadable for no reason — the
+     rotation was a consequence of the column layout, not a decision about
+     the word. */
+  .toolkit-workspace > .ops-rail > span {
+    writing-mode: horizontal-tb;
+  }
+}
+
 /* Per-cell run status (CellStatus) — mirrors the old STATUS_DOT_VAR map. */
 .cell-status-dot[data-cell-status="ok"] {
   background: var(--success);

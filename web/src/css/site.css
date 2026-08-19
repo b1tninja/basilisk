@@ -884,6 +884,24 @@ nav {
   display: flex;
   gap: 0.1rem;
   flex: 1;
+  /*
+   * The nav is `[logo][links][auth]` on one row, and `flex: 1` above promises
+   * the link row will give up space when there is not enough. It cannot keep
+   * that promise while its overflow is `visible`: a flex item's automatic
+   * minimum size is its *content* size, and nine links come to 616px. So
+   * between the ≤640px wrap below and roughly 850px, the row stayed 616px
+   * wide, the sign-in button was pushed off the right edge — measured at
+   * 837px in a 768px viewport, on every page — and the document scrolled
+   * sideways to reach it.
+   *
+   * `overflow-x: auto` is the whole fix, and not because a scrollbar rescues
+   * anything: an item whose overflow is not `visible` has an automatic
+   * minimum size of *zero*, so this one declaration is what lets `flex: 1`
+   * shrink the row at all. Above ~850px it changes nothing, because the row
+   * has more space than content and an `auto` scroller with nothing to scroll
+   * is invisible.
+   */
+  overflow-x: auto;
 }
 
 .nav-link {
@@ -6412,17 +6430,16 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
     flex-wrap: wrap;
     gap: 0.5rem;
   }
+  /* Phone: the links get their own row under the logo and sign-in button.
+     The scrolling of that row is not set up here — it comes from the
+     `overflow-x: auto` on the base `.nav-links` rule, which is also what
+     lets the row shrink to the space it is given. A `min-width: 0` used to
+     sit here as well, on the theory that `overflow-x` alone had nothing to
+     scroll; it was measured to change nothing, because the overflow value is
+     already what zeroes the automatic minimum size. */
   .nav-links {
     order: 3;
     flex-basis: 100%;
-    overflow-x: auto;
-    /* A flex item defaults to `min-width: auto`, which is its *content* width,
-       so `overflow-x: auto` above had nothing to scroll: the row simply stayed
-       as wide as its links and pushed the page instead. Only the toolkit
-       showed it, because it carries the most nav links -- the shorter rows
-       elsewhere happened to fit, which is why this read as a toolkit bug for
-       as long as it did. */
-    min-width: 0;
   }
   .auth-widget {
     margin-left: 0;

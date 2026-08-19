@@ -108,6 +108,77 @@ describe("the design-sync export surface", () => {
   });
 });
 
+/**
+ * A preview drifting from the component it documents.
+ *
+ * Everything above asks whether the *set* of components is consistent — the
+ * barrel, the map, the bundle. None of it looks at a preview's contents, and
+ * that is where the third failure lives: `60a68f6` gave `encryptCapable` a
+ * third state, `null` — "nobody could ask" — and `RecipientsCard` drew it as
+ * "encryption unverified", while the preview kept a two-state fixture. The
+ * gallery went on documenting a component that had stopped existing, and every
+ * check here passed, because the name was still in both lists.
+ *
+ * ## What this check is, and what it deliberately is not
+ *
+ * It is a **domain** check, not a copy check. `recipientRows` normalises the
+ * field to exactly `true | false | null`, and `RecipientsCard` branches three
+ * ways on it, so "the previews must exhibit all three" is a statement about a
+ * closed set rather than about any sentence. The card's branches are read out
+ * of the card rather than listed here, so collapsing it back to two states
+ * fails loudly instead of quietly making this vacuous.
+ *
+ * It is **not** general, and the general version is not cheap for the reason
+ * that is worth writing down: rendering is not the obstacle — this suite
+ * already calls `renderToStaticMarkup` (`compose-before-session.test.js`), so
+ * a product component *can* be drawn in a node test. The obstacle is getting a
+ * preview's props back out of it. Each preview is a hand-authored `.tsx` module
+ * that imports from `basilisk-portal`, a specifier nothing in this repo
+ * resolves, and its fixtures are ordinary module-scope bindings in whatever
+ * shape that component wants. Extracting them means either evaluating the
+ * module with a shimmed import — which is a second bundler in the test suite —
+ * or parsing TSX for literals, which is a heuristic that would go wrong quietly
+ * and get relaxed the first time it did. So this is one component's closed
+ * field, honestly narrow, rather than a mechanism claiming to cover fifty.
+ */
+describe("a preview keeps up with the component it documents", () => {
+  const CARD = fileURLToPath(
+    new URL("../toolkit/widgets/RecipientsCard.tsx", import.meta.url)
+  );
+  const PREVIEW = fileURLToPath(
+    new URL("../../../.design-sync/previews/RecipientsCard.tsx", import.meta.url)
+  );
+
+  it("shows every encryptCapable state RecipientsCard draws", () => {
+    const card = readFileSync(CARD, "utf8");
+    // The card's own comparisons. `true` never appears as a comparison — it is
+    // the else branch that draws nothing — so the two explicit ones plus the
+    // fall-through are the three states.
+    const branches = new Set(
+      [...card.matchAll(/encryptCapable === (false|null)/g)].map((m) => m[1])
+    );
+    expect(
+      [...branches].sort(),
+      `RecipientsCard no longer branches on both \`false\` and \`null\`. If the ` +
+        `state space changed, this check has to change with it — do not delete ` +
+        `it, or the preview goes back to documenting a component that is gone.`
+    ).toEqual(["false", "null"]);
+
+    const shown = new Set(
+      [...readFileSync(PREVIEW, "utf8").matchAll(/encryptCapable:\s*(true|false|null)/g)].map(
+        (m) => m[1]
+      )
+    );
+    expect(
+      [...shown].sort(),
+      `The RecipientsCard preview never produces ${["true", "false", "null"]
+        .filter((s) => !shown.has(s))
+        .join(", ")}. A gallery card that cannot reach a state the product ` +
+        `draws is documentation of a component that does not ship.`
+    ).toEqual(["false", "null", "true"]);
+  });
+});
+
 describe("module integrity computes its root one way", () => {
   it("refuses a runtime with no WebCrypto instead of reaching for node:crypto", async () => {
     // Two implementations of one security check drift, and the one that drifts

@@ -425,11 +425,52 @@ const PGP_ENCRYPT_STEPS = new Set(["gpg.encrypt", "gpg.symencrypt"]);
  *
  * Two doors reach it — the Templates card and a `#t=room-deal` link — and a
  * closed door that gave two accounts of itself would be worse than one that
- * gave none. It names the press that works (close the session) rather than the
- * one that does not, which is the rule every refusal in this file keeps.
+ * gave none.
+ *
+ * ## Why it is not simply moved under the live half
+ *
+ * `RoomRecovery` sits under *both* halves of `SessionSheet`, and the reason
+ * given there — a recovery is most often written while the original room is
+ * live — invites the same treatment here. It does not transfer, and the
+ * argument is not the sheet's geometry:
+ *
+ *  - **Writing a deal replaces the notebook you have open.** The picker's own
+ *    button says so, in those words. During an exchange that notebook is what
+ *    the room agreed to run, and this sheet's description promises the
+ *    notebook "replaces nothing anybody has written without their say-so". A
+ *    one-press whole-notebook replacement inside a live room is that promise
+ *    inverted, for every peer at once. A recovery is a *new* notebook for a
+ *    room that may already be gone, which is why it can be offered anywhere.
+ *  - **It would need a second derivation of the roster.** `draftCeremony`
+ *    reads `sessionDraft.audience`; a live session's roster is
+ *    `sessionAudience`, computed elsewhere. Mirroring the picker means either
+ *    generating a deal for the room you are *not* in, or standing up a second
+ *    source of truth for the audience of a document whose whole safety
+ *    property is that the fingerprints in its headers and the people in the
+ *    room cannot disagree.
+ *
+ * So the refusal stays. What it now says is what stopping costs, because two
+ * things were wrong with the earlier sentence and neither was the state:
+ *
+ *  - "Close the session" named a press with a near-homonym on the main
+ *    toolbar. **Clear session** there is `clearSensitive` — it evicts unlocked
+ *    private keys and clears the activity log, and does not touch the
+ *    exchange. A reader following the old remedy from the Templates gallery
+ *    would have found that button first, lost their keys, and still been
+ *    refused. The press that works is `SessionLive`'s **Close session**, so
+ *    both are named and told apart.
+ *  - Closing is not free. `closeQuorumExchange` empties `handoffs` — the cells
+ *    and results peers have sent for a decision — along with the inbox, the
+ *    unacked sends and the notebook proposal. A remedy that silently discards
+ *    a peer's unanswered document is not one a person can consent to, so the
+ *    sentence names it.
+ *
+ * Deliberately still a sentence and not a button: putting a session-closing
+ * press inside a browse surface would be a destructive act one click from the
+ * Templates gallery, with the confirmation nowhere.
  */
 const CEREMONY_PICKER_LIVE =
-  "A deal is written before the room opens, so the picker is not on this sheet while an exchange is live — the session panel takes its place. Close the session to write one, or use the notebook you already dealt from.";
+  "A deal is written before the room opens, and writing one replaces the notebook you have open — while an exchange is live that is the notebook this room is running, so there is no picker on this sheet. Close the session to write one — the press is “Close session” in the session panel, not “Clear session” in the toolbar — and closing drops anything a peer has sent you that you have not answered yet. Or use the notebook you already dealt from.";
 
 /** Every step (including tee/foreach nests) whose `profile` param overrides the session default. */
 function collectProfileOverrides(chains: RecipeChain[]): ChipPath[] {
@@ -2473,10 +2514,10 @@ export function ToolkitShell() {
                 nb.setSheet("session");
               }}
               roomRefusal={{
-                // Named because it is true and performable, not to be tidy: the
-                // deal picker is inside the session sheet's idle half, so while
-                // an exchange is live there is no picker to open. Closing the
-                // session is the move, and it is the one this sentence names.
+                // Named because it is true and performable, not to be tidy.
+                // Why the picker is not simply mirrored under the live half —
+                // and what the remedy costs the person who follows it — is
+                // argued on `CEREMONY_PICKER_LIVE` itself.
                 //
                 // Hoisted to a const because a `#t=room-deal` link reaches the
                 // same closed door from the other side, and the two doors must
@@ -2750,11 +2791,18 @@ export function ToolkitShell() {
           </div>
         ) : null}
 
-        <div className="flex min-h-0 flex-1" ref={opsWorkspaceRef}>
+        {/*
+          `toolkit-workspace` exists for one reason: the stacking rule in
+          toolkit.css needs a handle on this row and on its four children. The
+          columns are sized by three different mechanisms — a CSS variable, a
+          Tailwind arbitrary width, and `flex-1` — so there is no way to say
+          "stop being columns" from any one of them.
+        */}
+        <div className="toolkit-workspace flex min-h-0 flex-1" ref={opsWorkspaceRef}>
           {opsCollapsed ? (
             <button
               type="button"
-              className="flex w-[28px] shrink-0 items-center justify-center border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              className="ops-rail flex w-[28px] shrink-0 items-center justify-center border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
               title="Expand Toolkit panel"
               onClick={toggleOpsCollapsed}
             >
@@ -2870,7 +2918,7 @@ export function ToolkitShell() {
               aria-label="Resize Toolkit panel"
               title="Drag to resize · double-click to reset"
               className={cn(
-                "w-[5px] shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--brand)]",
+                "ops-splitter w-[5px] shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--brand)]",
                 opsDragging && "bg-[var(--brand)]"
               )}
               onPointerDown={onOpsSplitterPointerDown}
@@ -3896,15 +3944,21 @@ export function ToolkitShell() {
 
         {/* Session tray — persistent, not modal. Replaces the old Keyring/Variables/Crypto sheets. */}
         {trayOpen ? (
-          <div className="flex w-[328px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)]">
+          <div className="toolkit-tray flex w-[328px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)]">
             <div
               role="tablist"
               aria-label="Session tray"
-              // `min-w-0` with the scroll: a flex item defaults to its content
-              // width, so without it `overflow-x-auto` has nothing to scroll and the
-              // strip pushes the whole page sideways instead. At 375px this row was
-              // 799px wide and took the document with it.
-              className="flex min-w-0 items-center gap-1 overflow-x-auto border-b border-[var(--border)] px-2 pt-2"
+              // `overflow-x-auto` is doing all of the work, and doing two jobs
+              // with one word: a flex item whose overflow is not `visible` has
+              // an automatic minimum size of *zero*, so declaring the scroll is
+              // also what lets this strip shrink below its seven tabs. Before
+              // it, the row was 799px wide at a 375px viewport and took the
+              // document with it. A `min-w-0` sat here for the same purpose and
+              // is gone: measured with it removed, the strip still shrinks to
+              // its box and still scrolls (327px of box, 581px of tabs, at
+              // 1280), because the overflow value had already zeroed the
+              // minimum it was added to zero.
+              className="flex items-center gap-1 overflow-x-auto border-b border-[var(--border)] px-2 pt-2"
             >
               {(
                 [

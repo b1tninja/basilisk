@@ -705,6 +705,20 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     const reason = await dealer.locator(`#${reasonId}`).innerText();
     expect(reason).toContain("while an exchange is live");
     expect(reason).toContain("Close the session");
+    // The remedy has to survive being followed. Two things are pinned here
+    // because both were wrong in the first spelling of this sentence and
+    // neither was the state it names:
+    //
+    //  - The press is `SessionLive`'s **Close session**, and the toolbar three
+    //    inches away carries **Clear session**, which is `clearSensitive` —
+    //    it drops unlocked private keys and leaves the exchange running. A
+    //    reader following this refusal would have found the wrong one first.
+    //  - `closeQuorumExchange` empties `handoffs`, so closing discards every
+    //    cell and result a peer has sent for a decision. A remedy that spends
+    //    something is not one a person can consent to unless it says so.
+    expect(reason).toContain("Close session");
+    expect(reason).toContain("Clear session");
+    expect(reason).toMatch(/a peer has sent you that you have not answered/);
 
     // And the press really declines. Reached by keyboard rather than by
     // `click()`, which is the stronger check and the only one Playwright will

@@ -4,74 +4,76 @@ import { RecipientsCard } from "basilisk-portal";
  * The five fields the engine serializes for a `recipients` artifact — the same
  * shape `hkp.search` hands downstream — over four real OpenPGP keys.
  *
- * `encryptCapable` is not asserted here: each key was generated and then asked
- * `getEncryptionKey()`. The last one is a genuine signing-only key with no
- * encryption subkey, so it genuinely answers false, and the fingerprints are
- * the real ones for those keys.
+ * `encryptCapable` has **three** states and every fixture below is one of them
+ * honestly. `true` and `false` were asked: each key was generated and then
+ * asked `getEncryptionKey()`, and the last one is a genuine signing-only key
+ * with no encryption subkey, so it genuinely answers false. `null` is the state
+ * nothing asked — a keyserver search hit. It is the same real certificate; what
+ * differs is that the directory stores no column for encryption capability, so
+ * a row that arrived from a search carries no answer rather than a cheerful
+ * one. The fingerprints are the real ones for those keys throughout.
  */
 
-const LIST = JSON.stringify(
-  [
-    {
-      fingerprint: "85D9A6ACABD26AB2CECE7BEDABBB06C6A3C592E0",
-      label: "Ada Lovelace",
-      email: "ada.lovelace@example.org",
-      approvalState: "approved",
-      encryptCapable: true,
-    },
-    {
-      fingerprint: "7218D1BCD7830008AE847FA68D297C55D0CE4CEC",
-      label: "Grace Hopper",
-      email: "grace.hopper@example.org",
-      approvalState: "approved",
-      encryptCapable: true,
-    },
-    {
-      fingerprint: "6BC96A340B91A25D90D631098B76B24CF9C15B84",
-      label: "Katherine Johnson",
-      email: "k.johnson@example.org",
-      approvalState: "approved",
-      encryptCapable: true,
-    },
-    {
-      fingerprint: "DAA2E8D529834C42326DEC02E75594932C6BF5BD",
-      label: "Release Signing Bot",
-      email: "release@example.org",
-      approvalState: "upstream",
-      encryptCapable: false,
-    },
-  ],
-  null,
-  2
-);
+const ADA = {
+  fingerprint: "85D9A6ACABD26AB2CECE7BEDABBB06C6A3C592E0",
+  label: "Ada Lovelace",
+  email: "ada.lovelace@example.org",
+};
+const GRACE = {
+  fingerprint: "7218D1BCD7830008AE847FA68D297C55D0CE4CEC",
+  label: "Grace Hopper",
+  email: "grace.hopper@example.org",
+};
+const KATHERINE = {
+  fingerprint: "6BC96A340B91A25D90D631098B76B24CF9C15B84",
+  label: "Katherine Johnson",
+  email: "k.johnson@example.org",
+};
+const BOT = {
+  fingerprint: "DAA2E8D529834C42326DEC02E75594932C6BF5BD",
+  label: "Release Signing Bot",
+  email: "release@example.org",
+};
 
-const APPROVED_ONLY = JSON.stringify(
-  [
-    {
-      fingerprint: "85D9A6ACABD26AB2CECE7BEDABBB06C6A3C592E0",
-      label: "Ada Lovelace",
-      email: "ada.lovelace@example.org",
-      approvalState: "approved",
-      encryptCapable: true,
-    },
-    {
-      fingerprint: "7218D1BCD7830008AE847FA68D297C55D0CE4CEC",
-      label: "Grace Hopper",
-      email: "grace.hopper@example.org",
-      approvalState: "approved",
-      encryptCapable: true,
-    },
-    {
-      fingerprint: "6BC96A340B91A25D90D631098B76B24CF9C15B84",
-      label: "Katherine Johnson",
-      email: "k.johnson@example.org",
-      approvalState: "approved",
-      encryptCapable: true,
-    },
-  ],
-  null,
-  2
-);
+const body = (rows: unknown[]) => JSON.stringify(rows, null, 2);
+
+/** Four certificates something has read — `hkp.get`, or the device cache. */
+const LIST = body([
+  { ...ADA, approvalState: "approved", encryptCapable: true },
+  { ...GRACE, approvalState: "approved", encryptCapable: true },
+  { ...KATHERINE, approvalState: "approved", encryptCapable: true },
+  { ...BOT, approvalState: "upstream", encryptCapable: false },
+]);
+
+/**
+ * The same four, straight off a directory search, before anything read them.
+ *
+ * `recipientFromSearchHit` decides capability only where the payload proves it
+ * — revoked and expired are `false` — and everything else is `null`, because
+ * whether a certificate carries an encryption subkey is a fact about its
+ * packets and the portal holds no column for it.
+ */
+const SEARCH_HITS = body([
+  { ...ADA, approvalState: "approved", encryptCapable: null },
+  { ...GRACE, approvalState: "approved", encryptCapable: null },
+  { ...KATHERINE, approvalState: "unapproved", encryptCapable: null },
+  { ...BOT, approvalState: "upstream", encryptCapable: null },
+]);
+
+/** All three states in one table: two read, two never asked. */
+const MIXED = body([
+  { ...ADA, approvalState: "approved", encryptCapable: true },
+  { ...GRACE, approvalState: "approved", encryptCapable: null },
+  { ...KATHERINE, approvalState: "unapproved", encryptCapable: null },
+  { ...BOT, approvalState: "upstream", encryptCapable: false },
+]);
+
+/** What `hkp.filter encrypt=true` leaves of `MIXED`: only the proven-false goes. */
+const AFTER_FILTER = body([
+  { ...ADA, approvalState: "approved", encryptCapable: true },
+  { ...GRACE, approvalState: "approved", encryptCapable: null },
+  { ...KATHERINE, approvalState: "unapproved", encryptCapable: null },
+]);
 
 /**
  * Who this is about to be encrypted to.
@@ -91,14 +93,31 @@ const APPROVED_ONLY = JSON.stringify(
 export const WhoCanOpenThis = () => <RecipientsCard content={LIST} />;
 
 /**
- * `hkp.filter`'s default is approved plus encrypt-capable, and this is the
- * before and after. Exactly one row disappears — the one whose warn line said
- * it would — and the card is how you notice that the list you are encrypting
- * to is not the list you searched for.
+ * A search result, before anything asked the keys.
+ *
+ * Every row says `encryption unverified` — in the ordinary muted tone, not
+ * warn, because nothing is wrong with these keys. What is missing is a
+ * reading, and `hkp.get` is what takes it. This is the commonest recipient
+ * list in the product, and until the third state existed it drew identically
+ * to the fully-checked list above: capability that had never been asked was
+ * shown the same way as capability that had been asked and passed.
+ */
+export const StraightOffTheDirectory = () => <RecipientsCard content={SEARCH_HITS} />;
+
+/**
+ * `hkp.filter encrypt=true`, before and after — and the reason it is a
+ * half-answer.
+ *
+ * The filter drops only what the rows *prove* incapable: the signing-only bot
+ * goes, and the two unverified rows stay, because a filter cannot drop a key
+ * for a fact it does not have. Three states are visible in the first table and
+ * two survive into the second, which is why the op reports an
+ * `encryptUnverified` count beside the result rather than letting a shorter
+ * list imply that what remains was checked.
  */
 export const BeforeAndAfterFilter = () => (
   <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 18 }}>
-    <RecipientsCard content={LIST} />
-    <RecipientsCard content={APPROVED_ONLY} />
+    <RecipientsCard content={MIXED} />
+    <RecipientsCard content={AFTER_FILTER} />
   </div>
 );
