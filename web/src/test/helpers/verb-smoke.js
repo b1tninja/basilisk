@@ -969,6 +969,34 @@ random 32 | sss.split threshold=2 shares=3 | blip39 | foreach :items
       timeoutMs: 30_000,
     },
     {
+      // `tray=merge`'s covering case, and it is the hybrid in miniature: one
+      // share arrives down the pipe (standing in for a `gpg.decrypt` this
+      // browser could open) and one from the rows a custodian typed after
+      // opening theirs somewhere no page can reach. Bare `shares` would take
+      // the piped one and drop the typed one; with the word in the text both
+      // are counted, which is the only reason two shares of a 2-of-3 recombine
+      // here at all.
+      id: "shares.tray=merge",
+      recipe: "input | shares tray=merge | blip39.decode | sss.combine | base64 | out $secret",
+      mode: "run",
+      bindings: async () => {
+        const { ast } = compileRecipe(
+          "random 32 | sss.split threshold=2 shares=3 | blip39 | foreach\n  - out $share"
+        );
+        const arts = await runRecipe(ast);
+        const mnemonics = arts
+          .map((a) => String(a.content || "").trim())
+          .filter((t) => t.split(/\s+/).length >= 12);
+        return {
+          inputs: {
+            text: { value: mnemonics[0] },
+            shares: { mnemonics: [mnemonics[1]] },
+          },
+        };
+      },
+      timeoutMs: 30_000,
+    },
+    {
       id: "in.select.as.peek.tee.inspect",
       recipe: `genkey ec/p256 | tee
   - :public | export spki | pem | out $public

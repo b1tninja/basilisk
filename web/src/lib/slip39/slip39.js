@@ -119,9 +119,41 @@ export async function combineRawShares(shareSet, opts = {}) {
   if (flags & BLIP39_ENVELOPE_FLAG) {
     const envelope = opts.envelope || shareSet.envelope || null;
     if (!envelope) {
+      /**
+       * What is true, rather than what would be convenient.
+       *
+       * This sentence used to ask for the legacy blob by filename, which named
+       * an input the product cannot accept: the branch that read one was
+       * deleted in `cb19c51` because nothing in the app ever wrote the field it
+       * read, so there is no tray row, parameter or file picker a holder could
+       * put the blob into. A remedy that cannot be performed is worse than none
+       * — it sends somebody looking for a field that has never existed on any
+       * screen of this product. The filename is not repeated even here, on the
+       * same reasoning the deleted tray field's own sweep gives: naming a dead
+       * input in prose is how it grows a second life as "the one we used to
+       * take", and that sweep will not let this comment name it either.
+       *
+       * The second half of the old sentence was worse: `envelope.asc` is an
+       * OpenPGP message on the live `gpg.symdecrypt` path, a different object
+       * from an AES-GCM SSS envelope, and offering it beside the refusal read
+       * as a conversion. There is no converter here and this says nothing
+       * about the legacy format beyond the one bit its own header sets.
+       *
+       * Who made these shares is deducible and so it is deduced out loud:
+       * `splitRawShares` a few lines above has had `const flags = 0` since this
+       * file's first commit, so no set this product ever dealt can reach here.
+       * That makes the producer the only party who can finish the recovery, and
+       * naming it is the one thing said here that the holder can act on.
+       */
       throw new Error(
-        "Legacy enveloped shares require the original envelope.bin.b64 blob. " +
-          "New pipelines use OpenPGP symencrypt (envelope.asc) instead of SSS envelopes."
+        "These shares are marked enveloped — their header sets the envelope flag, so " +
+          "recombining them yields the key to a separate blob rather than the secret " +
+          "itself. This build cannot be handed that blob: nothing here reads one, and " +
+          "nothing here ever wrote one — splitRawShares has set flags = 0 since its " +
+          "first commit, so no share set this product dealt carries the mark and these " +
+          "cards came from some other tool. The mnemonics are fine; it is the envelope " +
+          "they unlock that has no way in. Recover the secret with the tool that made " +
+          "them, which is the only thing that holds both halves."
       );
     }
     const plain = await aesGcmOpen(master, envelope);

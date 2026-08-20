@@ -994,6 +994,28 @@ peek         side inspect; stem unchanged
 Runtime input panels (`shares`, `input`, GPG recipients, envelopes, bound JWKs)
 are never stored in the recipe text.
 
+**The share rows are a fallback, and `tray=merge` is how they stop being one.**
+A `shares` step reads the Inputs tray only when the recipe names no shares of
+its own — what the recipe names beats what a tray holds. `shares tray=merge`
+says the opposite: the rows join whatever the pipe and `with=` brought. That is
+the spelling for a set assembled partly in this browser and partly by hand — a
+custodian who opened their card in Kleopatra, gpg or on a YubiKey (no OpenPGP
+card is reachable from a page) types it into the rows beside one this browser
+could decrypt:
+
+```text
+gpg.decrypt count=all | shares tray=merge | blip39 -d | sss.combine | out $secret
+```
+
+Naming shares in the recipe **and** leaving rows in the tray with neither word
+written refuses rather than picking a side: a cell whose result depends on
+whether a panel three inches away happens to be full is not readable from its
+text. The merged set is still one set — the same card down two roads, and two
+roads carrying two different splits, both refuse by set id and index out of each
+mnemonic's own header. `tray=` serializes only when it is `merge`, and "only one
+`shares` step per pipeline" is unchanged, so there is still exactly one place in
+a pipeline where a set is assembled.
+
 ## Serialization
 
 Paste / blur canonicalize via `canonicalizeRecipe`:

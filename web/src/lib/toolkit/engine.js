@@ -1083,19 +1083,25 @@ function attribute(err, key, value) {
  * its author meant, and the one thing this step must never do is carry on
  * without it.
  *
+ * `where` is per-mnemonic and gets narrowed for a bundle's parts, because a
+ * refusal about one share should say which of six a room delivered it was.
+ * `origin` is the road, and it is deliberately *not* narrowed: a set assembled
+ * from two roads has to be describable as two roads, and "the value piped into
+ * `shares` (3 of 6)" is a position within one of them, not a second one.
+ *
  * @param {PipelineValue|null|undefined} value
  * @param {string} where  how a refusal should name this source
- * @returns {{ mnemonic: string, where: string }[]}
+ * @returns {{ mnemonic: string, where: string, origin: string }[]}
  */
 function mnemonicsFromValue(value, where) {
   if (!value) return [];
   if (value.type === "text") {
     const text = String(value.data ?? "").trim();
-    return text ? [{ mnemonic: text, where }] : [];
+    return text ? [{ mnemonic: text, where, origin: where }] : [];
   }
   if (value.type === "bundle") {
     const parts = Array.isArray(value.data?.parts) ? value.data.parts : [];
-    /** @type {{ mnemonic: string, where: string }[]} */
+    /** @type {{ mnemonic: string, where: string, origin: string }[]} */
     const out = [];
     parts.forEach((part, i) => {
       if (part?.type !== "text") {
@@ -1104,7 +1110,9 @@ function mnemonicsFromValue(value, where) {
         );
       }
       const text = String(part.data ?? "").trim();
-      if (text) out.push({ mnemonic: text, where: `${where} (${i + 1} of ${parts.length})` });
+      if (text) {
+        out.push({ mnemonic: text, where: `${where} (${i + 1} of ${parts.length})`, origin: where });
+      }
     });
     return out;
   }
@@ -1135,7 +1143,7 @@ function mnemonicsFromValue(value, where) {
  * `decodeShareSet`'s finding and it says so in words about checksums, and
  * raising it here would move an existing message to a worse place.
  *
- * @param {{ mnemonic: string, where: string }[]} collected
+ * @param {{ mnemonic: string, where: string, origin?: string }[]} collected
  */
 function assertDistinctShares(collected) {
   /** @type {Map<string, string>} */
@@ -1162,6 +1170,67 @@ function assertDistinctShares(collected) {
     }
     seen.set(key, where);
   }
+}
+
+/**
+ * Refuse a set assembled from two roads that turn out to be two splits.
+ *
+ * `decodeShareSet` already refuses a mixed set and its message is the better
+ * one *when there is a list to number*: "row 1 is from set 465E, row 2 is from
+ * set 17A3" is exactly what a custodian sees when they typed two cards into two
+ * numbered rows, and `custodian-recovery` pins those words. This does not touch
+ * that case — a set that came down one road falls straight through to it.
+ *
+ * A set collected from two roads has no such list. Row 3 of a merge is a
+ * position in an ordering this step invented a moment ago; nobody typed it,
+ * nothing displays it, and a person told to take out row 3 cannot find row 3.
+ * Here the honest coordinate is the road: which set arrived through the pipe,
+ * which through the share rows. That is knowable only at this step, because it
+ * is the last place the shares are still attributed — `decodeShareSet` receives
+ * a flat array of strings and could not say it if it wanted to.
+ *
+ * Why it refuses at all rather than leaving it to interpolation: combining
+ * across two splits does not fail. It returns thirty-two bytes that are not
+ * anybody's secret, with no error, which this project has already observed
+ * directly and counts among the worst things it could do. The merge spelling is
+ * new, so this is the first time two splits can meet without either of them
+ * passing through a numbered tray, and the guard goes where the meeting is.
+ *
+ * @param {{ mnemonic: string, where: string, origin?: string }[]} collected
+ */
+function assertOneSetAcrossOrigins(collected) {
+  const roads = new Set(collected.map((c) => c.origin || c.where));
+  if (roads.size < 2) return;
+
+  /** @type {Map<string, Set<string>>} set id → the roads that carried it */
+  const bySet = new Map();
+  for (const { mnemonic, where, origin } of collected) {
+    let header;
+    try {
+      header = decodeMnemonic(mnemonic);
+    } catch (_) {
+      // An unreadable mnemonic has no set to disagree about, and saying so is
+      // `decodeShareSet`'s job in words about checksums. Same reasoning as
+      // `assertDistinctShares`: do not move an existing message somewhere worse.
+      continue;
+    }
+    const id = formatSetId(header.id);
+    if (!bySet.has(id)) bySet.set(id, new Set());
+    (bySet.get(id) || new Set()).add(origin || where);
+  }
+  if (bySet.size < 2) return;
+
+  const listed = [...bySet.entries()]
+    .map(([id, from]) => `set ${id} from ${[...from].join(" and ")}`)
+    .join("; ");
+  throw new Error(
+    `shares: the shares reaching this step are from more than one split — ${listed}. ` +
+      "Shares recombine only with the others from their own split, and combining across " +
+      "two sets returns a different secret rather than an error, so it is stopped here. " +
+      "Keep the road holding the split you are recovering and take the other out — the " +
+      "Inputs tray by clearing its rows, the pipe by dropping `tray=merge` or the cell " +
+      "that feeds it."
+  );
 }
 
 /**
@@ -1488,7 +1557,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       // the recipe named nothing. A recipe that says which shares it means must
       // not quietly pick up others.
       const withRef = String(step.params?.with || "").trim();
-      /** @type {{ mnemonic: string, where: string }[]} */
+      /** @type {{ mnemonic: string, where: string, origin: string }[]} */
       const named = mnemonicsFromValue(value, "the value piped into `shares`");
       if (withRef) {
         const resolve = bindings?.resolveSlot;
@@ -1497,12 +1566,55 @@ async function execStepBody(step, value, bindings, artifacts) {
         }
         named.push(...mnemonicsFromValue(resolve(withRef), `shares with=${withRef}`));
       }
-      /** @type {{ mnemonic: string, where: string }[]} */
-      let collected = named;
+      /** @type {{ mnemonic: string, where: string, origin: string }[]} */
+      const trayRows = (inp?.mnemonics || [])
+        .map((m) => ({
+          mnemonic: String(m).trim(),
+          where: "the Inputs tray",
+          origin: "the Inputs tray",
+        }))
+        .filter((m) => m.mnemonic);
+      /**
+       * ## The one loosening, and the refusal that keeps it honest
+       *
+       * The rule above still holds by default and `tray=fallback` is still what
+       * a bare `shares` means. What it cost was the hybrid: one cell merging
+       * shares this browser decrypted with shares a custodian opened somewhere
+       * this browser cannot go — Kleopatra, gpg, a YubiKey, an OpenPGP card no
+       * page can reach — and typed into the rows. `a0c34cf` recorded that loss
+       * rather than papering over it, because the hybrid had only ever worked by
+       * `gpg.decrypt` secretly reading this tray.
+       *
+       * `tray=merge` is the road back, and it is a word in the recipe because
+       * the alternative is a cell that recovers a secret or does not depending
+       * on whether a panel three inches away happens to be full. That is the
+       * state nobody can read off the text, and it is not made acceptable by
+       * being convenient.
+       *
+       * The refusal below is the other half and the reason a default of
+       * "fallback" is not simply the old silence renamed. The state it names is
+       * one nobody meant: the recipe names shares *and* somebody has typed cards
+       * into the rows, so two people's worth of intent point opposite ways.
+       * Dropping the typed ones without a word is precisely the defect this
+       * codebase keeps rediscovering — and here it was worse than silent, since
+       * the too-few-shares message a custodian then got told them to "paste the
+       * mnemonic into the share rows beside the others", which they had already
+       * done. Both remedies below are performable on the screen the reader is
+       * looking at.
+       */
+      const trayMode = String(step.params?.tray || "fallback").trim().toLowerCase();
+      if (named.length && trayRows.length && trayMode !== "merge") {
+        throw new Error(
+          `shares: the recipe names ${named.length} share${named.length === 1 ? "" : "s"} and ` +
+            `the Inputs tray holds ${trayRows.length} more, and this cell will not choose ` +
+            "between them. Write `shares tray=merge` to recombine both, or clear the share " +
+            "rows to use only what the recipe names."
+        );
+      }
+      /** @type {{ mnemonic: string, where: string, origin: string }[]} */
+      let collected = trayMode === "merge" ? [...named, ...trayRows] : named;
       if (!collected.length) {
-        collected = (inp?.mnemonics || [])
-          .map((m) => ({ mnemonic: String(m).trim(), where: "the Inputs tray" }))
-          .filter((m) => m.mnemonic);
+        collected = trayRows;
       }
       if (!collected.length) {
         // Wired fallback: a split cell that ran earlier this session left its
@@ -1514,6 +1626,7 @@ async function execStepBody(step, value, bindings, artifacts) {
           .map((v) => ({
             mnemonic: String(v.data).trim(),
             where: `the split that ran earlier this session (share ${v.meta.shareIndex})`,
+            origin: "the split that ran earlier this session",
           }))
           .filter((m) => m.mnemonic);
       }
@@ -1531,7 +1644,12 @@ async function execStepBody(step, value, bindings, artifacts) {
             "Otherwise paste them into Inputs → shares."
         );
       }
+      // Order matters between these two. The same card arriving down two roads
+      // is the likelier mistake and has the more specific sentence, so it gets
+      // to speak first; a mixed set only ever means the roads are different
+      // splits once that has been ruled out.
       assertDistinctShares(collected);
+      assertOneSetAcrossOrigins(collected);
       const mnemonics = collected.map((m) => m.mnemonic);
       /**
        * The envelope this source can supply is always none, and the constants
@@ -1558,10 +1676,13 @@ async function execStepBody(step, value, bindings, artifacts) {
        * `resolveEnvelopeArmored`, which reads `inputs.shares.envelopeArmored`.
        *
        * A holder of legacy enveloped shares therefore still meets
-       * `combineRawShares`'s refusal naming `envelope.bin.b64`, and this
-       * product still has no way to accept one. That was as true before this
-       * deletion as after it; what changed is that the code no longer shows a
-       * channel where there is none.
+       * `combineRawShares`'s refusal, and this product still has no way to
+       * accept an envelope. That was as true before the deletion as after it;
+       * what changed is that the code no longer shows a channel where there is
+       * none. The refusal itself no longer asks for the blob by filename
+       * either — that was the last surface still describing the missing channel
+       * as though it were an input, and `enveloped-share-refusal.test.js` keeps
+       * the name out of every source in the app.
        */
       return {
         type: "shares",

@@ -838,7 +838,7 @@ export const STEPS = [
     kind: "source",
     toolbox: "sss",
     shelf: "split",
-    doc: "Collect BLIP39 share mnemonics into one set. Gathers what is piped in (one mnemonic, or a bundle — from `quorum.recv count=` or a foreach `out` slot), what `with=$slot` names, and — when the recipe names nothing — what the Inputs tray holds (never stored in the recipe), falling back to shares a split's foreach emitted earlier this session. Recover from the tray: `shares | blip39 -d | sss.combine | …`. Recover from shares a room delivered: `$share | shares with=$late | blip39 -d | sss.combine | …`, or `quorum.recv count=2 | shares | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out $share` (`$share` then holds the whole emitted set). For free-form text use `input`.",
+    doc: "Collect BLIP39 share mnemonics into one set. Gathers what is piped in (one mnemonic, or a bundle — from `quorum.recv count=` or a foreach `out` slot), what `with=$slot` names, and — when the recipe names nothing — what the Inputs tray holds (never stored in the recipe), falling back to shares a split's foreach emitted earlier this session. `tray=merge` folds the tray in *beside* what the recipe names instead of yielding to it, which is how a share opened in Kleopatra/gpg/on a card joins shares this browser decrypted; with the recipe naming shares and the tray also full, saying neither refuses. Recover from the tray: `shares | blip39 -d | sss.combine | …`. Recover from shares a room delivered: `$share | shares with=$late | blip39 -d | sss.combine | …`, or `quorum.recv count=2 | shares | blip39 -d | sss.combine | …`. Both at once: `gpg.decrypt count=all | shares tray=merge | blip39 -d | sss.combine | …`. Map each share with `foreach` / `- out $share` (`$share` then holds the whole emitted set). For free-form text use `input`.",
     input: "none",
     // What the pipe may hand this source instead of being thrown away. Every
     // other source re-roots — `genkey | out $a | genkey | out $b` is the corpus
@@ -850,10 +850,22 @@ export const STEPS = [
     collects: ["text", "bundle"],
     output: "shares",
     entropy: "none",
-    // Only when the recipe named nothing. `with=` puts the shares in the text,
-    // and a cell whose values are named must not be held back waiting for a
-    // tray nobody needs to open; `whenInput` says the same of a piped value.
-    unresolvedInputs: [{ panel: "shares", when: { with: "" }, whenInput: ["none"] }],
+    // Two ways the tray becomes a need, and they are separate declarations
+    // because they are separate claims.
+    //
+    // The first is the original one: only when the recipe named nothing. `with=`
+    // puts the shares in the text, and a cell whose values are named must not be
+    // held back waiting for a tray nobody needs to open; `whenInput` says the
+    // same of a piped value.
+    //
+    // The second is unguarded on purpose. `tray=merge` is a statement that this
+    // cell's set is partly hand-typed, so the rows are wanted *however* full the
+    // pipe is — and without this line the panel a merge exists to read would be
+    // hidden behind the very pipe it is meant to join.
+    unresolvedInputs: [
+      { panel: "shares", when: { with: "" }, whenInput: ["none"] },
+      { panel: "shares", when: { tray: "merge" } },
+    ],
     params: [
       {
         name: "with",
@@ -863,6 +875,40 @@ export const STEPS = [
         default: "",
         emptyMeans: "collect only what the pipe and the Inputs tray hold",
         doc: "One more slot to fold into the set — a received mnemonic (`with=$late`) or a bundle from `quorum.recv count=`",
+      },
+      /**
+       * ## Why the tray's part is a word in the recipe and not a mood
+       *
+       * `gpg.decrypt` used to read the share rows itself, which is how one cell
+       * could once merge shares this browser opened with shares a custodian had
+       * opened in Kleopatra, on a YubiKey, or on an OpenPGP card no page can
+       * reach. `a0c34cf` took that reading away — decrypting is not collecting —
+       * and said plainly that the merge went with it, because rescuing it meant
+       * loosening one of two rules and neither was loosened there.
+       *
+       * This param is that loosening, spelled rather than assumed. The rule it
+       * bends is "what the recipe names beats what a tray holds", and it bends
+       * only where the tray is *also* full: the tray then joins the set instead
+       * of being dropped in silence, which is the defect this repo keeps finding
+       * under other names. The other rule — one `shares` step per pipeline — is
+       * untouched, so there is still exactly one place a set is assembled and
+       * still exactly one thing to read to know what went into it.
+       *
+       * It is an enum and not a bare flag because both settings are positions a
+       * reader may need to see stated. `fallback` is the default and serializes
+       * away, so no shipped recipe changes shape; `merge` is a word in the text
+       * of every cell that does it, which is the whole requirement — a cell
+       * whose result depended on whether a tray happened to be full would be the
+       * invisible state `f565ab1` killed, and that is why an *unspelled* pairing
+       * of named shares with a full tray refuses at run time rather than picking
+       * a side. The refusal is in `engine.js`, which is where both facts are.
+       */
+      {
+        name: "tray",
+        type: "enum",
+        default: "fallback",
+        enum: ["fallback", "merge"],
+        doc: "What the Inputs tray's share rows are to this cell. `fallback`: they answer only when the recipe names no shares. `merge`: they join whatever the pipe and `with=` brought — the spelling for a set assembled partly in this browser and partly by hand (Kleopatra/gpg/YubiKey). Named shares plus a full tray with neither said refuses.",
       },
     ],
   },

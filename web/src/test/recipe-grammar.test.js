@@ -19,6 +19,7 @@ const EXAMPLES = [
   `random 32 | sss.split threshold=2 shares=3 | blip39 | foreach :items
   - :value | out $share`,
   "random 32 | sss.split threshold=2 shares=3 | blip39 | [1] | out $share-1",
+  "gpg.decrypt count=all | shares tray=merge | blip39 -d | sss.combine | out $secret",
 ];
 
 describe("RECIPE.md conformance", () => {
