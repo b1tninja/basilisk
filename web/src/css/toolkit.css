@@ -497,6 +497,23 @@ body.layout-app:has(#app > .toolkit-shell) {
 .toolkit-workspace > .ops-splitter {
   grid-column: 2;
 }
+/*
+ * The splitter is a tab stop, so it needs a ring, and the global one in
+ * site.css draws at `outline-offset: 2px`. On a 5px sliver that is a ring
+ * drawn almost entirely on its neighbours — over the panel it resizes on one
+ * side and the notebook on the other — and 2px past the top and bottom of a
+ * row that is the full height of the window, where the page has no room to
+ * show it. Pulled inside the box instead, the same repair `.recipient-hit`
+ * makes for the same reason.
+ *
+ * Only the offset is here. The bar also fills with `--brand` on focus, which
+ * is a `focus-visible:` utility beside the `hover:` one it mirrors in
+ * `ToolkitShell.tsx` — a keyboard user should see the handle light up the way
+ * a pointer user does, and this outline is what says the focus is theirs.
+ */
+.ops-splitter:focus-visible {
+  outline-offset: -1px;
+}
 .toolkit-workspace > .toolkit-notebook {
   grid-column: 3;
 }

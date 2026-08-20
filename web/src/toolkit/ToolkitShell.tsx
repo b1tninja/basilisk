@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
@@ -284,6 +285,35 @@ const SUITE_BADGE_LABEL: Record<keyof ToolkitSuiteStatus, string> = {
 // preference carries over between the legacy and React toolkit.
 const LAYOUT_KEY = "basilisk.toolkit.layout";
 const OPS_PANE_LIMITS = { min: 160, max: 520, def: 220 };
+
+/**
+ * How far one arrow key moves the panel edge, in px.
+ *
+ * The drag has no step — it follows the pointer — so this number exists only
+ * for the keyboard, and it is a trade between the two things a keyboard user
+ * wants from a resizer: land on the width you meant, and get there. 16px
+ * crosses the 360px range in 23 presses, which is a held arrow key rather
+ * than a count, and it is still fine enough to nudge a truncated op label
+ * into view. `Shift` multiplies it, because the coarse move is the one that
+ * would otherwise be key-repeat: four steps at a time crosses the range in
+ * six presses. A modifier nobody discovers costs nothing — the plain arrow
+ * already reaches every width — whereas `Home`/`End` are the two ends and
+ * cannot serve as "roughly twice as far".
+ */
+const OPS_PANE_STEP = 16;
+
+/**
+ * The one place a Toolkit-panel width is held to its limits.
+ *
+ * The drag and the arrow keys are two roads to the same number, and two
+ * clamping expressions is how they would come to disagree about what the
+ * minimum is. Rounds as well as clamps: the drag arrives with a fractional
+ * `clientX` and the stored preference is read back on the next load, so a
+ * width that is not an integer is a width that gets written to localStorage.
+ */
+function clampOpsWidth(width: number) {
+  return Math.round(Math.max(OPS_PANE_LIMITS.min, Math.min(OPS_PANE_LIMITS.max, width)));
+}
 
 type ToolkitLayout = { opsW?: number | null; opsCollapsed?: boolean | null };
 
@@ -1041,9 +1071,7 @@ export function ToolkitShell() {
     const onMove = (ev: PointerEvent) => {
       const rect = opsWorkspaceRef.current?.getBoundingClientRect();
       if (!rect) return;
-      width = Math.round(
-        Math.max(OPS_PANE_LIMITS.min, Math.min(OPS_PANE_LIMITS.max, ev.clientX - rect.left))
-      );
+      width = clampOpsWidth(ev.clientX - rect.left);
       setOpsWidth(width);
     };
     const onUp = () => {
@@ -1056,9 +1084,62 @@ export function ToolkitShell() {
     target.addEventListener("pointerup", onUp);
   };
 
-  const onOpsSplitterDoubleClick = () => {
+  /**
+   * Reset, reached from the pointer and from the keyboard.
+   *
+   * `opsW: null` and not `opsW: OPS_PANE_LIMITS.def`, which is the part worth
+   * naming: reset means "I have no preference", so the next load falls back
+   * to whatever the default is *then*. Writing the current default would
+   * freeze today's 220 into storage and quietly outlive a change to it.
+   *
+   * The double-click had this to itself. Now that Enter means the same thing
+   * it is a function, because a second copy of two lines is a second answer
+   * to what reset means, and the null is exactly the half a copy loses.
+   */
+  const resetOpsWidth = () => {
     setOpsWidth(OPS_PANE_LIMITS.def);
     saveToolkitLayout({ opsW: null });
+  };
+
+  /**
+   * The keyboard's half of the splitter.
+   *
+   * `role="separator"` with a tab stop is a window splitter, and the role was
+   * already on the element claiming a control that could not be focused, let
+   * alone operated. The panel is drawn to the *left* of this handle, so Right
+   * widens and Left narrows — the edge goes where the key points, which is
+   * the only mapping that survives someone not having read anything.
+   *
+   * Every branch that acts calls `preventDefault`: arrows and Home/End all
+   * scroll the nearest scrollable ancestor by default, and the workspace has
+   * several, so without it a resize would also throw the notebook around.
+   *
+   * There is no `opsCollapsed` guard here, unlike the pointer path. This
+   * element is not rendered while the panel is collapsed, so a guard would be
+   * a branch that cannot be taken — the pointer handler's is already
+   * unreachable for the same reason and is left alone rather than grown a
+   * twin.
+   */
+  const onOpsSplitterKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      resetOpsWidth();
+      return;
+    }
+    const step = e.shiftKey ? OPS_PANE_STEP * 4 : OPS_PANE_STEP;
+    let next: number;
+    if (e.key === "ArrowRight") next = opsWidth + step;
+    else if (e.key === "ArrowLeft") next = opsWidth - step;
+    else if (e.key === "Home") next = OPS_PANE_LIMITS.min;
+    else if (e.key === "End") next = OPS_PANE_LIMITS.max;
+    else return;
+    e.preventDefault();
+    const width = clampOpsWidth(next);
+    setOpsWidth(width);
+    // Persisted per press rather than on some end-of-gesture, because a key
+    // press has no end: there is no `pointerup` to hang the write on, and the
+    // width after one press is as much a preference as the width after ten.
+    saveToolkitLayout({ opsW: width });
   };
 
   const [now, setNow] = useState(() => Date.now());
@@ -3939,17 +4020,40 @@ export function ToolkitShell() {
             </div>
           )}
           {!opsCollapsed ? (
+            /* A separator with a tab stop is a *window splitter*, and the
+               role had been making that claim on its own: no `tabIndex`, no
+               `onKeyDown`, so the label announced a resizer that a keyboard
+               could not reach, never mind move. The value triplet is the rest
+               of the contract — a splitter that can be moved has to be able
+               to say where it currently is, and `aria-valuenow` is read off
+               the same state the stylesheet's `--ops-width` is published
+               from, so the announcement and the picture cannot drift.
+
+               No `aria-controls`: nothing on the panel carries a stable id,
+               and minting one whose only reader is this attribute would be a
+               relationship asserted rather than one that exists.
+
+               `aria-label` stays a *name*. The two roads through this control
+               are in `title`, which — because the label supplies the name —
+               is what the accessibility tree uses for the description, so it
+               is announced after "Resize Toolkit panel, splitter, 220"
+               instead of being crammed into the phrase said on every focus. */
             <div
               role="separator"
               aria-orientation="vertical"
               aria-label="Resize Toolkit panel"
-              title="Drag to resize · double-click to reset"
+              aria-valuenow={opsWidth}
+              aria-valuemin={OPS_PANE_LIMITS.min}
+              aria-valuemax={OPS_PANE_LIMITS.max}
+              tabIndex={0}
+              title="Drag or arrow keys to resize · double-click or Enter to reset"
               className={cn(
-                "ops-splitter w-[5px] shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--brand)]",
+                "ops-splitter w-[5px] shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--brand)] focus-visible:bg-[var(--brand)]",
                 opsDragging && "bg-[var(--brand)]"
               )}
               onPointerDown={onOpsSplitterPointerDown}
-              onDoubleClick={onOpsSplitterDoubleClick}
+              onDoubleClick={resetOpsWidth}
+              onKeyDown={onOpsSplitterKeyDown}
             />
           ) : null}
 
