@@ -18,9 +18,11 @@ import {
 import {
   buildNotebookProposal,
   decideProposal,
+  describeNotebookDelivery,
   proposalToJson,
   sameNotebook,
 } from "../lib/toolkit/notebook-share.js";
+import { formatActivityTime } from "../lib/toolkit/activity-log.js";
 import {
   attestationToJson,
   buildAttestation,
@@ -2853,6 +2855,16 @@ export function useNotebook() {
   }, []);
 
   /**
+   * How many channels the last press wrote into, or `null` before the first.
+   *
+   * The wire fact of one press, kept because it is the half of the delivery
+   * report that must *not* move afterwards — see `notebookDelivery` for why
+   * re-deriving it would let a number change under a reader with no press
+   * behind it. Session-scoped state in a hook, persisted nowhere.
+   */
+  const [notebookWrote, setNotebookWrote] = useState<number | null>(null);
+
+  /**
    * Put this notebook in front of the room, signed.
    *
    * **The transport the digest gate was always written against.** Every check in
@@ -2911,6 +2923,12 @@ export function useNotebook() {
     // last adopted from land silently on the strength of an act they had no part
     // in. An echo of what was just sent is caught by the same-notebook branch of
     // `considerProposal`, which needs no record at all.
+    //
+    // Recorded *after* the refusals above, so a press that reached nobody does
+    // not start a delivery report about a send that never happened. This is the
+    // one line that arms `notebookDelivery`, and the session's own per-peer
+    // record supplies everything else in it.
+    setNotebookWrote(sent);
     return { ok: true, sent };
   }, [source, title]);
 
@@ -2975,9 +2993,17 @@ export function useNotebook() {
    *
    * The claim is deliberately about this machine — *not written to* — and never
    * "they do not have a notebook". Somebody else in a three-way room may have
-   * given them one, nothing acknowledges a notebook, and a browser that closed
-   * still reads as an open channel. `false` is the direction this can be trusted
-   * in, and it is the direction that needs a sentence.
+   * given them one, and a browser that closed still reads as an open channel.
+   * `false` is the direction this can be trusted in, and it is the direction
+   * that needs a sentence.
+   *
+   * **The acknowledgment does not belong in this list, and that is deliberate.**
+   * `notebookReachedAt` says whether a document this browser wrote *arrived*;
+   * this says whether one was ever written. They are different questions with
+   * different remedies — the second is answered by pressing Share, the first by
+   * nothing at all — and folding them together would put a peer who is merely
+   * slow on a line that tells the reader to send them something they already
+   * have. `notebookDelivery` is where arrival is reported.
    *
    * **The one peer who is excluded is the one this notebook came from**, while
    * it is still their text. Without that line every joiner who adopted a
@@ -3009,6 +3035,122 @@ export function useNotebook() {
     // roster dispatches on. Between them every input to this is covered.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quorumState, source, title]);
+
+  /**
+   * Tell the peers named above that a notebook exists here.
+   *
+   * **The gap `4027326` stated and left open.** A dealer who edits after
+   * pressing Share has a retention that is retired rather than delivered — the
+   * right call, since a newcomer's notebook is empty and stale text would be
+   * adopted without anyone being asked — and the newcomer therefore learned
+   * nothing at join time. They found out when an offered cell was refused, by
+   * which point two people had spent the intervening minutes each believing the
+   * other was set up.
+   *
+   * **Driven off the same list the warning line is drawn from, and that is the
+   * point.** `peersWithoutNotebook` already answers *which peers is this
+   * browser holding out on*, with the exclusion that keeps it useful: the peer
+   * this notebook was adopted from is not on it, so nobody is told that the
+   * person who just sent them a notebook is withholding one. One predicate,
+   * two consumers, and the two ends of the room cannot end up saying
+   * contradictory things about the same pair — which they would the moment a
+   * second copy of this condition existed to drift.
+   *
+   * `source.trim()` for the same reason the line is only drawn then: a person
+   * with nothing open is not withholding anything, and announcing an empty
+   * notebook would be announcing a fact that is false.
+   *
+   * **What actually leaves is the session's business, not this hook's.**
+   * `announceNotebookHeld` refuses unless somebody here has pressed Share, and
+   * bounds itself to once per member; this effect re-runs on every roster tick
+   * and must be free to. Putting the press gate down there rather than here is
+   * deliberate — a consent rule that a caller can forget to apply is not a
+   * consent rule.
+   */
+  useEffect(() => {
+    const session = getLiveSession();
+    if (!session || !source.trim()) return;
+    for (const fpr of peersWithoutNotebook) void session.announceNotebookHeld(fpr);
+  }, [peersWithoutNotebook, source]);
+
+  /**
+   * Peers who have said they are holding a notebook they have not sent here.
+   *
+   * The receiving half of the effect above, read off the live session for
+   * `peersWithoutNotebook`'s reason: `quorumState` is the snapshot the roster
+   * dispatches on and carries no projection of this fact, so the event says
+   * *the room changed, look again* and the session answers what changed.
+   *
+   * **It is the bare fact and there is nothing else to read.** The frame
+   * carries no title, no digest and no cell count, so this list is the whole of
+   * what arrived — which is why the surface it feeds can only ever say *there
+   * is something to ask for*, and why a reader cannot be misled into thinking
+   * they know what it is.
+   *
+   * `kcVerified` as well as the flag: a peer whose key confirmation has lapsed
+   * is not anyone in particular right now, and a standing sentence about them
+   * would outlive the identity that earned it. The flag itself is cleared by
+   * the session when their proposal actually arrives.
+   */
+  const peersHoldingNotebook = useMemo<string[]>(() => {
+    const session = getLiveSession();
+    if (!session) return [];
+    const out: string[] = [];
+    for (const [fpr, peer] of session.peers) {
+      if (peer.kcVerified && peer.notebookHeld) out.push(fpr);
+    }
+    return out;
+  }, [quorumState]);
+
+  /**
+   * Where the last press stands — the wire fact, and what came back.
+   *
+   * `null` until somebody presses Share in this session, because there is no
+   * send to report on and a delivery report about nothing would be a sentence
+   * with an empty subject.
+   *
+   * **`wrote` is frozen and the rest is live**, and the split is the honest
+   * one. The count is what *this machine did* at the instant of the press —
+   * history, and re-deriving it later would silently fold in the peers
+   * `_deliverSharedNotebook` reached afterwards, so a number a reader saw would
+   * change under them with no press behind it. The acknowledgments are what
+   * *the far ends said*, which arrives after and is the whole reason this is
+   * not a string set once.
+   *
+   * **Every peer this browser wrote to is in exactly one of the two lists**,
+   * and `kcVerified` is deliberately not a filter here. A peer whose channel
+   * has since gone quiet is precisely the peer whose delivery is in doubt, and
+   * dropping them off the unconfirmed list would make silence look like
+   * resolution — the one direction this report may never be wrong in.
+   */
+  const notebookDelivery = useMemo(() => {
+    if (notebookWrote === null) return null;
+    const session = getLiveSession();
+    if (!session) return null;
+    const reached: { fpr: string; at: number }[] = [];
+    const unconfirmed: string[] = [];
+    for (const [fpr, peer] of session.peers) {
+      if (!peer.notebookSent || !peer.notebookDigest) continue;
+      if (peer.notebookReachedAt) reached.push({ fpr, at: peer.notebookReachedAt });
+      else unconfirmed.push(fpr);
+    }
+    return { wrote: notebookWrote, reached, unconfirmed };
+  }, [quorumState, notebookWrote]);
+
+  /**
+   * That report as the sentence the panel prints, or `""` when there is none.
+   *
+   * Composed here rather than in the shell so there is one place the wording
+   * lives and one place a test can read it without a browser.
+   * `describeNotebookDelivery` owns the spelling and the argument for it.
+   */
+  const notebookDeliveryNote = useMemo(
+    () =>
+      notebookDelivery
+        ? describeNotebookDelivery({ ...notebookDelivery, clock: formatActivityTime })
+        : "",
+    [notebookDelivery]
+  );
 
   /**
    * The attestation this browser signed over its own run manifest, or null.
@@ -3893,6 +4035,9 @@ export function useNotebook() {
     dismissHandoff,
     shareNotebook,
     peersWithoutNotebook,
+    peersHoldingNotebook,
+    notebookDelivery,
+    notebookDeliveryNote,
     attestManifest,
     attestation,
     proposedNotebook,

@@ -523,7 +523,12 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
       .poll(async () => await dealer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/written to 2 open channels · unconfirmed/);
+      // Both holders acknowledge, and the note names both by whole
+      // fingerprint. A note that reported one and dropped the other would let
+      // a single arrival stand in for the room.
+      .toMatch(
+        /written to 2 open channels · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/
+      );
 
     for (const page of [recoverer, bystander]) {
       // No press: `decideProposal` adopts without asking when there is no local
@@ -780,7 +785,12 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
       .poll(async () => await recoverer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/written to 2 open channels · unconfirmed/);
+      // Both holders acknowledge, and the note names both by whole
+      // fingerprint. A note that reported one and dropped the other would let
+      // a single arrival stand in for the room.
+      .toMatch(
+        /written to 2 open channels · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/
+      );
 
     // The proposal is offered where sharing lives — the Connections tray — so
     // each machine's is opened to read it, exactly as a person would.

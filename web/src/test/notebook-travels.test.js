@@ -38,7 +38,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { generateKey } from "openpgp";
 import { signOpenPgp } from "../lib/pgp/sign.js";
-import { encryptSessionPayload } from "../lib/notebook/crypto.js";
+import { decryptSessionPayload, encryptSessionPayload } from "../lib/notebook/crypto.js";
+import { formatActivityTime } from "../lib/toolkit/activity-log.js";
+import { digestText } from "../lib/toolkit/receipt.js";
 import { handoffContext, offerForSkipped, reviewOffer } from "../lib/toolkit/handoff-shell.js";
 import { summarizeHandoff } from "../lib/toolkit/handoff.js";
 import { manifestDigest } from "../lib/toolkit/manifest.js";
@@ -50,6 +52,7 @@ import {
   NOTEBOOK_PROPOSAL_FIELDS,
   buildNotebookProposal,
   decideProposal,
+  describeNotebookDelivery,
   parseNotebookProposal,
   proposalToJson,
   sameNotebook,
@@ -718,6 +721,370 @@ describe("a notebook shared before anybody had meshed", () => {
   });
 });
 
+/* ─────────────────── the notebook is acknowledged, or is not ─────────────── */
+
+/**
+ * Read one frame off a peer's channel by wrapping `send`, and open it.
+ *
+ * The pairwise session key is the *same object* on both ends, so the sender's
+ * own key opens what the sender wrote — which is what makes this an assertion
+ * about the bytes on the wire rather than about the argument to a helper. A
+ * test that read the payload before it was sealed could not tell a frame that
+ * carries a title from one that does not.
+ *
+ * @param {any} side  the sending side of a `makeQuorumPair`
+ * @param {string} toFpr
+ * @returns {{ frames: Promise<any>[], restore: () => void }}
+ */
+function tapFrames(side, toFpr) {
+  const peer = side.session.peers.get(toFpr);
+  const real = peer.channel.send.bind(peer.channel);
+  /** @type {Promise<any>[]} */
+  const frames = [];
+  peer.channel.send = (/** @type {string} */ text) => {
+    const { blob } = JSON.parse(text);
+    frames.push(
+      decryptSessionPayload(peer.sessionKey, blob).then((pt) => JSON.parse(pt))
+    );
+    return real(text);
+  };
+  return { frames, restore: () => (peer.channel.send = real) };
+}
+
+/** Both ends meshed, with a signed notebook in the creator's hand. */
+async function shared(source = HANDED) {
+  const { creator, joiner } = await meshed();
+  await pair.settle();
+  const signed = await cleartext(
+    proposalToJson(buildNotebookProposal({ title: TITLE, source })),
+    creator.privateKey
+  );
+  return { creator, joiner, signed };
+}
+
+describe("a notebook document is acknowledged", () => {
+  it("tells the sender it reached the far session, correlated by content digest", async () => {
+    const { creator, joiner, signed } = await shared();
+    expect(await creator.session.shareNotebook(signed)).toBe(1);
+
+    const peer = creator.session.peers.get(joiner.fpr);
+    // **The reproduction, inverted.** Before this the sender's peer record held
+    // exactly one notebook fact — `notebookSent`, a count of writes — and no
+    // frame ever came back to correct it. `written to 1 open channel ·
+    // unconfirmed` was the last word the panel could honestly say, forever.
+    expect(
+      await until(() => peer.notebookReachedAt > 0, 4000),
+      `errors: ${[...creator.errors, ...joiner.errors].map((e) => e.message)}`
+    ).toBe(true);
+    // The correlation handle is the digest of the bytes that were sent — no id
+    // was added to the document, because adding one would change what
+    // `readSignedNotebook` hands every existing consumer.
+    expect(peer.notebookDigest).toBe(await digestText(signed));
+    expect(creator.errors).toEqual([]);
+  });
+
+  it("carries the digest and nothing about the notebook", async () => {
+    const { creator, joiner, signed } = await shared();
+    const tap = tapFrames(joiner, creator.fpr);
+    await creator.session.shareNotebook(signed);
+    await until(
+      () => creator.session.peers.get(joiner.fpr).notebookReachedAt > 0,
+      4000
+    );
+    tap.restore();
+
+    const acks = (await Promise.all(tap.frames)).filter((m) => m.kind === "notebook-ack");
+    expect(acks).toHaveLength(1);
+    // The whole frame. A field beyond these three is a field somebody can read
+    // something off, and `kind`/`ts`/`sha` are each computable by the sender
+    // from what the sender already composed.
+    expect(Object.keys(acks[0]).sort()).toEqual(["kind", "sha", "ts"]);
+    expect(acks[0].sha).toBe(await digestText(signed));
+  });
+
+  it("acknowledges the hand-off, never the adoption", async () => {
+    const { creator, joiner, signed } = await shared();
+    // The claim boundary as an experiment rather than an assertion about
+    // wording: the layer above refuses the proposal, so it was never handed to
+    // anything that shows people notebooks, so there is nothing to acknowledge.
+    // A build that acked on *arrival* — before the hand-off — confirms here.
+    joiner.session.onNotebook = () => {
+      throw new Error("the layer above never took it");
+    };
+    await creator.session.shareNotebook(signed);
+    await pair.settle();
+    expect(creator.session.peers.get(joiner.fpr).notebookReachedAt).toBe(0);
+  });
+
+  it("is unconfirmed again after a fresh press, over identical text", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    const peer = creator.session.peers.get(joiner.fpr);
+    expect(await until(() => peer.notebookReachedAt > 0, 4000)).toBe(true);
+    const first = peer.notebookReachedAt;
+
+    // A second press is a second send. Carrying the first stamp forward would
+    // let a reader look at a confirmation and believe it was about the press
+    // they had just made — unconfirmed reading as confirmed, which is the one
+    // direction this record may never be wrong in.
+    await creator.session.shareNotebook(signed);
+    expect(await until(() => peer.notebookReachedAt > first, 4000)).toBe(true);
+  });
+
+  it("consumes an acknowledgment for a document never sent, in silence", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    const peer = creator.session.peers.get(joiner.fpr);
+    expect(await until(() => peer.notebookReachedAt > 0, 4000)).toBe(true);
+    const stamped = peer.notebookReachedAt;
+
+    // A repeat of the true one does not walk the timestamp forward — first ack
+    // wins, the rule an attestation's `claimedAt` uses.
+    creator.session._onNotebookAck(peer, { sha: peer.notebookDigest });
+    expect(peer.notebookReachedAt).toBe(stamped);
+
+    // And one naming a digest this session never wrote confirms nothing at all.
+    // **Asked with the record back at rest**, deliberately: put to a peer who
+    // is already confirmed, the first-wins guard answers first and the digest
+    // check is never reached — a mutation deleting the digest comparison
+    // survived exactly that arrangement. Line noise, a peer on a different
+    // document, or an invention; refusing out loud would hand any confirmed
+    // peer a way to put errors on this screen.
+    peer.notebookReachedAt = 0;
+    creator.session._onNotebookAck(peer, { sha: "f".repeat(64) });
+    expect(peer.notebookReachedAt).toBe(0);
+    expect(creator.errors).toEqual([]);
+  });
+
+  it("acknowledges the replay to a peer who joined after the press", async () => {
+    const { creator, joiner } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    await creator.session.shareNotebook(signed);
+    await joinerArrives();
+    expect(await until(() => joiner.notebooks.length > 0, 3000)).toBe(true);
+    // The late delivery goes through `_publishDocument` like the press does, so
+    // it records a digest like the press does and earns the same answer back.
+    // Without this the one case the retention exists for would be the one case
+    // that could never be confirmed.
+    expect(
+      await until(
+        () => creator.session.peers.get(joiner.fpr).notebookReachedAt > 0,
+        4000
+      )
+    ).toBe(true);
+  });
+});
+
+describe("the note under the Share button", () => {
+  const A = "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9";
+  const B = "91C7E6D5C4B3A29180716253443526170819AABB";
+  const at = new Date(2026, 7, 19, 14, 7, 23).getTime();
+
+  it("says unconfirmed, by whole fingerprint, until an acknowledgment exists", () => {
+    const note = describeNotebookDelivery({
+      wrote: 2,
+      reached: [],
+      unconfirmed: [A, B],
+      clock: formatActivityTime,
+    });
+    expect(note).toContain("written to 2 open channels");
+    expect(note).toContain(`${A} unconfirmed`);
+    expect(note).toContain(`${B} unconfirmed`);
+    // Never a partial key: this is the line that names who to go and ask.
+    expect(note).not.toContain("…");
+    expect(note).not.toMatch(/reached/);
+  });
+
+  it("names each arrival with the clock this machine heard it on", () => {
+    const note = describeNotebookDelivery({
+      wrote: 2,
+      reached: [{ fpr: A, at }],
+      unconfirmed: [B],
+      clock: formatActivityTime,
+    });
+    // `sendReceipt`'s own spelling, so a key share and a notebook do not grow
+    // two vocabularies for one fact.
+    expect(note).toContain(`reached ${A}'s session 14:07:23`);
+    // And the peer who has not answered is still named as not having answered.
+    // A note that dropped them once anybody confirmed would let one arrival
+    // stand in for the room.
+    expect(note).toContain(`${B} unconfirmed`);
+  });
+
+  it("keeps the count of writes as a count of writes", () => {
+    const note = describeNotebookDelivery({
+      wrote: 1,
+      reached: [{ fpr: A, at }],
+      unconfirmed: [],
+      clock: formatActivityTime,
+    });
+    expect(note).toContain("written to 1 open channel ·");
+    expect(note).not.toContain("open channels");
+    expect(note).toContain("A write is not an arrival");
+    expect(note).toContain("a channel stays open here when the browser at the far end is gone");
+  });
+});
+
+/* ─────────────────── a newcomer learns a notebook exists ─────────────────── */
+
+describe("a notebook nobody has been given", () => {
+  it("tells a peer one exists here, once the retention has gone stale", async () => {
+    const { creator, joiner } = await creatorAlone();
+    const signed = await cleartext(
+      proposalToJson(buildNotebookProposal({ title: TITLE, source: HANDED })),
+      creator.privateKey
+    );
+    await creator.session.shareNotebook(signed);
+    creator.session.retireSharedNotebook(); // the dealer typed
+    await joinerArrives();
+
+    // The reproduction: nothing arrives, and before this the newcomer's whole
+    // record of the room ended at "Peer verified — secure channel ready".
+    expect(joiner.notebooks).toHaveLength(0);
+
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(true);
+    expect(
+      await until(() => joiner.session.peers.get(creator.fpr)?.notebookHeld === true, 3000)
+    ).toBe(true);
+    expect(joiner.errors).toEqual([]);
+  });
+
+  it("says a notebook exists and nothing whatever about it", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    // A peer this browser has not written to — the state the announcement is
+    // about — reached by clearing the record rather than by building a third
+    // browser, since what is under test is the frame and not the roster.
+    const peer = creator.session.peers.get(joiner.fpr);
+    peer.notebookSent = false;
+    const tap = tapFrames(creator, joiner.fpr);
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(true);
+    tap.restore();
+
+    const held = (await Promise.all(tap.frames)).filter((m) => m.kind === "notebook-held");
+    expect(held).toHaveLength(1);
+    // **The whole disclosure.** No title, no digest, no cell count, no length.
+    // A digest is the one that would matter most: a ceremony recipe is not a
+    // large space of guesses, and a listener who could confirm one would hold
+    // the notebook without anybody having sent it.
+    expect(Object.keys(held[0]).sort()).toEqual(["kind", "ts"]);
+    const wire = JSON.stringify(held[0]);
+    expect(wire).not.toContain(TITLE);
+    expect(wire).not.toContain("deadbeef");
+    expect(wire).not.toContain(await digestText(HANDED));
+  });
+
+  it("says nothing at all unless somebody here pressed Share", async () => {
+    const { creator, joiner } = await creatorAlone();
+    await joinerArrives();
+    // A person who has never pressed Share has said nothing to this room about
+    // their notebook, and a session that announced anyway would be speaking for
+    // them. The press is what makes this disclosure strictly smaller than the
+    // consent already given — that press offered these peers the entire text.
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(false);
+    await pair.settle();
+    expect(joiner.session.peers.get(creator.fpr).notebookHeld).toBe(false);
+  });
+
+  it("says nothing to a peer this browser has already written to", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    // They were given the notebook. Telling them one exists is a warning that
+    // fires hardest on the room that is working correctly.
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(false);
+  });
+
+  it("waits for its own key confirmation rather than burning the one telling", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    const peer = creator.session.peers.get(joiner.fpr);
+    peer.notebookSent = false;
+
+    // **The state three browsers found.** Their confirmation has landed here —
+    // which is what `kcVerified` says and what the roster emit that drives the
+    // caller reacts to — and ours has not gone out yet. The far end refuses
+    // anything from a peer it has not confirmed, so a frame sent now is
+    // dropped; a bound set anyway would remember it as said and the newcomer
+    // would be told nothing, forever.
+    peer.kcSent = false;
+    const real = creator.session._maybeSendKeyConfirm;
+    creator.session._maybeSendKeyConfirm = async () => {};
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(false);
+    expect(
+      peer.notebookHeldTold,
+      "a frame the far end will refuse was counted as having been said"
+    ).toBe(false);
+
+    // And the next roster tick gets through — one always follows, because the
+    // key-confirmation handler emits a second roster after the confirmation is
+    // written.
+    creator.session._maybeSendKeyConfirm = real;
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(true);
+    expect(
+      await until(() => joiner.session.peers.get(creator.fpr).notebookHeld === true, 3000)
+    ).toBe(true);
+  });
+
+  it("says it once per member, however often the roster ticks", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    creator.session.peers.get(joiner.fpr).notebookSent = false;
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(true);
+    // The caller re-evaluates on every roster tick — several times a second —
+    // so an unbounded version is a frame per render.
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(false);
+    expect(await creator.session.announceNotebookHeld(joiner.fpr)).toBe(false);
+  });
+
+  it("stops saying it when the notebook actually arrives", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    creator.session.peers.get(joiner.fpr).notebookSent = false;
+    await creator.session.announceNotebookHeld(joiner.fpr);
+    expect(
+      await until(() => joiner.session.peers.get(creator.fpr).notebookHeld === true, 3000)
+    ).toBe(true);
+
+    // Cleared by the arrival rather than by a retraction frame: what makes
+    // "not sent to you" false is the sending, and a peer that had to remember
+    // to un-say it could forget.
+    await creator.session.shareNotebook(signed);
+    expect(
+      await until(() => joiner.session.peers.get(creator.fpr).notebookHeld === false, 3000)
+    ).toBe(true);
+  });
+
+  it("cannot be used to drive the receiving session's render loop", async () => {
+    const { creator, joiner, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    creator.session.peers.get(joiner.fpr).notebookSent = false;
+    await creator.session.announceNotebookHeld(joiner.fpr);
+    expect(
+      await until(() => joiner.session.peers.get(creator.fpr).notebookHeld === true, 3000)
+    ).toBe(true);
+
+    const before = joiner.rosters.length;
+    const peer = joiner.session.peers.get(creator.fpr);
+    for (let i = 0; i < 20; i += 1) joiner.session._onNotebookHeld(peer);
+    // The same fact arriving twenty times is one fact. The bound on the sending
+    // end is not something this end may depend on holding.
+    expect(joiner.rosters.length).toBe(before);
+  });
+
+  it("does not outlive the session the press was made in", async () => {
+    const { creator, signed } = await shared();
+    await creator.session.shareNotebook(signed);
+    expect(creator.session._sharedEver).toBe(true);
+    creator.session.stop();
+    // A stopped session may not go on telling a room it holds a notebook, and
+    // the next session is a fresh decision by whoever opens it.
+    expect(creator.session._sharedEver).toBe(false);
+  });
+});
+
 /* ────────────────────────── the product reaches it ───────────────────────── */
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
@@ -725,6 +1092,7 @@ const HOOK = read("../toolkit/useNotebook.ts");
 const SHELL = read("../toolkit/ToolkitShell.tsx");
 const PANEL = read("../toolkit/widgets/NotebookShare.tsx");
 const FRAGMENT = read("../lib/toolkit/fragment.js");
+const SHARE_DOC = read("../lib/toolkit/notebook-share.js");
 
 describe("who consumes this", () => {
   it("is reachable by a person, both ways", () => {
@@ -870,6 +1238,54 @@ describe("who consumes this", () => {
     // and a standing fact about the room overwriting it would erase the answer
     // to something the reader just did.
     expect(line[0]).not.toMatch(/setNotebookShareNote/);
+  });
+
+  it("tells the newcomer the same thing from the other side, and no more", () => {
+    // The gap `4027326` stated. The dealer's warning had no counterpart, so the
+    // person who was actually stuck learned nothing until a cell was refused.
+    expect(HOOK).toMatch(/const peersHoldingNotebook = useMemo/);
+    // The predicate itself, not merely that the memo exists: emptying its body
+    // is a mutation that leaves the newcomer told nothing and that a test
+    // matching only the declaration survives. Key-confirmed as well as the
+    // flag, for `peersWithoutNotebook`'s reason — a peer whose confirmation has
+    // lapsed is not anyone in particular right now.
+    expect(HOOK).toMatch(/if \(peer\.kcVerified && peer\.notebookHeld\) out\.push\(fpr\)/);
+    expect(HOOK).toMatch(/^\s{4}peersHoldingNotebook,$/m);
+    expect(SHELL).toMatch(/nb\.peersHoldingNotebook\.length > 0/);
+    expect(SHELL).toMatch(/data-notebook-held/);
+    // **Driven off the same predicate the dealer's line is.** One list answers
+    // *which peers is this browser holding out on*, and both ends read it — so
+    // the two halves of one pair cannot drift into saying opposite things,
+    // which a second copy of the condition would eventually let them do.
+    expect(HOOK).toMatch(/for \(const fpr of peersWithoutNotebook\) void session\.announceNotebookHeld\(fpr\)/);
+    // The remedy named is the one that can be performed, and it is on the
+    // *sender's* side. A control here would be a button whose whole effect is
+    // to ask somebody to press something on their own machine.
+    expect(SHELL).toMatch(/has a notebook and has not sent it here/);
+    expect(SHELL).toMatch(/Ask them to share it: the send is theirs to make/);
+    // And it says nothing about the notebook, because nothing about it arrived.
+    const line = /\{sessionLive && nb\.peersHoldingNotebook[\s\S]*?\) : null\}/.exec(SHELL);
+    expect(line, "the held-notebook line is not where this test thinks it is").toBeTruthy();
+    expect(line[0]).toMatch(/<Fingerprint fpr=\{fpr\} \/>/);
+    expect(line[0]).not.toMatch(/slice\(|substring\(|…/);
+    expect(line[0]).toMatch(/Nothing here says what is in it/);
+  });
+
+  it("lets the share note change when an acknowledgment lands", () => {
+    // `7ac9f50` wrote a string at the press and froze it, correctly, because
+    // nothing acknowledged a notebook. Something does now, so the note has to
+    // be able to move — and it moves *in place*, one sentence amended rather
+    // than a second line appended, because the acknowledgment moved nothing on
+    // this machine and a second line would report that it had.
+    expect(HOOK).toMatch(/const notebookDeliveryNote = useMemo/);
+    expect(HOOK).toMatch(/^\s{4}notebookDeliveryNote,$/m);
+    expect(SHELL).toMatch(/note=\{notebookShareNote \|\| nb\.notebookDeliveryNote\}/);
+    // The sentence the frozen version could never say, and the one it could.
+    expect(SHARE_DOC).toMatch(/reached \$\{String\(r\.fpr \|\| ""\)\.toUpperCase\(\)\}'s session/);
+    expect(SHARE_DOC).toMatch(/unconfirmed/);
+    // The old wording claimed a permanent absence of acknowledgment. Leaving it
+    // anywhere in the product would be a sentence contradicting the wire.
+    expect(SHELL).not.toMatch(/Nothing acknowledges a notebook/);
   });
 
   it("says in the codec that an invite still carries no recipe, and how one travels now", () => {

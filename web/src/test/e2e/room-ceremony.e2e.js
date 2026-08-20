@@ -439,7 +439,10 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
       .poll(async () => await dealer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 20000,
       })
-      .toMatch(/written to 1 open channel · unconfirmed/);
+      // The arrival, not the write: see `notebook-late-share.e2e.js` for the
+      // whole of this sentence and `_acknowledgeNotebook` for the frame that
+      // makes it sayable. The count stays a count of writes.
+      .toMatch(/written to 1 open channel · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/);
 
     // **No press.** `decideProposal` adopts without asking when there is no
     // local work to lose, and an empty notebook is exactly that state — so the
@@ -581,7 +584,10 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
       .poll(async () => await holder.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/written to 1 open channel · unconfirmed/);
+      // The arrival, not the write: see `notebook-late-share.e2e.js` for the
+      // whole of this sentence and `_acknowledgeNotebook` for the frame that
+      // makes it sayable. The count stays a count of writes.
+      .toMatch(/written to 1 open channel · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/);
     // The proposal is offered where sharing lives — the Connections tray — so
     // the dealer's is opened to read it, exactly as a person would.
     await trayTab(dealer, "Connections");

@@ -726,7 +726,12 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       .poll(async () => await creator.locator("[data-notebook-share-note]").innerText(), {
         timeout: 20000,
       })
-      .toMatch(/written to 1 open channel · unconfirmed/);
+      // The count of writes, and the arrival that now comes back to correct
+      // it. `7ac9f50` had to leave this permanently `unconfirmed`, because a
+      // notebook was a sealed document frame nothing acknowledged; it is
+      // acknowledged on its own channel now, so the note names the peer it
+      // reached by whole fingerprint and the clock this machine heard it on.
+      .toMatch(/written to 1 open channel · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/);
 
     // **It arrives and it lands, with no press.** This block used to wait for a
     // proposal card and click "Adopt their notebook", and the comment beside it
@@ -1397,7 +1402,12 @@ describe.runIf(availability.ok)("one notebook, two browsers, from an empty joine
       .poll(async () => await creator.locator("[data-notebook-share-note]").innerText(), {
         timeout: 20000,
       })
-      .toMatch(/written to 1 open channel · unconfirmed/);
+      // The count of writes, and the arrival that now comes back to correct
+      // it. `7ac9f50` had to leave this permanently `unconfirmed`, because a
+      // notebook was a sealed document frame nothing acknowledged; it is
+      // acknowledged on its own channel now, so the note names the peer it
+      // reached by whole fingerprint and the clock this machine heard it on.
+      .toMatch(/written to 1 open channel · reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/);
     await expect
       .poll(async () => await readNotebookSource(joiner), { timeout: 30000, intervals: [250] })
       .toBe(want);

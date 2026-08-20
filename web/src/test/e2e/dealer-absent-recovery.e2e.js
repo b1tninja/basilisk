@@ -68,18 +68,21 @@
  * present-tense claim be made out of?* — and it has been answered once, for
  * both.
  *
- * - **6a, turned over.** The note read "shared with 2 peers" while one of the
- *   two no longer existed. The obvious repair was the one the record cannot
- *   pay for: `1dbc950`'s delivery acks are a `quorum.send` mechanism, matched
- *   by content digest on a *chat* frame and consumed by `deliveryAckTap`, and
- *   a notebook goes out through `_publishDocument` as a sealed document frame
- *   that nothing acknowledges — so "reached 1 of 2" would have been an
- *   invented acknowledgment. What was changed instead is the claim: the
- *   sentence now names the wire fact as the wire fact and carries
- *   `sendReceipt`'s own word for the rest, so what a reader is told is
- *   *written to 2 open channels · unconfirmed*, permanently unconfirmed
- *   because no ack is ever coming. Asserted in step 6, with the reason it can
- *   say no more than that.
+ * - **6a, turned over twice.** The note read "shared with 2 peers" while one of
+ *   the two no longer existed. `7ac9f50` could not repair the claim, only
+ *   narrow it: `1dbc950`'s delivery acks are a `quorum.send` mechanism, matched
+ *   by content digest on a *chat* frame and consumed by `deliveryAckTap`, and a
+ *   notebook went out through `_publishDocument` as a sealed document frame
+ *   that nothing acknowledged — so "reached 1 of 2" would have been an invented
+ *   acknowledgment, and the sentence read *written to 2 open channels ·
+ *   unconfirmed*, permanently. A notebook is acknowledged now, on its own
+ *   channel and in its own kind (`notebook-ack`, see
+ *   `NotebookSession._acknowledgeNotebook`), so the sentence this file recorded
+ *   as unwritable is what step 6 asserts: the live holder named as *reached
+ *   …'s session 14:07:23* and the destroyed dealer named as *… unconfirmed*,
+ *   with no timeout ever turning that absence into a verdict. The count of
+ *   writes stays a count of writes, because a destroyed browser still never
+ *   fires `onclose`.
  * - **8a, turned over.** The row read *verified* beside *failed*. Both facts
  *   were true and the pairing was not: confirmation is history — their signed
  *   signalling proved the key — and a transport dying later does not un-prove
@@ -486,7 +489,20 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
       .poll(async () => await dealer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/written to 2 open channels · unconfirmed/);
+      .toMatch(/written to 2 open channels/);
+    // Both holders are live, so both acknowledgments come back and the note
+    // names each arrival by whole fingerprint. The count of writes stays where
+    // it was — it is what this machine did — and the arrivals are what the far
+    // ends said. Step 6 is where the two come apart.
+    await expect
+      .poll(
+        async () =>
+          ((await dealer.locator("[data-notebook-share-note]").innerText()).match(
+            /reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/g
+          ) || []).length,
+        { timeout: 30000, intervals: [250] }
+      )
+      .toBe(2);
 
     for (const page of [recoverer, bystander]) {
       await expect
@@ -713,14 +729,34 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
       .poll(async () => await recoverer.locator("[data-notebook-share-note]").innerText(), {
         timeout: 30000,
       })
-      .toMatch(/written to 2 open channels · unconfirmed/);
+      .toMatch(/written to 2 open channels/);
+    // **Finding 6a, now answerable.** Two channels were written to and one of
+    // them belongs to a browser that has been destroyed — a peer that never
+    // fired `onclose`, which is the whole reason the count could not be trusted
+    // as a delivery. The live holder acknowledges; the dead one cannot. So the
+    // note separates them by name, which is the sentence this file recorded as
+    // unwritable and which `notebook-ack` is what makes writable.
+    await expect
+      .poll(
+        async () => await recoverer.locator("[data-notebook-share-note]").innerText(),
+        { timeout: 30000, intervals: [250] }
+      )
+      .toMatch(new RegExp(`reached ${L.bystander}'s session \\d\\d:\\d\\d:\\d\\d`));
     const shareNote = await recoverer.locator("[data-notebook-share-note]").innerText();
     // The old claim, gone rather than reworded around: "shared with" is a
     // statement about the peer, and this sentence is not entitled to one.
     expect(shareNote, `the share note: ${shareNote}`).not.toMatch(/shared with \d+ peer/);
-    // And it says why it can never say more, so a reader does not sit waiting
-    // for an `unconfirmed` that is going to flip.
-    expect(shareNote, `the share note: ${shareNote}`).toContain("Nothing acknowledges a notebook");
+    // **And the destroyed dealer is still named as unconfirmed, permanently.**
+    // There is no timeout that turns absence into a verdict, because absence is
+    // the whole of what this end knows: a peer behind a slow relay sends the
+    // same silence as a peer whose browser is gone. Unconfirmed never reads as
+    // confirmed, which is the one direction this note may not be wrong in.
+    expect(shareNote, `the share note: ${shareNote}`).toContain(`${L.dealer} unconfirmed`);
+    expect(shareNote, `the share note: ${shareNote}`).not.toMatch(
+      new RegExp(`reached ${L.dealer}`)
+    );
+    // And it still says why a count of writes is not a count of arrivals.
+    expect(shareNote, `the share note: ${shareNote}`).toContain("A write is not an arrival");
     expect(shareNote, `the share note: ${shareNote}`).toContain(
       "a channel stays open here when the browser at the far end is gone"
     );

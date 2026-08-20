@@ -4303,47 +4303,46 @@ export function ToolkitShell() {
                       live={sessionLive}
                       hasNotebook={!!nb.source.trim()}
                       proposed={nb.proposedNotebook}
-                      note={notebookShareNote}
+                      // **The outcome of the last press, or a report that is
+                      // still resolving — never both, and never appended to.**
+                      //
+                      // "Shared with 2 peers" was a claim about the far end
+                      // made out of a fact about this one:
+                      // `_publishDocument` returns how many channels it wrote
+                      // to, counting every peer whose `channel.readyState`
+                      // reads `open`, and a destroyed browser never fires
+                      // `onclose`. That is `dealer-absent-recovery.e2e.js`
+                      // finding 6a, and `7ac9f50` answered it by naming the
+                      // wire fact as the wire fact and calling it permanently
+                      // unconfirmed — because at the time nothing acknowledged
+                      // a notebook, and saying "reached 1 of 2" would have been
+                      // inventing the acknowledgment.
+                      //
+                      // Something acknowledges one now: `notebook-ack`, a
+                      // document-channel frame the receiving session sends the
+                      // instant a verified proposal is handed to the layer that
+                      // shows people notebooks. See
+                      // `NotebookSession._acknowledgeNotebook` for why it is a
+                      // payload kind rather than a tap on `chat` the way
+                      // `1dbc950`'s is. So the sentence has a second half that
+                      // arrives seconds after the press, and a string frozen at
+                      // the press cannot hold it.
+                      //
+                      // `notebookShareNote` is still the answer to a press —
+                      // a refusal, an adopt, a dismiss — and it wins while it
+                      // is set, because erasing the answer to something the
+                      // reader just did is worse than deferring a report they
+                      // are not currently asking about. A *successful* share
+                      // clears it, which hands the slot to the live report; the
+                      // report is then amended in place as acknowledgments land
+                      // and never joined by a second line, since the
+                      // acknowledgment moved nothing on this machine and a
+                      // second line would say otherwise.
+                      note={notebookShareNote || nb.notebookDeliveryNote}
                       onShare={() => {
                         void nb.shareNotebook().then((r) => {
                           setNotebookShareNote(
-                            r.ok
-                              ? // **"shared with 2 peers" was a claim about the
-                                // far end, made out of a fact about this one.**
-                                // `_publishDocument` returns how many channels
-                                // it wrote to, counting every peer whose
-                                // `channel.readyState` reads `open` — and a
-                                // destroyed browser never fires `onclose`, so a
-                                // peer that no longer exists is still counted
-                                // and the sentence said its notebook had been
-                                // shared with them. That is
-                                // `dealer-absent-recovery.e2e.js` finding 6a.
-                                //
-                                // The obvious fix is the one the record cannot
-                                // pay for. `1dbc950` built delivery acks, but
-                                // they are a `quorum.send` mechanism: the
-                                // receiver acks a *chat* frame by content
-                                // digest, `deliveryAckTap` consumes it, and
-                                // `sendReceipt` writes the outcome onto the
-                                // send's Activity entry. A notebook goes out
-                                // through `_publishDocument` as a sealed
-                                // document frame, which nothing acks, and
-                                // `run.record.sent` is a set of offer keys with
-                                // nothing to do with delivery. So "reached 1 of
-                                // 2" is not a sentence this product can
-                                // truthfully write, and writing it would be
-                                // inventing the acknowledgment.
-                                //
-                                // What is left is to stop overclaiming: name
-                                // the wire fact as the wire fact, and carry
-                                // `sendReceipt`'s own word for the rest, in
-                                // `1dbc950`'s spelling. Unconfirmed here is
-                                // permanent and says so — there is no ack
-                                // coming, ever — which is the sender's true
-                                // state of knowledge and the only direction
-                                // this note is allowed to be wrong in.
-                                `Notebook signed and written to ${r.sent} open channel${r.sent === 1 ? "" : "s"} · unconfirmed. Nothing acknowledges a notebook, and a channel stays open here when the browser at the far end is gone, so that is a count of writes and not of arrivals. A peer with an empty notebook takes it straight away; one with their own work is asked.`
-                              : r.why || "That notebook could not be shared."
+                            r.ok ? "" : r.why || "That notebook could not be shared."
                           );
                         });
                       }}
@@ -4421,6 +4420,53 @@ export function ToolkitShell() {
                           "the text on this screen, so every cell handed to them " +
                           "will be refused as a notebook they have not seen. "}
                         {"Share this notebook to send it."}
+                      </p>
+                    ) : null}
+                    {/* **The other end of the sentence above.** `4027326` told
+                        the dealer who was holding nothing and stated the gap it
+                        left: in the retired case — Share pressed, then edited,
+                        then somebody joins — the newcomer learned nothing at
+                        join time and found out when an offered cell was
+                        refused. This is what they are told instead, and it is
+                        driven by the same predicate the dealer's line is, so
+                        the two ends of one pair cannot say contradictory
+                        things.
+
+                        **It names the state and no more.** What crossed the
+                        wire is a kind and a clock: no title, no digest, no cell
+                        count. A digest is the leak that matters — a listener
+                        with a guess at a ceremony recipe could confirm it
+                        against one — and there is nothing in this sentence that
+                        could grow into it, because there is nothing on this
+                        machine to print.
+
+                        **The remedy named is the one that can be performed, and
+                        it is not on this screen.** Only the sender can send a
+                        notebook; a "Request it" button here would be a control
+                        whose whole effect is to ask somebody to press something
+                        on their own machine, and dressing that up as an action
+                        would tell the reader they had done something when they
+                        had not. So the sentence says to ask them, which is what
+                        there is to do. */}
+                    {sessionLive && nb.peersHoldingNotebook.length > 0 ? (
+                      <p
+                        className="text-[10.5px] leading-snug text-[var(--muted-foreground)]"
+                        data-notebook-held
+                      >
+                        {nb.peersHoldingNotebook.length === 1
+                          ? "A peer in this room has a notebook and has not sent it here: "
+                          : "Peers in this room have a notebook and have not sent it here: "}
+                        {nb.peersHoldingNotebook.map((fpr, i) => (
+                          <span key={fpr}>
+                            {i > 0 ? ", " : ""}
+                            {/* Whole, for the line above's reason. */}
+                            <Fingerprint fpr={fpr} />
+                          </span>
+                        ))}
+                        {". Nothing here says what is in it — only that it " +
+                          "exists. Until they send it, every cell they hand you " +
+                          "is refused as a notebook you have not seen. "}
+                        {"Ask them to share it: the send is theirs to make."}
                       </p>
                     ) : null}
                   </section>

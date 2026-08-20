@@ -150,6 +150,19 @@ async function unsharedLine(page) {
   return (await p.count()) ? (await p.innerText()).trim() : "";
 }
 
+/**
+ * What the panel says about peers who have said they are holding a notebook.
+ *
+ * The other end of `unsharedLine`, and the reason this file grew a fifth
+ * locator: the dealer's warning had no counterpart, so the person who was
+ * actually stuck — a newcomer with an empty notebook in a room that has one —
+ * learned nothing until a cell they were handed was refused.
+ */
+async function heldLine(page) {
+  const p = page.locator("[data-notebook-held]");
+  return (await p.count()) ? (await p.innerText()).trim() : "";
+}
+
 /** How many peers this browser has key-confirmed, off its own Connections roster. */
 async function verifiedCount(page) {
   await trayTab(page, "Connections");
@@ -376,6 +389,59 @@ describe.runIf(availability.ok)("a notebook shared before the room had filled up
     expect(await unsharedLine(late)).toBe("");
   });
 
+  /* ── 4b. and the newcomer is told, from the other side ───────────────────── */
+
+  it("tells the newcomer a notebook exists here, and nothing about it", async () => {
+    // **The gap `4027326` stated and left open.** Everything above this line was
+    // already true on the day it shipped: the stale text stayed put, the dealer
+    // was warned. The person the situation was actually happening to was told
+    // nothing, and would next learn of it when a cell they were offered came
+    // back refused as a notebook they had not seen.
+    await trayTab(late, "Connections");
+    await expect
+      .poll(async () => await heldLine(late), { timeout: 60000, intervals: [500] })
+      .toMatch(/has a notebook and has not sent it here/);
+
+    // Whole key, for the reason the dealer's line uses one: this is the line
+    // that says who to go and ask.
+    expect((await heldLine(late)).replace(/\s/g, "")).toContain(L.dealer);
+    expect(await heldLine(late)).not.toContain("…");
+
+    // **The disclosure is the bare fact and the browser is where that is
+    // provable.** No title, no digest, no cell count reached this page — the
+    // frame carries a kind and a clock — so there is nothing on this screen for
+    // a reader to mistake for the notebook, and nothing for a listener with a
+    // guess at the text to check the guess against.
+    const said = await heldLine(late);
+    expect(said).not.toContain("deadbeef");
+    expect(said).not.toContain("c0ffee");
+    expect(said).toContain("Nothing here says what is in it");
+    // And the newcomer's own notebook is still empty: being told one exists is
+    // not being given one.
+    expect(await readNotebookSource(late)).toBe("");
+
+    // **The remedy named is the one that can be performed, and it is not here.**
+    // Only the sender can send a notebook, so the sentence says to ask them
+    // rather than offering a control whose whole effect would be to make the
+    // reader think they had done something.
+    expect(said).toMatch(/Ask them to share it/);
+
+    // **The two ends do not contradict each other.** The dealer says this peer
+    // has not been given the notebook; the peer says the dealer has one they
+    // have not sent. Both halves are drawn from one predicate, so a room cannot
+    // end up with one end warning and the other reassured.
+    expect((await unsharedLine(dealer)).replace(/\s/g, "")).toContain(L.late);
+    expect(await heldLine(dealer)).toBe("");
+
+    // The early joiner is told nothing, on both counts. They *were* given this
+    // notebook, so the dealer never announces to them; and they never pressed
+    // Share themselves, so they announce to nobody. A warning that fired on the
+    // half of the room that is working correctly is how readers learn to stop
+    // reading warnings.
+    expect(await heldLine(early)).toBe("");
+    expect(await heldLine(late)).not.toContain(L.early);
+  });
+
   /* ── 5. the remedy the line names is the one that works ──────────────────── */
 
   it("sends the notebook now on screen when the dealer presses Share again", async () => {
@@ -393,5 +459,44 @@ describe.runIf(availability.ok)("a notebook shared before the room had filled up
     }
     // The line retires itself once it has stopped being true.
     await expect.poll(async () => await unsharedLine(dealer), { timeout: 20000 }).toBe("");
+    // And so does the newcomer's, because what made it true has stopped being
+    // true: the notebook arrived. Cleared by the arrival rather than by a
+    // retraction frame — a peer that had to remember to un-say it could forget.
+    await expect.poll(async () => await heldLine(late), { timeout: 60000 }).toBe("");
+  });
+
+  /* ── 6. the note stops being a count of writes ───────────────────────────── */
+
+  it("says which peers acknowledged, on the press that reached them", async () => {
+    // **What `7ac9f50` could not write, and said so.** The note read `written
+    // to 2 open channels · unconfirmed` permanently, because a notebook left
+    // through `_publishDocument` as a sealed document frame and nothing
+    // acknowledged it — so "reached 1 of 2" would have been an invented
+    // acknowledgment. `notebook-ack` is that acknowledgment, and this is the
+    // sentence it buys.
+    //
+    // Polled on the *dealer's* panel after the step-5 press, and read at the
+    // hop that matters: the receiving browsers above are already provably
+    // holding the text, so a note that still said `unconfirmed` here would be a
+    // sender who never learned it.
+    await trayTab(dealer, "Connections");
+    await expect
+      .poll(async () => await shareNote(dealer), { timeout: 60000, intervals: [500] })
+      .toMatch(/reached [0-9A-F]{40}'s session \d\d:\d\d:\d\d/);
+
+    const note = await shareNote(dealer);
+    // Both peers, by whole fingerprint. A note that named one and dropped the
+    // other would let a single arrival stand in for the room.
+    for (const fpr of [L.early, L.late]) {
+      expect(note.replace(/\s/g, ""), `the note says nothing about ${fpr}`).toContain(fpr);
+    }
+    expect(note).not.toContain("…");
+    // The wire fact survives intact beside the arrival. A channel stays open
+    // here when the browser at the far end is gone, so the count is still a
+    // count of writes and the note still says why that is not delivery.
+    expect(note).toMatch(/written to 2 open channels/);
+    expect(note).toMatch(/A write is not an arrival/);
+    // And the sentence that is no longer true is gone from the product.
+    expect(note).not.toContain("Nothing acknowledges a notebook");
   });
 });

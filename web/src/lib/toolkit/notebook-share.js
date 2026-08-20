@@ -440,3 +440,83 @@ export function decideProposal({ proposal, here, adopted = null }) {
       "a notebook this peer has not seen.",
   };
 }
+
+/**
+ * Where a press stands, in one sentence, at the moment somebody reads it.
+ *
+ * ## Why this replaces a string that was set once
+ *
+ * The note under the Share button used to be the outcome of a press, written
+ * at the press and frozen: `written to 2 open channels · unconfirmed`, forever,
+ * because `7ac9f50` correctly found that nothing acknowledged a notebook and
+ * refused to invent an acknowledgment. There is one now — `notebook-ack`, see
+ * `NotebookSession._acknowledgeNotebook` — so the sentence has a second half
+ * that arrives seconds later, and a frozen string cannot hold it.
+ *
+ * **The record is amended, never appended**, which is `1dbc950`'s rule and the
+ * reason it is a rule: the acknowledgment moved nothing on the sender's
+ * machine, so a *second* line under the button would report an action that
+ * never happened here. One press, one sentence, and the sentence gets more
+ * precise. It also keeps the unconfirmed state honest — the note says
+ * `unconfirmed` exactly until a confirmation exists, rather than forever
+ * because its text was written before one could.
+ *
+ * ## The wire fact and the arrival are different clauses
+ *
+ * The count stays, unchanged and unsoftened: it is how many channels this
+ * machine wrote into, and it is what this machine did. A channel stays open
+ * here when the browser at the far end is gone, so the count can never be the
+ * arrival — which is the whole finding `7ac9f50` recorded and this does not
+ * relitigate. What follows the count is the outcome that came back.
+ *
+ * ## The vocabulary is `sendReceipt`'s, deliberately
+ *
+ * `reached <whole fingerprint>'s session HH:MM:SS`, `<whole fingerprint>
+ * unconfirmed`, joined by ` · ` — the exact spelling `quorum-ops.js` writes on
+ * a key share's Activity row. Two words for one fact drift apart; the same
+ * reason `7ac9f50` made a peer row borrow the roster's own presence word.
+ *
+ * **Whole fingerprints on both sides.** A partial answer is answered by going
+ * and asking somebody, and this is the line that names who — the last place in
+ * the product to print part of who a person is.
+ *
+ * ## No timeout, ever
+ *
+ * Absence stays `unconfirmed` for as long as the session lives. "No
+ * acknowledgment yet" is the one thing this end actually knows, and a peer
+ * behind a slow relay is indistinguishable from a peer whose browser closed.
+ * Unconfirmed never reads as confirmed; the converse costs a reader nothing.
+ *
+ * @param {object} spec
+ * @param {number} spec.wrote  channels written to at the press
+ * @param {{ fpr: string, at: number }[]} spec.reached
+ *   peers whose acknowledgment has arrived, with this machine's clock at
+ *   hearing it — never the far end's, which this session cannot check
+ * @param {string[]} spec.unconfirmed  peers written to whose acknowledgment has not
+ * @param {(at: number) => string} spec.clock  how a time is spelled — `formatActivityTime`
+ * @returns {string}
+ */
+export function describeNotebookDelivery({ wrote, reached, unconfirmed, clock }) {
+  const n = Number(wrote) || 0;
+  const head = `Notebook signed and written to ${n} open channel${n === 1 ? "" : "s"}`;
+  const parts = [];
+  for (const r of reached || []) {
+    parts.push(`reached ${String(r.fpr || "").toUpperCase()}'s session ${clock(r.at)}`);
+  }
+  for (const fpr of unconfirmed || []) {
+    parts.push(`${String(fpr || "").toUpperCase()} unconfirmed`);
+  }
+  // Nothing to report on is a room this press reached nobody in — the caller
+  // has its own sentence for that, and inventing a delivery clause here would
+  // put a colon in front of an empty list.
+  const outcome = parts.length ? ` · ${parts.join(" · ")}.` : ".";
+  // The last clause is about *adoption*, and it is a fact about the receiving
+  // end's rules rather than about this send — kept because it is the question a
+  // dealer asks next, and kept last because it is the least urgent thing here.
+  return (
+    `${head}${outcome} A write is not an arrival — a channel stays open here ` +
+    `when the browser at the far end is gone — so this says which peers have ` +
+    `acknowledged and which have not. A peer with an empty notebook takes it ` +
+    `straight away; one with their own work is asked.`
+  );
+}

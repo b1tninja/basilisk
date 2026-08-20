@@ -49,6 +49,17 @@
  * do is not that. `approval-gate.js` puts it as *"Grants are minted only by a
  * human clicking, never by a param."*
  *
+ * **Two more kinds carry no document at all**, and are named apart from the
+ * four for that reason: `notebook-ack` says a proposal reached the far session,
+ * and `notebook-held` says this session is holding one it has not sent. Neither
+ * has a signature, because neither makes a claim that outlives its channel —
+ * they are facts about *this pair, now*, and the pairwise key is exactly the
+ * right authority for that. A signature on them would be this layer swearing to
+ * something on a person's behalf, which is the line the paragraph above draws.
+ * See `_acknowledgeNotebook` for why an acknowledgment is a kind here rather
+ * than a tap on `chat`, and `announceNotebookHeld` for what the second one
+ * refuses to carry.
+ *
  * **The run manifest is not among them, and a fifth kind that carried it was
  * removed rather than left unused.** `handoffContext` *derives* the manifest
  * from `{source, title, roster}` and `buildRunManifest` is deterministic — no
@@ -159,6 +170,13 @@ import {
   readSignedResult,
 } from "./documents.js";
 import { canonicalAudience, deriveRoomMaterial, isValidRoomId } from "./room.js";
+// The same digest function every receipt in this product is written with, and
+// the same one `1dbc950` correlates a `quorum.send` acknowledgment by. A
+// notebook frame carries no id, and growing one would change what
+// `readSignedNotebook` hands every existing consumer — the digest is
+// computable on both ends from bytes both already hold, and tells the
+// acknowledging peer nothing they did not just receive in full.
+import { digestText } from "../toolkit/receipt.js";
 import { classifyChannelFrame, createSeenSet, shouldRelay } from "./relay.js";
 import { openSignalingChannel } from "./signaling.js";
 import { zeroKeyMaterial } from "../pgp/memory.js";
@@ -234,6 +252,35 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   theirs: a peer flapping on the relay must not be able to pull the retained
  *   proposal out of this room on every pass. Cleared only by a fresh press,
  *   which is a person deciding to send a notebook again.
+ * @property {string} notebookDigest
+ *   sha256 of the notebook document last written into this peer's channel, or
+ *   `""`. The correlation handle an acknowledgment names, and nothing else: it
+ *   is a digest of bytes this session composed and that peer received in full,
+ *   so it discloses nothing in either direction.
+ *
+ *   **Per peer and one slot deep**, because a notebook is not a stream. There
+ *   is exactly one document outstanding to a given peer at a time — a fresh
+ *   press overwrites it — so an acknowledgment either names what was last
+ *   written to that peer or names nothing this session is waiting on.
+ * @property {number} notebookReachedAt
+ *   Local clock at the instant this session *heard* that `notebookDigest`
+ *   reached the far peer, or `0`. Zero is the honest resting state and no
+ *   timeout ever moves it: "no acknowledgment yet" is the whole of what this
+ *   end knows, and a peer behind a slow relay sends the same silence as a
+ *   crashed one. The stamp is this machine's own clock at hearing, which is the
+ *   only instant in the exchange this record can honestly stamp.
+ * @property {boolean} notebookHeld
+ *   Whether this peer has said they are holding a notebook they have not sent
+ *   here — see `_onNotebookHeld`. **The bare fact and nothing else**: no title,
+ *   no digest, no cell count, because any of those would let a listener with a
+ *   guess at the text confirm it. Cleared when a proposal actually arrives from
+ *   them, which is the same fact ceasing to be true.
+ * @property {boolean} notebookHeldTold
+ *   Whether *this* session has already told that peer it is holding one.
+ *   Bounded once per member the way `notebookSent` and the invite halves are,
+ *   and for the same reason: the surface that drives it re-renders on every
+ *   roster tick, and a fact that is true continuously must not be a frame that
+ *   is sent continuously.
  */
 
 /**
@@ -462,6 +509,21 @@ export class NotebookSession {
      * @type {string}
      */
     this._sharedNotebook = "";
+    /**
+     * Whether anybody on this machine has ever pressed Share in this session.
+     *
+     * Separate from `_sharedNotebook`, which holds the *bytes* and goes empty
+     * the moment the editor moves. This is the decision, and typing does not
+     * un-make a decision — it only makes the document stale. The one thing it
+     * gates is `announceNotebookHeld`, which discloses that a notebook exists
+     * here; see there for why a fact that small still needs a press behind it.
+     *
+     * Session-scoped, dropped by `stop()` with everything else. Nothing reads
+     * it across a room rotation, because a rotation is the same session
+     * following the same room and the press is still the press that was made.
+     * @type {boolean}
+     */
+    this._sharedEver = false;
     /**
      * Whether `stop()` has run. Read only by `_sealAndSend`, which explains
      * there why a torn-down session's late signalling is dropped in silence
@@ -889,6 +951,10 @@ export class NotebookSession {
     // the reference is `memory-safety.js`'s rule 5 on a string this room has no
     // further use for.
     this._sharedNotebook = "";
+    // And the consent that document was sent under. A stopped session may not
+    // go on telling a room it holds a notebook, and the next session is a fresh
+    // decision by whoever opens it.
+    this._sharedEver = false;
     for (const fpr of this.peers.keys()) {
       // Out of the shared inventory before the transports go: the session owns
       // these connections and is tearing them down itself, so `deregisterLink`
@@ -1031,6 +1097,14 @@ export class NotebookSession {
    * that needs everybody to hold the notebook must compare it against the
    * roster. Nothing here can make an unmeshed peer appear.
    *
+   * **The count is still a count of writes**, and it always will be — a channel
+   * stays open here when the browser at the far end is gone. What is new is
+   * that the writes now have an outcome that comes back: each peer this reached
+   * acknowledges the document by digest, and `notebookReachedAt` on their roster
+   * entry is where a surface reads it. This return value is the wire fact and
+   * that field is the arrival; a caller that conflates them is making the claim
+   * `7ac9f50` took out of the share note.
+   *
    * **What it does do is remember**, which is the whole of the fix for a press
    * made before the room meshed. The document is retained as `_sharedNotebook`
    * and replayed to each peer at the instant they verify — unchanged, unsigned
@@ -1047,6 +1121,11 @@ export class NotebookSession {
     // leaves this session exactly as it found it — still holding whatever the
     // last good press put there, still knowing who has it.
     this._assertDocumentSendable("notebook", doc);
+    // The press, recorded as the consent it is — after the refusal above, so a
+    // document this session would not send is not a press it counts. This is
+    // the *only* thing that unlocks `announceNotebookHeld`; see there for why a
+    // fact this small still needs somebody to have decided to say it.
+    this._sharedEver = true;
     // A new document, so nobody has this one. Set before the write rather than
     // after it, and that ordering is the whole of the race: a peer who verifies
     // *during* the loop is either reached by it and marked, or is not yet
@@ -1134,14 +1213,134 @@ export class NotebookSession {
       const sent = await this._publishDocument("notebook", this._sharedNotebook, {
         only: peerFpr,
       });
-      // Named as the write it is. "Sent them the notebook" would be the claim
-      // the share note already refuses to make: nothing acknowledges a
-      // notebook, so what this end knows is that bytes went into a channel.
+      // Named as the write it is, and it stays named that way now that an
+      // acknowledgment exists. This line fires the instant the bytes go into
+      // the channel, which is strictly before anything can have come back — the
+      // arrival is a later fact with a later surface (`notebookReachedAt`, and
+      // the share note that reads it), and folding the two into one sentence
+      // here would mean claiming the second at the moment of the first.
       if (sent) {
         this.onStatus?.("Wrote the shared notebook to a peer who joined after it was shared");
       }
     } catch (err) {
       this.onError?.(err instanceof Error ? err : new Error(String(err)));
+    }
+  }
+
+  /**
+   * Tell one peer that this session is holding a notebook it has not sent them.
+   *
+   * ## The state this exists for
+   *
+   * `4027326` retains the document a person pressed Share on and replays it to
+   * peers who verify afterwards — but a dealer who *edits* after the press has
+   * a retention that is retired rather than delivered, because handing a
+   * newcomer a revision behind would land silently in their empty notebook and
+   * leave two people believing they had agreed on a text only one of them held.
+   * That is the right call and it left a stated gap: in the retired case the
+   * newcomer learns nothing at join time, and finds out only when an offered
+   * cell is refused as a notebook they have not seen. This is the sentence that
+   * closes it.
+   *
+   * ## What crosses, and what deliberately does not
+   *
+   * The kind, and a clock. **No title, no digest, no cell count, no length.** A
+   * digest is the one that matters most: a listener who can guess the text — a
+   * plausible ceremony recipe is not a large space — could confirm the guess
+   * against a digest and would then hold the notebook without anyone having
+   * sent it. A title is a plainer leak of the same sort. A count is a shape,
+   * and shape is what narrows a guess. None of them is needed to say the thing
+   * the newcomer cannot otherwise learn, which is only that there is something
+   * to ask for.
+   *
+   * ## Why a press unlocks it
+   *
+   * A bare fact is still a disclosure, and this codebase's rule is that what
+   * leaves a machine leaves because somebody there pressed something. A person
+   * who has never pressed Share has said nothing to this room about their
+   * notebook, and a session that announced anyway would be speaking for them.
+   * `_sharedEver` is that press — and it makes the disclosure strictly smaller
+   * than the consent already given, because a press consented to send these
+   * peers the *entire text*, and this sends them the fact that it exists.
+   *
+   * The press is not un-said by typing. `retireSharedNotebook` withdraws the
+   * bytes, which have gone stale; it does not withdraw the decision to have
+   * told the room there is a notebook here. Only `stop()` ends that, with
+   * everything else the session was holding.
+   *
+   * ## Who decides which peers, and why not this class
+   *
+   * The caller. This session knows who it has written to (`notebookSent`) and
+   * cannot know two things the surface above it knows: whether there is any
+   * notebook on screen at all — this class holds a signed document, never the
+   * text, which is `retireSharedNotebook`'s whole argument — and whether a peer
+   * is the one this notebook was *adopted from*, who must never be told the
+   * person they just sent a notebook to is withholding one. So `useNotebook`
+   * passes the peers, from the same list its own warning line is drawn from,
+   * and the two ends cannot disagree because there is one predicate.
+   *
+   * ## Bounded once per member
+   *
+   * Like `notebookSent` and like the invite halves, and here the bound is doing
+   * real work: the caller re-evaluates on every roster tick, several times a
+   * second, and an unbounded version would be a frame per tick. Not cleared by
+   * a later edit — a peer told once has been told, and repeating it would be
+   * noise about a state that never changed. It is cleared by nothing short of
+   * a fresh peer record, which is the same limit `notebookSent` states: a peer
+   * whose browser went away never fires `onclose`, so a reloaded peer is not a
+   * newcomer to this session.
+   *
+   * @param {string} peerFpr  whole fingerprint, as the roster names them
+   * @returns {Promise<boolean>} whether a frame left for that peer
+   */
+  async announceNotebookHeld(peerFpr) {
+    if (this._stopped || !this._sharedEver) return false;
+    const peer = this.peers.get(String(peerFpr || "").toUpperCase());
+    if (!peer || peer.notebookHeldTold || peer.notebookSent) return false;
+    if (
+      !peer.channel ||
+      peer.channel.readyState !== "open" ||
+      !peer.sessionKey ||
+      !peer.kcVerified
+    ) {
+      return false;
+    }
+    // **`kcVerified` is not enough, and three browsers are what said so.** That
+    // flag means *they* proved their key to us. The refusal on the far end asks
+    // the opposite question — has this sender proved theirs — and the caller
+    // here is a render, which fires on the roster emit that happens the instant
+    // their confirmation lands and can easily beat ours out the door. The frame
+    // then arrives at a peer who has not confirmed us, is dropped for the
+    // reason every unauthenticated frame is dropped, and the bound below
+    // remembers it as said. The newcomer is told nothing, forever, which is the
+    // exact state this method exists to end.
+    //
+    // The channel is ordered, so the fix is an ordering one: put our own key
+    // confirmation on the wire first and everything after it is read by a peer
+    // who has already confirmed us. `_maybeSendKeyConfirm` is a no-op once it
+    // has run, so awaiting it costs nothing on the ordinary path and closes the
+    // window on the path that bit.
+    await this._maybeSendKeyConfirm(peerFpr);
+    if (this._stopped || !peer.kcSent || peer.channel.readyState !== "open") {
+      // Declined without marking, so the next roster tick tries again — and one
+      // always follows, because the key-confirmation handler emits a second
+      // roster after the confirmation is written.
+      return false;
+    }
+    // Marked before the write, not after: the write is the only thing here that
+    // can be slow, and a caller firing again mid-await is exactly the roster
+    // tick this bound exists for. A frame lost to a channel that closed under
+    // us costs the peer one sentence; a bound set afterwards costs them one
+    // frame per render.
+    peer.notebookHeldTold = true;
+    try {
+      const body = JSON.stringify({ kind: "notebook-held", ts: Date.now() });
+      const blob = await encryptSessionPayload(peer.sessionKey, body);
+      peer.channel.send(JSON.stringify({ v: 1, blob }));
+      return true;
+    } catch (err) {
+      this.onError?.(err instanceof Error ? err : new Error(String(err)));
+      return false;
     }
   }
 
@@ -1290,6 +1489,11 @@ export class NotebookSession {
     const doc = String(signed ?? "");
     this._assertDocumentSendable(kind, doc);
     const body = JSON.stringify({ kind, doc, ts: Date.now() });
+    // Once for the whole broadcast rather than once per peer: it is a digest of
+    // one immutable string, and computing it inside the loop would be the same
+    // answer bought several times. Only a notebook is acknowledged, so only a
+    // notebook pays for it — see `_onNotebookAck` for what an ack does with it.
+    const sha = kind === "notebook" ? await digestText(doc) : "";
     let sent = 0;
     for (const [peerFpr, peer] of this.peers) {
       if (only && peerFpr !== only) continue;
@@ -1307,7 +1511,17 @@ export class NotebookSession {
       // disagree with what actually left: a late delivery that fell out of the
       // loop on a closed channel must not be remembered as one that happened,
       // or the peer it silently skipped would never be reported as empty.
-      if (kind === "notebook") peer.notebookSent = true;
+      if (kind === "notebook") {
+        peer.notebookSent = true;
+        peer.notebookDigest = sha;
+        // **A new write is unconfirmed, even when the last one was confirmed
+        // and even when the bytes are identical.** A second press is a second
+        // send, and carrying the earlier stamp forward would let a reader look
+        // at "reached their session 14:07" and believe it was about the press
+        // they just made. Unconfirmed reading as confirmed is the one direction
+        // this record may never be wrong in.
+        peer.notebookReachedAt = 0;
+      }
       sent += 1;
     }
     return sent;
@@ -1886,6 +2100,10 @@ export class NotebookSession {
       offered: new Set(),
       returned: new Set(),
       notebookSent: false,
+      notebookDigest: "",
+      notebookReachedAt: 0,
+      notebookHeld: false,
+      notebookHeldTold: false,
     };
   }
 
@@ -2092,6 +2310,19 @@ export class NotebookSession {
         await this._onDocument(peerFpr, peer, msg);
         return;
       }
+      // The two frames that say something about a notebook without carrying
+      // one. Both are handled here rather than through `_onDocument`, which
+      // exists to verify a signature over a document; neither of these has a
+      // document, and running an empty one past a verifier would be a check
+      // that can only ever pass.
+      if (msg.kind === "notebook-ack") {
+        this._onNotebookAck(peer, msg);
+        return;
+      }
+      if (msg.kind === "notebook-held") {
+        this._onNotebookHeld(peer);
+        return;
+      }
       if (msg.kind === "handoff") {
         this._onOffer(peerFpr, peer, msg);
         return;
@@ -2159,6 +2390,27 @@ export class NotebookSession {
         // Verified, parsed, and that is all. Nothing here replaces a notebook,
         // and this class has none to replace.
         this.onNotebook?.({ from: peerFpr, proposal, signed: doc, ts });
+        // They said they were holding one and here it is, so the state that
+        // sentence described has ended. Cleared by the arrival rather than by a
+        // retraction frame: what makes "not sent to you" false is the sending,
+        // and a peer that had to remember to un-say it could forget.
+        if (peer.notebookHeld) {
+          peer.notebookHeld = false;
+          this._emitRoster();
+        }
+        // **After the hand-off above, never before, and never further on.** The
+        // whole claim this acknowledgment makes is *this session has it* — the
+        // proposal is verified against that peer's own key and has been handed
+        // to the layer that shows people notebooks. It is deliberately not
+        // "they read it" and emphatically not "they adopted it": adoption is a
+        // person deciding, in the shell, minutes later or never, and a record
+        // that implied it would tell a dealer two people had agreed on a text
+        // when only one of them had seen it.
+        //
+        // Fired without awaiting so that one peer's slow channel cannot hold up
+        // the frame loop carrying four other peers; it reports nothing back,
+        // for the reason `_acknowledgeNotebook` gives.
+        void this._acknowledgeNotebook(peer, doc);
         return;
       }
       const { attestation, digest } = await readSignedAttestation(doc, {
@@ -2179,6 +2431,135 @@ export class NotebookSession {
         )
       );
     }
+  }
+
+  /**
+   * Tell the sender their notebook is in this session's hands.
+   *
+   * ## Why this is a payload kind and not a tap on `chat`
+   *
+   * `1dbc950` acknowledges a `quorum.send` with a chat frame that the sender's
+   * *tap* consumes, and that is right there for a reason this path does not
+   * share: what `quorum.send` sends **is** a chat frame, so its acknowledgment
+   * travels the wire the payload travelled and the tap exists to keep it out of
+   * the one place chat lands — the inbox a person's `quorum.recv` is reading.
+   *
+   * A notebook is a document frame. Acknowledging it over chat would route the
+   * acknowledgment down a *different* wire from the thing acknowledged, through
+   * a module this one does not know exists (`quorum-ops.js` owns the tap list),
+   * and would put a frame in front of a user-visible queue that then has to be
+   * defended from it by a tap registered before anybody speaks. The document
+   * channel has no such queue: `_onSessionMessage` dispatches a closed set of
+   * kinds and an unrecognised one falls off the end in silence.
+   *
+   * That silence also retires the one residue `1dbc950` had to name and accept
+   * — a new receiver acking an old-build sender left a small JSON frame in the
+   * old sender's inbox, unfixable from this end without version negotiation.
+   * Here an old build simply drops the frame, because there is no inbox for it
+   * to fall into. A kind is additive where an id on the document would not have
+   * been: nothing that reads a notebook proposal reads this.
+   *
+   * It also puts the record where the fact lives. `notebookSent` is a peer fact
+   * on this class, the roster is how peer facts leave, and an acknowledgment is
+   * that same fact getting more precise. Correcting it from a recipe-op layer
+   * would be two owners for one record.
+   *
+   * ## What is claimed, and the bytes that carry it
+   *
+   * The digest, and no more. The sender composed the document, so the digest
+   * discloses nothing to them; the receiver received the document in full, so
+   * computing it discloses nothing here. There is no "and I adopted it" field
+   * because that is a decision a person makes and this frame must never be
+   * mistaken for one.
+   *
+   * Best-effort, and silence on failure is the correct failure: an
+   * acknowledgment that never leaves leaves the sender's note reading
+   * *unconfirmed*, which is exactly their state of knowledge. Raising here
+   * would put an error on the *receiver's* screen about a courtesy they did not
+   * ask to perform.
+   *
+   * @param {NotebookPeerState} peer
+   * @param {string} doc  the armored document, byte for byte as it arrived
+   */
+  async _acknowledgeNotebook(peer, doc) {
+    try {
+      if (this._stopped) return;
+      const sha = await digestText(doc);
+      // Re-checked after the await, not before it: a channel can close and a
+      // room can rotate while a digest is being computed, and `_publishDocument`
+      // makes the same check for the same reason.
+      if (
+        !peer.channel ||
+        peer.channel.readyState !== "open" ||
+        !peer.sessionKey ||
+        !peer.kcVerified
+      ) {
+        return;
+      }
+      const body = JSON.stringify({ kind: "notebook-ack", sha, ts: Date.now() });
+      const blob = await encryptSessionPayload(peer.sessionKey, body);
+      peer.channel.send(JSON.stringify({ v: 1, blob }));
+    } catch (_) {
+      /* see above — the absence of an acknowledgment is itself honest */
+    }
+  }
+
+  /**
+   * A peer saying the notebook this session wrote them reached their session.
+   *
+   * Three arrivals change nothing here, each deliberately:
+   *
+   * - **An acknowledgment naming a digest this session never wrote to them** —
+   *   line noise, a peer on a different document, or an invention — is dropped
+   *   without a surface. A refusal would hand any confirmed peer a way to put
+   *   errors on this screen by making acknowledgments up.
+   * - **A digest that was superseded** by a fresh press is equally silent:
+   *   `notebookDigest` holds the document that is actually outstanding, and an
+   *   acknowledgment for the previous one cannot stand in for this one.
+   * - **A repeat** — a peer whose channel came back and said it twice — does
+   *   not move the recorded time. First one wins, the rule `claimedAt` uses on
+   *   an attestation, so nobody can walk a delivery timestamp forward.
+   *
+   * The stamp is `Date.now()` on *this* machine at the moment the
+   * acknowledgment was heard. It is not the far end's clock, which this session
+   * has no reason to trust and no way to check, and it is not the moment of the
+   * send, which is already recorded. It is the moment the sender learned.
+   *
+   * @param {NotebookPeerState} peer
+   * @param {{ sha?: string }} msg
+   */
+  _onNotebookAck(peer, msg) {
+    if (!peer.kcVerified) return;
+    const sha = String(msg.sha || "").toLowerCase();
+    if (!sha || sha !== peer.notebookDigest) return;
+    if (peer.notebookReachedAt) return;
+    peer.notebookReachedAt = Date.now();
+    // The roster is the only path a peer fact takes out of this class, as it is
+    // for attestations — so the panel that says where a share stands reads it
+    // off the same record the next roster carries.
+    this._emitRoster();
+  }
+
+  /**
+   * A peer saying they are holding a notebook they have not sent here.
+   *
+   * The frame carries no title, no digest, no cell count and no length, so
+   * there is nothing to read off it but the fact itself — see
+   * `announceNotebookHeld` for why that boundary is where it is. This method is
+   * therefore the whole of the receiving side: record it, and let the roster
+   * carry it to a surface that can say so.
+   *
+   * Idempotent, because the announcement is bounded on the sending end and this
+   * end must not depend on that holding. A second arrival is the same fact
+   * arriving twice and emits nothing, which keeps a peer from driving this
+   * session's render loop with a frame it can send at will.
+   *
+   * @param {NotebookPeerState} peer
+   */
+  _onNotebookHeld(peer) {
+    if (!peer.kcVerified || peer.notebookHeld) return;
+    peer.notebookHeld = true;
+    this._emitRoster();
   }
 
   /**
