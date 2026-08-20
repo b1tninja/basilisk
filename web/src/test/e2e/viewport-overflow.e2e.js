@@ -155,6 +155,137 @@ describe.skipIf(!availability.ok)("no shipped page scrolls sideways", () => {
     }
   });
 
+  /**
+   * The notebook comes first, in the document and in the paint.
+   *
+   * Stacking the row fixed the width and left the sequence alone: the panes
+   * came down in source order, which was shelf, then notebook, then tray, so a
+   * phone opened on 122 operations with the subject of the page below the
+   * fold. Moving it is a one-line temptation — `order`, or
+   * `column-reverse` — and both of those move only the picture, leaving a
+   * keyboard walking the panes in an order nobody can see. The repair was to
+   * move the source, and the desktop row now places a source-first notebook
+   * into its middle column with `grid-column` instead.
+   *
+   * Which is why this asserts three things and not one. **Document order**
+   * alone passes with `column-reverse` painting the stack upside down;
+   * **paint** alone passes with a positive `tabindex` sending the ring
+   * somewhere else; and **tab order** alone is a claim about a sequence
+   * nobody looking at the page can check. Each of the three is a way the
+   * other two can be true and the page still be wrong for someone.
+   *
+   * 375 is the stacked case the change is for, where "first" means topmost.
+   * 1280 is the case that must not have moved: the same three panes in the
+   * same three columns, ops · splitter · notebook · tray left to right, drawn
+   * from a document that no longer lists them in that order. It is the width
+   * where a regression would look like a tidy-up — deleting the grid
+   * placement leaves the phone correct and quietly relays the desktop.
+   */
+  for (const width of [375, 1280]) {
+    it(`opens on the notebook, not the shelf, at ${width}px`, async () => {
+      const page = await browser.newPage({ viewport: { width, height: 900 } });
+      try {
+        await page.goto(`${server.origin}/toolkit`, { waitUntil: "load" });
+        await page.waitForFunction(() => document.readyState === "complete");
+        await page.waitForTimeout(500);
+        const seen = await page.evaluate(() => {
+          const notebook = document.querySelector(".toolkit-notebook");
+          const ops = document.querySelector(".ops-panel");
+          const tray = document.querySelector(".toolkit-tray");
+          const absent = [
+            [".toolkit-notebook", notebook],
+            [".ops-panel", ops],
+            [".toolkit-tray", tray],
+          ]
+            .filter(([, el]) => !el)
+            .map(([sel]) => sel);
+          if (absent.length) return { absent };
+          // The tab ring, built the way the browser builds it rather than
+          // assumed to be document order: anything with a positive `tabindex`
+          // is visited first, in ascending order, and everything else follows
+          // in document order. Today nothing here takes one, which is exactly
+          // why the ring has to be computed rather than read off the DOM — the
+          // day something does, this stops agreeing with the document-order
+          // check beside it, and that disagreement is the finding.
+          // `getClientRects` is the rendered filter rather than `offsetParent`,
+          // which lies about `position: fixed`.
+          const tabbable = [
+            ...document.querySelectorAll(
+              'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
+                ' textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+            ),
+          ]
+            .filter((el) => el.getClientRects().length > 0)
+            .map((el, i) => ({ el, i, order: Math.max(0, Number(el.getAttribute("tabindex")) || 0) }))
+            .sort((a, b) => {
+              if (a.order === b.order) return a.i - b.i;
+              if (a.order === 0) return 1;
+              if (b.order === 0) return -1;
+              return a.order - b.order;
+            })
+            .map((x) => x.el);
+          const firstIn = (root) => tabbable.findIndex((el) => root.contains(el));
+          const box = (el) => {
+            const b = el.getBoundingClientRect();
+            return { top: Math.round(b.top), left: Math.round(b.left) };
+          };
+          const follows = (a, b) =>
+            Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+          return {
+            absent,
+            dom: { opsAfterNotebook: follows(notebook, ops), trayAfterNotebook: follows(notebook, tray) },
+            tab: { notebook: firstIn(notebook), ops: firstIn(ops), tray: firstIn(tray) },
+            box: { notebook: box(notebook), ops: box(ops), tray: box(tray) },
+          };
+        });
+
+        expect(seen.absent, `${seen.absent.join(", ")} not on the page`).toEqual([]);
+
+        // 1. Document order — the thing a screen reader reads and the only
+        //    order the stacked layout has.
+        expect(
+          seen.dom,
+          `the notebook must precede both side panes in the document: ${JSON.stringify(seen.dom)}`
+        ).toEqual({ opsAfterNotebook: true, trayAfterNotebook: true });
+
+        // 2. Tab order — computed above, not inferred. Asserted separately
+        //    from document order because a positive `tabindex` anywhere in
+        //    the row divorces the two, and because a pane with nothing
+        //    reachable in it is a different failure that reads the same.
+        const { notebook: tabNb, ops: tabOps, tray: tabTray } = seen.tab;
+        expect(
+          Math.min(tabNb, tabOps, tabTray),
+          `every pane must have something tabbable in it: ${JSON.stringify(seen.tab)}`
+        ).toBeGreaterThanOrEqual(0);
+        expect(tabNb, `tab reaches the shelf before the notebook: ${JSON.stringify(seen.tab)}`).toBeLessThan(tabOps);
+        expect(tabNb, `tab reaches the tray before the notebook: ${JSON.stringify(seen.tab)}`).toBeLessThan(tabTray);
+
+        // 3. Paint. Stacked, "first" is topmost and the three tops must climb
+        //    in the same sequence the document does. In the desktop row all
+        //    three share a top and the sequence is horizontal — and there it
+        //    is deliberately *not* the document's: the notebook is drawn
+        //    between the two panes it precedes in source, which is the whole
+        //    reason the grid placement exists.
+        const { notebook: nb, ops, tray } = seen.box;
+        if (width < 1000) {
+          expect(nb.top, `notebook is not the topmost pane: ${JSON.stringify(seen.box)}`).toBeLessThan(ops.top);
+          expect(ops.top, `tray is not the bottom pane: ${JSON.stringify(seen.box)}`).toBeLessThan(tray.top);
+        } else {
+          expect([nb.top, tray.top], `the desktop row stopped being one row: ${JSON.stringify(seen.box)}`).toEqual([
+            ops.top,
+            ops.top,
+          ]);
+          expect(ops.left, `the shelf is no longer the left column: ${JSON.stringify(seen.box)}`).toBeLessThan(nb.left);
+          expect(nb.left, `the notebook is no longer between the panes: ${JSON.stringify(seen.box)}`).toBeLessThan(
+            tray.left
+          );
+        }
+      } finally {
+        await page.close();
+      }
+    });
+  }
+
   for (const width of WIDTHS) {
     for (const path of PAGES) {
       it(`${path} at ${width}px`, async () => {

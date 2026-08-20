@@ -2792,143 +2792,27 @@ export function ToolkitShell() {
         ) : null}
 
         {/*
-          `toolkit-workspace` exists for one reason: the stacking rule in
-          toolkit.css needs a handle on this row and on its four children. The
-          columns are sized by three different mechanisms — a CSS variable, a
-          Tailwind arbitrary width, and `flex-1` — so there is no way to say
-          "stop being columns" from any one of them.
-        */}
-        <div className="toolkit-workspace flex min-h-0 flex-1" ref={opsWorkspaceRef}>
-          {opsCollapsed ? (
-            <button
-              type="button"
-              className="ops-rail flex w-[28px] shrink-0 items-center justify-center border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-              title="Expand Toolkit panel"
-              onClick={toggleOpsCollapsed}
-            >
-              <span className="[writing-mode:vertical-rl] text-[11px] font-semibold tracking-wide">
-                Toolkit
-              </span>
-            </button>
-          ) : (
-            // Width rides `--ops-width`, published through a constructed
-            // stylesheet (lib/css-vars) — a resizable panel is a continuous
-            // value no enumerated rule can cover, and every inline form of it
-            // is blocked by `style-src 'self'`.
-            <div className="ops-panel relative flex min-h-0">
-              <OpsShelf
-                className="w-full"
-                ops={shelfOps}
-                filter={nb.opsFilter}
-                onFilter={nb.setOpsFilter}
-                castStatus={suiteStatus}
-                tipFit={tipModel.tipFit}
-                tip={{
-                  base: tipModel.tip.base,
-                  kind: tipModel.tip.kind,
-                  encoding: tipModel.tip.encoding,
-                }}
-                /* Content only — OpsShelf owns the band's chrome, so the
-                   caret announcement and the fit filter's escape hatch share
-                   one border and one wash instead of stacking two. */
-                caretBanner={
-                  <div className="px-2.5 py-2">
-                    <div className="text-[length:9.5px] font-bold uppercase tracking-wider text-[var(--caret)]">
-                      Caret ·{" "}
-                      {armedBranch
-                        ? `new ${armedBranch.selector} branch on step ${armedBranch.stem + 1} · cell [${nb.focusedCell}]`
-                        : describeCaretPosition(
-                            pendingInsert,
-                            nb.focusedCell,
-                            nb.chains[nb.focusedCell]?.steps || []
-                          )}
-                    </div>
-                    {!pendingInsert ||
-                    nestedInsert ||
-                    (pendingInsert.body == null &&
-                      pendingInsert.stem >=
-                        (nb.chains[nb.focusedCell]?.steps || []).length) ? (
-                      <div className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
-                        Showing{" "}
-                        <strong className="text-[var(--foreground)]">
-                          {tipModel.tipFit.size} op{tipModel.tipFit.size === 1 ? "" : "s"}
-                        </strong>{" "}
-                        that accept <code className="font-mono">{tipModel.tip.base || "anything"}</code>.
-                      </div>
-                    ) : null}
-                  </div>
-                }
-                onAppend={(name, opts) => {
-                  if (armedBranch && armedBranch.cell === nb.focusedCell) {
-                    const ab = armedBranch;
-                    setArmedBranch(null);
-                    nb.addBranchWithStep(ab.cell, ab.stem, ab.selector, name, opts);
-                    // Keep building in the branch that just landed.
-                    const branchIndex = (
-                      nb.chains[ab.cell]?.steps?.[ab.stem]?.branches || []
-                    ).length;
-                    setPendingInsert({
-                      cell: ab.cell,
-                      stem: ab.stem,
-                      branch: branchIndex,
-                      body: 1,
-                    });
-                    return;
-                  }
-                  if (pendingInsert && pendingInsert.cell === nb.focusedCell) {
-                    const path = pendingInsert;
-                    setPendingInsert(null);
-                    if (path.body != null) {
-                      nb.nestOp(path.cell, path.stem, path.branch ?? null, name, {
-                        ...opts,
-                        at: path.body,
-                      });
-                      // Keep the caret in the same scope, after the new step.
-                      setPendingInsert({ ...path, body: path.body + 1 });
-                      return;
-                    }
-                    nb.insertOpAt(path.cell, path.stem, name, opts);
-                    focusNestAfterInsert(path.cell, name, path.stem);
-                    return;
-                  }
-                  // The shelf's plain append is one of the few mutations that
-                  // genuinely means "wherever the caret is". It says so by
-                  // passing `focusedCell` explicitly — read from this render,
-                  // not from a setter that has not run yet.
-                  const endStem = nb.chains[nb.focusedCell]?.steps?.length ?? 0;
-                  nb.appendOp(nb.focusedCell, name, opts);
-                  focusNestAfterInsert(nb.focusedCell, name, endStem);
-                }}
-              />
-              <button
-                type="button"
-                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--surface-raised)] hover:text-[var(--foreground)]"
-                aria-label="Collapse Toolkit panel"
-                title="Collapse panel"
-                onClick={toggleOpsCollapsed}
-              >
-                ‹
-              </button>
-            </div>
-          )}
-          {!opsCollapsed ? (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize Toolkit panel"
-              title="Drag to resize · double-click to reset"
-              className={cn(
-                "ops-splitter w-[5px] shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--brand)]",
-                opsDragging && "bg-[var(--brand)]"
-              )}
-              onPointerDown={onOpsSplitterPointerDown}
-              onDoubleClick={onOpsSplitterDoubleClick}
-            />
-          ) : null}
+          `toolkit-workspace` exists for one reason: the layout rules in
+          toolkit.css need a handle on this row and on each of its children.
+          The columns are sized by three different mechanisms — a CSS variable,
+          a Tailwind arbitrary width, and `flex-1` — so there is no way to say
+          "stop being columns" from any one of them, and no way to say which
+          track a child belongs in either. `display` is deliberately not a
+          Tailwind class here: the row is a grid at desktop widths and a column
+          flexbox below 1000px, and both of those live in the stylesheet.
 
-          {/* Notebook */}
+          **The notebook comes first, and that is the point.** Stacked on a
+          phone the source order is the only order there is, and with the shelf
+          first the page opened on 122 operations with its subject below the
+          fold. Reordering it here rather than with `order` or
+          `column-reverse` is what keeps the document and the picture saying
+          the same thing — see the note over `.toolkit-workspace` in
+          toolkit.css for how the desktop row still draws it third.
+        */}
+        <div className="toolkit-workspace min-h-0 flex-1" ref={opsWorkspaceRef}>
+          {/* Notebook — first in the document, third in the desktop row. */}
           <section
-            className="flex min-w-0 flex-1 flex-col"
+            className="toolkit-notebook flex min-w-0 flex-1 flex-col"
             onDragOver={(e) => {
               if ([...e.dataTransfer.types].includes(STEP_MIME) || [...e.dataTransfer.types].includes("text/plain")) {
                 e.preventDefault();
@@ -3941,6 +3825,133 @@ export function ToolkitShell() {
               </div>
             </ScrollArea>
           </section>
+
+          {opsCollapsed ? (
+            <button
+              type="button"
+              className="ops-rail flex w-[28px] shrink-0 items-center justify-center border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              title="Expand Toolkit panel"
+              onClick={toggleOpsCollapsed}
+            >
+              <span className="[writing-mode:vertical-rl] text-[11px] font-semibold tracking-wide">
+                Toolkit
+              </span>
+            </button>
+          ) : (
+            // Width rides `--ops-width`, published through a constructed
+            // stylesheet (lib/css-vars) — a resizable panel is a continuous
+            // value no enumerated rule can cover, and every inline form of it
+            // is blocked by `style-src 'self'`.
+            <div className="ops-panel relative flex min-h-0">
+              <OpsShelf
+                className="w-full"
+                ops={shelfOps}
+                filter={nb.opsFilter}
+                onFilter={nb.setOpsFilter}
+                castStatus={suiteStatus}
+                tipFit={tipModel.tipFit}
+                tip={{
+                  base: tipModel.tip.base,
+                  kind: tipModel.tip.kind,
+                  encoding: tipModel.tip.encoding,
+                }}
+                /* Content only — OpsShelf owns the band's chrome, so the
+                   caret announcement and the fit filter's escape hatch share
+                   one border and one wash instead of stacking two. */
+                caretBanner={
+                  <div className="px-2.5 py-2">
+                    <div className="text-[length:9.5px] font-bold uppercase tracking-wider text-[var(--caret)]">
+                      Caret ·{" "}
+                      {armedBranch
+                        ? `new ${armedBranch.selector} branch on step ${armedBranch.stem + 1} · cell [${nb.focusedCell}]`
+                        : describeCaretPosition(
+                            pendingInsert,
+                            nb.focusedCell,
+                            nb.chains[nb.focusedCell]?.steps || []
+                          )}
+                    </div>
+                    {!pendingInsert ||
+                    nestedInsert ||
+                    (pendingInsert.body == null &&
+                      pendingInsert.stem >=
+                        (nb.chains[nb.focusedCell]?.steps || []).length) ? (
+                      <div className="mt-0.5 text-[length:10.5px] text-[var(--muted-foreground)]">
+                        Showing{" "}
+                        <strong className="text-[var(--foreground)]">
+                          {tipModel.tipFit.size} op{tipModel.tipFit.size === 1 ? "" : "s"}
+                        </strong>{" "}
+                        that accept <code className="font-mono">{tipModel.tip.base || "anything"}</code>.
+                      </div>
+                    ) : null}
+                  </div>
+                }
+                onAppend={(name, opts) => {
+                  if (armedBranch && armedBranch.cell === nb.focusedCell) {
+                    const ab = armedBranch;
+                    setArmedBranch(null);
+                    nb.addBranchWithStep(ab.cell, ab.stem, ab.selector, name, opts);
+                    // Keep building in the branch that just landed.
+                    const branchIndex = (
+                      nb.chains[ab.cell]?.steps?.[ab.stem]?.branches || []
+                    ).length;
+                    setPendingInsert({
+                      cell: ab.cell,
+                      stem: ab.stem,
+                      branch: branchIndex,
+                      body: 1,
+                    });
+                    return;
+                  }
+                  if (pendingInsert && pendingInsert.cell === nb.focusedCell) {
+                    const path = pendingInsert;
+                    setPendingInsert(null);
+                    if (path.body != null) {
+                      nb.nestOp(path.cell, path.stem, path.branch ?? null, name, {
+                        ...opts,
+                        at: path.body,
+                      });
+                      // Keep the caret in the same scope, after the new step.
+                      setPendingInsert({ ...path, body: path.body + 1 });
+                      return;
+                    }
+                    nb.insertOpAt(path.cell, path.stem, name, opts);
+                    focusNestAfterInsert(path.cell, name, path.stem);
+                    return;
+                  }
+                  // The shelf's plain append is one of the few mutations that
+                  // genuinely means "wherever the caret is". It says so by
+                  // passing `focusedCell` explicitly — read from this render,
+                  // not from a setter that has not run yet.
+                  const endStem = nb.chains[nb.focusedCell]?.steps?.length ?? 0;
+                  nb.appendOp(nb.focusedCell, name, opts);
+                  focusNestAfterInsert(nb.focusedCell, name, endStem);
+                }}
+              />
+              <button
+                type="button"
+                className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded text-[var(--muted-foreground)] hover:bg-[var(--surface-raised)] hover:text-[var(--foreground)]"
+                aria-label="Collapse Toolkit panel"
+                title="Collapse panel"
+                onClick={toggleOpsCollapsed}
+              >
+                ‹
+              </button>
+            </div>
+          )}
+          {!opsCollapsed ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize Toolkit panel"
+              title="Drag to resize · double-click to reset"
+              className={cn(
+                "ops-splitter w-[5px] shrink-0 cursor-col-resize bg-transparent hover:bg-[var(--brand)]",
+                opsDragging && "bg-[var(--brand)]"
+              )}
+              onPointerDown={onOpsSplitterPointerDown}
+              onDoubleClick={onOpsSplitterDoubleClick}
+            />
+          ) : null}
 
         {/* Session tray — persistent, not modal. Replaces the old Keyring/Variables/Crypto sheets. */}
         {trayOpen ? (
@@ -5067,7 +5078,10 @@ export function ToolkitShell() {
         ) : (
           <button
             type="button"
-            className="flex w-[28px] shrink-0 items-center justify-center border-l border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+            // `tray-rail` is the mirror of `ops-rail`: the collapsed form of a
+            // pane still has to be told which column it belongs in, and still
+            // has to stop being a 28px vertical strip when the row stacks.
+            className="tray-rail flex w-[28px] shrink-0 items-center justify-center border-l border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
             title="Expand session tray"
             onClick={() => setTrayOpen(true)}
           >

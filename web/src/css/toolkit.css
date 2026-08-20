@@ -447,6 +447,65 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * The workspace row, and why its order is written down twice.
+ *
+ * Left to right on a desktop this reads `[Toolkit panel][splitter][notebook]
+ * [session tray]` and the notebook is third. In `ToolkitShell.tsx` it is
+ * **first**, because stacked below 1000px the document order is the only
+ * order there is, and with the shelf first a phone opened on 122 operations
+ * with the subject of the page below the fold. The two obvious repairs —
+ * `order` on the stacked row, or `flex-direction: column-reverse` — move the
+ * picture without moving the document, and a keyboard or a screen reader then
+ * walks the panes in an order nobody can see. So the document moved, and the
+ * desktop row is what has to catch up.
+ *
+ * Grid is how it catches up. `order` is a change to the box order the flex
+ * algorithm consumes, and focus order is defined against exactly that
+ * sequence; `grid-column` says which *track* a box lands in and leaves the
+ * sequence alone. A notebook that comes first in the document can therefore
+ * be drawn in the third column without the document having claimed it is
+ * third. What this does not buy is agreement: at desktop widths a keyboard
+ * still reaches the notebook before the panel drawn to its left. That is the
+ * trade, taken deliberately — across a row of independent panes the leftmost
+ * is not "before" anything, whereas down a stacked page the topmost is, and
+ * the reading axis is the one that was carrying meaning.
+ *
+ * Three of the four children are optional — the panel collapses to
+ * `.ops-rail`, the splitter is gone while it is collapsed, the tray collapses
+ * to `.tray-rail` — so the tracks are `auto` and an empty one is zero wide.
+ * The row never has to know which of them are present. Only the notebook is
+ * `minmax(0, 1fr)`: it is the column that gives ground, and the `0` floor is
+ * what stops a wide cell inside it from pushing the page sideways.
+ */
+.toolkit-workspace {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
+}
+.toolkit-workspace > * {
+  grid-row: 1;
+  /* Flex's automatic minimum size applied down the main axis, which here was
+     horizontal; grid's applies down the block axis. Without this a pane whose
+     content is taller than the row grows the row instead of scrolling inside
+     the `ScrollArea` it was given for the purpose. */
+  min-height: 0;
+}
+.toolkit-workspace > .ops-rail,
+.toolkit-workspace > .ops-panel {
+  grid-column: 1;
+}
+.toolkit-workspace > .ops-splitter {
+  grid-column: 2;
+}
+.toolkit-workspace > .toolkit-notebook {
+  grid-column: 3;
+}
+.toolkit-workspace > .toolkit-tray,
+.toolkit-workspace > .tray-rail {
+  grid-column: 4;
+}
+
+/*
  * Narrow viewports: three columns of chrome and no notebook.
  *
  * The workspace row is `[Toolkit panel][splitter][notebook][session tray]`,
@@ -481,12 +540,19 @@ body.layout-app:has(#app > .toolkit-shell) {
  * was always meant to happen in.
  */
 @media (max-width: 1000px) {
+  /* Back to flex, which is the layout with no opinion about order: one column,
+     in document order, notebook first. The `grid-column` declarations above
+     are left standing rather than unset — a flex container does not read
+     them, and unsetting them would only invite someone to believe the stack
+     depends on their value. */
   .toolkit-workspace {
+    display: flex;
     flex-direction: column;
   }
   .toolkit-workspace > .ops-panel,
   .toolkit-workspace > .ops-rail,
-  .toolkit-workspace > .toolkit-tray {
+  .toolkit-workspace > .toolkit-tray,
+  .toolkit-workspace > .tray-rail {
     width: auto;
   }
   .toolkit-workspace > .ops-panel,
@@ -500,8 +566,10 @@ body.layout-app:has(#app > .toolkit-shell) {
      vertical strip. Stacked it is a full-width bar 36px tall, and a word
      rotated ninety degrees inside one is unreadable for no reason — the
      rotation was a consequence of the column layout, not a decision about
-     the word. */
-  .toolkit-workspace > .ops-rail > span {
+     the word. `.tray-rail` is the same bar on the other side and had been
+     left out of this; it gets the same treatment for the same reason. */
+  .toolkit-workspace > .ops-rail > span,
+  .toolkit-workspace > .tray-rail > span {
     writing-mode: horizontal-tb;
   }
 }
