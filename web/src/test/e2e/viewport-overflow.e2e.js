@@ -117,6 +117,44 @@ describe.skipIf(!availability.ok)("no shipped page scrolls sideways", () => {
     await server?.close();
   });
 
+  /**
+   * Stacked, the side panes need a ceiling of their own.
+   *
+   * Horizontal overflow is what this file was written for, and it would not
+   * have caught the reason the cap exists: once `.toolkit-workspace` stacks
+   * below 1000px, nothing bounds the shelf's own scroll area, so it grew to
+   * 4342px of operations sitting above the notebook. The page did not scroll
+   * sideways for that — it just put the subject of the page an entire screen
+   * and a half out of reach, which is the same defect the width fix was
+   * about, turned ninety degrees.
+   *
+   * Asserted against the viewport rather than a pixel count, because the cap
+   * is written in `dvh` and a number here would pin the arithmetic instead of
+   * the property: no single pane may be taller than the window it is in.
+   */
+  it("bounds each stacked pane to the window at 375px", async () => {
+    const page = await browser.newPage({ viewport: { width: 375, height: 900 } });
+    try {
+      await page.goto(`${server.origin}/toolkit`, { waitUntil: "load" });
+      await page.waitForFunction(() => document.readyState === "complete");
+      await page.waitForTimeout(500);
+      const tall = await page.evaluate(() => {
+        const vh = window.innerHeight;
+        const out = [];
+        for (const sel of [".toolkit-shelf", ".toolkit-tray", ".ops-panel"]) {
+          for (const el of document.querySelectorAll(sel)) {
+            const h = Math.round(el.getBoundingClientRect().height);
+            if (h > vh) out.push(`${sel} is ${h}px in a ${vh}px window`);
+          }
+        }
+        return out;
+      });
+      expect(tall, tall.join(" | ")).toEqual([]);
+    } finally {
+      await page.close();
+    }
+  });
+
   for (const width of WIDTHS) {
     for (const path of PAGES) {
       it(`${path} at ${width}px`, async () => {
