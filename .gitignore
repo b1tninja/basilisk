@@ -16,6 +16,10 @@ build/
 data/
 *.asc
 !tests/fixtures/**/*.asc
+# Throwaway OpenPGP fixtures for the JS suite, same exception as above and
+# for the same reason: they are generated key material that protects nothing
+# and the tests need them without a local gpg. See the README beside them.
+!web/src/test/fixtures/**/*.asc
 testkey.asc
 marketplace/package/
 *.zip
