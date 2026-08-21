@@ -892,7 +892,12 @@ export const STEPS = [
        * of being dropped in silence, which is the defect this repo keeps finding
        * under other names. The other rule — one `shares` step per pipeline — is
        * untouched, so there is still exactly one place a set is assembled and
-       * still exactly one thing to read to know what went into it.
+       * still exactly one thing to read to know what went into it. That rule is
+       * per pipeline and is not the tray's: reading Inputs → shares is limited
+       * per *machine*, since there is one tray on each, so two cells placed on
+       * two peers each collect into their own and both compile. The two used to
+       * be one document-wide flag saying "per pipeline", which was the wrong
+       * scope for the tray and no scope at all for the assembly point.
        *
        * It is an enum and not a bare flag because both settings are positions a
        * reader may need to see stated. `fallback` is the default and serializes

@@ -27,6 +27,7 @@ import {
   INPUT_PANELS,
   stepInputDeclarations,
   stepInputNeeds,
+  stepInputRequirements,
 } from "./input-needs.js";
 import {
   canonicalSelectorMember,
@@ -1829,6 +1830,130 @@ function pairRecipientError(step) {
 }
 
 /**
+ * The Inputs panels a step consumes *whole*, and what to call each one.
+ *
+ * A panel here is a document, not a setting: whatever is in it is the one
+ * message, the one paste, the one set of rows this run has, and a second step
+ * reading it does not get a second one — it gets the same one again. That is
+ * the property the rule below enforces, and it is why the list is these three
+ * and not all seven of `INPUT_PANELS`. The key trays are the counter-example
+ * and the reason a blanket rule would be wrong: two steps both reaching for
+ * Inputs → OpenPGP *for a key* both want the same key, and refusing the second
+ * would be a rule against using one's own key twice. `gpgPass` is the same
+ * story one level down.
+ *
+ * Membership is asked of the *declarations*, never of a step name — see the
+ * `param === null` filter at the reader below.
+ * @type {Readonly<Record<string, string>>}
+ */
+const SOLE_INPUT_PANELS = Object.freeze({
+  text: "Inputs → text",
+  shares: "Inputs → shares",
+  gpg: "Inputs → OpenPGP",
+});
+
+/**
+ * The other way to get the value, per panel — a move the author can make in
+ * the text in front of them, never "use a different machine".
+ * @type {Readonly<Record<string, string>>}
+ */
+const SOLE_INPUT_REMEDIES = Object.freeze({
+  text: "Read the first cell's value here instead — `out $x` there, `$x` here — or give the two cells different `@` headers so each reads its own machine's panel.",
+  shares:
+    "Bring this cell's rows in some other way — `quorum.recv … | shares`, or `shares with=$slot` — or give the two cells different `@` headers so each reads its own machine's tray.",
+  gpg: "Pipe this cell's message in instead (`quorum.recv from=… | gpg.decrypt`), or give the two cells different `@` headers so each reads its own machine's panel.",
+});
+
+/**
+ * Where a cell runs, as far as the text alone can say: its `@peer` header.
+ *
+ * `""` is the answer for a headerless cell and for `@*`, and it does not mean
+ * *unknown* — it means **every machine**. Whoever opens a headerless notebook
+ * runs its unheaded cells, and every participant enters a `@*` cell together,
+ * so both stand on the same ground as every placed cell in the document. One
+ * bucket for the two is what lets the collision test below be a comparison
+ * instead of a pile of special cases.
+ *
+ * A fingerprint header arrives here already upper-cased by `normalizePeerRef`,
+ * so `@aabb…` and `@AABB…` are one placement rather than two — the same
+ * settling `peersSha` depends on.
+ *
+ * **This is the header and nothing else, deliberately.** `planRun` can narrow a
+ * headerless cell onto one peer when a private slot it reads pins it there,
+ * and that narrowing is a dataflow fact this pass does not hold. Re-deriving it
+ * would put a second answer to "who runs this cell" in the compiler beside the
+ * one `plan.js` computes and `placement.js` acts on, and two answers to that
+ * question eventually differ — which is a key leaving a machine it was never
+ * supposed to leave. So the rule is *conservative* exactly where the two could
+ * disagree: a headerless cell is treated as standing everywhere, which refuses
+ * some pairings the data would have permitted, and the refusal names writing
+ * the header as the remedy — turning the reader's guess into the document's
+ * statement, which is the thing `planRun` was going to read anyway.
+ * @param {{ peer?: string }} chain
+ * @returns {string}  a peer, or `""` for every machine
+ */
+function placementOfChain(chain) {
+  const peer = String(chain?.peer || "");
+  return peer === PEER_WILDCARD ? "" : peer;
+}
+
+/**
+ * Do these two placements ever land on one machine?
+ *
+ * Equal placements do, and `""` — every machine — meets everything including
+ * itself. This is the half a "group by header string" version gets wrong: it
+ * would let two headerless `input` cells through, and they are the pair most
+ * likely to be written.
+ * @param {string} a @param {string} b
+ */
+function placementsMeet(a, b) {
+  return !a || !b || a === b;
+}
+
+/**
+ * The sentence for a panel that two cells would read on one machine.
+ *
+ * Every branch names the state that is actually true — which cells, which
+ * machine, and *why* they meet — because "per pipeline" was wrong in both
+ * directions at once: stricter than a pipeline (it was document-wide) and
+ * looser than the truth (the panel is per machine, not per document).
+ * @param {string} panel  a `SOLE_INPUT_PANELS` key
+ * @param {number} cell   the cell being refused
+ * @param {string} here   its placement
+ * @param {{ cell: number, at: string }} prior  the reader already holding the panel
+ * @returns {string}
+ */
+function panelReadTwiceError(panel, cell, here, prior) {
+  const noun = SOLE_INPUT_PANELS[panel];
+  const at = (/** @type {string} */ p) => `\`${PEER_SIGIL}${p}\``;
+  const where =
+    prior.cell === cell
+      ? "this cell reads it twice"
+      : !here && !prior.at
+        ? `cell ${prior.cell} reads it too — neither cell names a peer, so both run on the same machine`
+        : !here
+          ? `cell ${prior.cell} reads it on ${at(prior.at)}, and this cell names no peer, so every machine runs it — ${at(prior.at)} among them`
+          : !prior.at
+            ? `cell ${prior.cell} reads it and names no peer, so every machine runs it — including ${at(here)}, where this cell runs`
+            : // `prior.at` and `here` are the same string in this branch —
+              // `placementsMeet` said so — and the prior cell's own placement
+              // is the one read, so a future change to what "meet" means
+              // cannot turn this clause into a claim about the wrong machine.
+              `cell ${prior.cell} reads it on ${at(prior.at)}, which is where this cell runs too`;
+  // Two readers in *one* cell cannot be told apart by a header — a `@` goes on
+  // a cell, so the cross-cell remedies below would be naming a move that
+  // cannot be made from where the author is standing.
+  const remedy =
+    prior.cell === cell
+      ? "Delete one of them, or split the cell in two so each half can name its own peer — a `@` header goes on a cell, so two readers inside one are always on one machine."
+      : SOLE_INPUT_REMEDIES[panel];
+  return (
+    `${noun} is one panel per machine, and ${where}. The second read returns ` +
+    `what the first one got rather than something new. ${remedy}`
+  );
+}
+
+/**
  * Validate a parsed AST against the registry (types, scopes, params).
  * @param {RecipeAst} ast
  * @returns {ValidationResult}
@@ -1858,9 +1983,29 @@ export function validateRecipe(ast) {
   let foreachGpg = false;
   /** @type {import("./input-needs.js").InputPanel[]} */
   const inputNeeds = [];
-  let sawInputShares = false;
-  let sawInputText = false;
-  let sawDecryptGpg = false;
+  /**
+   * Who is already reading each single-instance Inputs panel, and where.
+   *
+   * **One structure, because it is one rule.** This was three booleans —
+   * `sawInputShares`, `sawInputText`, `sawDecryptGpg` — each scoped to the
+   * whole document and each raising a message that said "per pipeline". That
+   * copy was wrong in both directions at once: stricter than a pipeline, since
+   * the flag never reset between cells, and looser than the truth, since the
+   * thing there is one of is a *panel on a machine* and a document spans
+   * machines. Two peers each reading their own Inputs panel is the ordinary
+   * multi-peer notebook, and it would not compile.
+   *
+   * `46da380` fixed a third of this by narrowing which decrypts count, and said
+   * in as many words that it was leaving the scope behind. Three separately
+   * scoped counters is how a rule drifts into three rules, so the scope is
+   * fixed here for all of them at once and there is one place left to read.
+   *
+   * Keyed panel → the first cell that claimed it at each placement. First
+   * claim wins so the complaint always points *backwards*, at a cell the
+   * reader has already scrolled past.
+   * @type {Map<string, { cell: number, at: string }[]>}
+   */
+  const panelReaders = new Map();
   let globalStepIndex = 0;
 
   for (let ci = 0; ci < chains.length; ci++) {
@@ -1884,6 +2029,14 @@ export function validateRecipe(ast) {
      * "register earlier with out $x" is a remedy the author can perform.
      */
     const placed = !!chains[ci].peer;
+
+    // The machine this cell's steps will be reaching for a panel on. Read once
+    // per cell from the header and nowhere else — see `placementOfChain`.
+    const where = placementOfChain(chains[ci]);
+
+    // `shares` steps in *this* chain — the assembly-point rule below, which is
+    // per pipeline and reset here because a pipeline is what it is about.
+    let sharesStepsHere = 0;
 
     /** @type {import("./types.js").RefinedType} */
     let current = tNone();
@@ -2012,58 +2165,85 @@ export function validateRecipe(ast) {
       sharesCount = n;
     }
 
-    if (step.name === "shares") {
-      if (sawInputShares) {
+    /**
+     * One reader per single-instance panel per machine.
+     *
+     * `buildBindings` fills `inputs.text`, `inputs.shares` and `inputs.gpg`
+     * from one textarea each, on the machine the run is happening on — so the
+     * thing there is exactly one of is a panel *there*, and the enforcement
+     * has to be keyed the same way or it is measuring something else. It was
+     * keyed per document, which is why two peers each reading their own Inputs
+     * panel refused: `@bo input | out $a` beside `@cara input | out $b` is the
+     * shape of nearly every multi-peer notebook and none of them compiled.
+     *
+     * Two things are asked, and neither is a step name.
+     *
+     * *Which panel*, from the step's own declarations, through the same
+     * `stepInputRequirements` walk the tray-opening shell reads — `46da380`'s
+     * reason, kept and generalised: a `gpg.decrypt` fed by `quorum.recv`, or a
+     * `shares` whose rows came down the pipe, reaches for no panel and so
+     * stands in nobody's way. `param === null` is what keeps this about the
+     * *content* panels and not the key trays that share their names: a
+     * pipeline-value need is the whole document arriving, while a `key=` need
+     * is "which key", and two steps wanting the same key is not a conflict.
+     *
+     * *Which machine*, from the cell's header, through `placementOfChain` —
+     * the header alone, with a headerless or `@*` cell standing on every
+     * machine at once. `placement.js` is the authority on who runs what and
+     * this must not become a rival to it.
+     */
+    for (const need of stepInputRequirements(step, spec, current)) {
+      if (need.param !== null || !need.panel) continue;
+      if (!SOLE_INPUT_PANELS[need.panel]) continue;
+      const held = panelReaders.get(need.panel) || [];
+      const prior = held.find((r) => placementsMeet(r.at, where));
+      if (prior) {
         errors.push({
-          message: "Only one shares step is supported per pipeline",
+          message: panelReadTwiceError(need.panel, ci, where, prior),
           start: step.start,
           end: step.end,
           stepIndex,
         });
+      } else {
+        held.push({ cell: ci, at: where });
+        panelReaders.set(need.panel, held);
       }
-      sawInputShares = true;
-    }
-
-    if (step.name === "input") {
-      if (sawInputText) {
-        errors.push({
-          message: "Only one input step is supported per pipeline",
-          start: step.start,
-          end: step.end,
-          stepIndex,
-        });
-      }
-      sawInputText = true;
     }
 
     /**
-     * One decrypt may read the OpenPGP panel, because there is one panel.
+     * One place per pipeline where a share set is assembled.
      *
-     * The flag is document-wide, not per chain, and that is right for the state
-     * it describes: `buildBindings` fills `inputs.gpg` from a single ciphertext
-     * textarea shared by every cell, so two cells both reading it would be two
-     * cells silently decrypting the same message.
+     * A *different* rule from the panel one above, kept apart from it on
+     * purpose although the two used to be one document-wide boolean — and the
+     * fusion is what made the old copy unfixable. The panel rule is about a
+     * scarce resource on a machine; this one is about a reader being able to
+     * answer "what went into this set?" by looking at one step. `a0c34cf`
+     * named the two-cell workaround as the other road to the hybrid and closed
+     * it; `635fd58` then opened the *spelled* road, `tray=merge`, and left this
+     * closed so there would be exactly one spelling.
      *
-     * What it must not do is count a decrypt that reads the *pipe*. A holder's
-     * `quorum.recv from=<dealer> | gpg.decrypt` never touches that panel — the
-     * step's own `whenInput` guard says so, and `stepInputNeeds` is where that
-     * guard is read — so N holders in one generated ceremony are N decrypts and
-     * no ambiguity at all. Asking the declarations rather than the step name is
-     * what keeps this rule and the panel it protects from being two opinions.
+     * So this counts `shares` steps and does not ask about panels: a set
+     * assembled from the pipe is still a set, and a second assembly still
+     * splits the answer in two. It is per chain because a pipeline is what a
+     * set belongs to — which is what the old message said and what nothing
+     * enforced, since the flag it read never reset between cells.
      */
-    if (step.name === "gpg.decrypt" && stepInputNeeds(step, spec, current).includes("gpg")) {
-      if (sawDecryptGpg) {
+    if (step.name === "shares") {
+      if (sharesStepsHere) {
         errors.push({
           message:
-            "Only one decrypt step can read Inputs → OpenPGP — there is one panel, " +
-            "so a second would decrypt the same message again. Pipe the other " +
-            "cell's message in (`quorum.recv from=… | gpg.decrypt`), or delete it.",
+            "A pipeline assembles its share set in one place, and this one " +
+            "already has a `shares` above — a second collector splits the " +
+            "answer to \"what went into this set?\" across two steps. Fold the " +
+            "extra rows into the first one instead: `with=$slot` for a share " +
+            "another cell bound, `tray=merge` for mnemonics typed into " +
+            "Inputs → shares.",
           start: step.start,
           end: step.end,
           stepIndex,
         });
       }
-      sawDecryptGpg = true;
+      sharesStepsHere++;
     }
 
     // Every panel this step needs, read off its declarations — the step's own

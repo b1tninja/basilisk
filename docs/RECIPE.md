@@ -1031,9 +1031,15 @@ written refuses rather than picking a side: a cell whose result depends on
 whether a panel three inches away happens to be full is not readable from its
 text. The merged set is still one set — the same card down two roads, and two
 roads carrying two different splits, both refuse by set id and index out of each
-mnemonic's own header. `tray=` serializes only when it is `merge`, and "only one
-`shares` step per pipeline" is unchanged, so there is still exactly one place in
-a pipeline where a set is assembled.
+mnemonic's own header. `tray=` serializes only when it is `merge`, and a
+pipeline still assembles its set in one place — a second `shares` in the same
+cell refuses however its rows arrived, so `tray=merge` stays the only spelling
+for the hybrid and one step still answers "what went into this set?".
+
+That rule is per *pipeline*, and it is not the same rule as the tray's. Reading
+Inputs → shares is limited **per machine**, because there is one tray on each:
+two cells placed on two peers each collect into their own, and that compiles.
+See "One panel per machine" below.
 
 **`gpg.decrypt` answers the same question the same way.** It takes the armored
 message from the pipe when one arrives — `quorum.recv from=<dealer> |
@@ -1050,9 +1056,49 @@ quorum.recv from=<dealer> | gpg.decrypt count=2 pasted=merge | shares | blip39 -
 
 `pasted=` serializes only when it is `merge`. It does not touch the tip's type:
 `count=` decides that before the run, as it always has, and a merge only changes
-how many messages have to add up to it. One decrypt per notebook may read the
-panel — there is one panel — but decrypts reading the *pipe* are not counted,
-which is what lets a generated ceremony give every holder their own.
+how many messages have to add up to it.
+
+### One panel per machine
+
+Three Inputs panels hand over a whole document rather than a setting — the text
+area (`input`), the share rows (`shares`) and the OpenPGP ciphertext box
+(`gpg.decrypt`). Whatever is in one of them is *the* paste, *the* set of rows,
+*the* message, so a second step reading it gets the same thing again rather
+than something new, and that is refused at compile.
+
+The limit is one reader **per machine**, keyed by the cell's `@peer` header:
+
+```text
+@alice
+input | out $a
+
+@bob
+input | out $b
+```
+
+That compiles: two panels, two machines. The same two cells both under `@alice`
+refuse — one machine, one Text panel — and the refusal says so, naming `@alice`
+as the machine they meet on.
+
+A cell with **no header runs on every machine**, and so does `@*`, so either one
+meets every placement in the notebook — including another headerless cell, and
+including a placed one. Two headerless `input` cells refuse; a headerless
+`input` above `@alice input` refuses too.
+
+Only a step that will *really* reach for the panel counts. A `gpg.decrypt` fed
+by `quorum.recv`, or a `shares` whose rows arrived on the pipe or through
+`with=`, reads no panel and stands in nobody's way — which is what lets a
+generated ceremony give every holder their own decrypt. Asking for a *key* is
+not asking for the content: `gpg.sign` with no `key=` and `gpg.decrypt` reading
+the ciphertext both name Inputs → OpenPGP, and they do not collide, because two
+steps wanting the same key is not a conflict.
+
+The header is the whole of the key, deliberately. `planRun` can narrow a
+headerless cell onto one peer from its dataflow; the compiler does not re-derive
+that, because `placement.js` is the authority on who runs what and a second
+answer would eventually be a different one. So the rule is conservative exactly
+where the two could disagree, and the remedy it names — write the header — is
+the statement `planRun` was going to read anyway.
 
 ## Serialization
 

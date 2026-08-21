@@ -291,11 +291,29 @@ describe("validation", () => {
     expect(migrateRecipe("cat | utf8").recipe).toMatch(/^input\b/);
   });
 
-  it("rejects more than one input step per pipeline", () => {
+  it("rejects a second input step on the same machine, and only there", () => {
     const { validation } = compileRecipe("input | utf8 | base64");
     expect(validation.ok).toBe(true);
     const dup = compileRecipe("input | utf8 | base64 | input");
     expect(dup.validation.ok).toBe(false);
+
+    // Two cells, no headers: both run wherever the notebook is opened, so both
+    // read the one Text panel. This is the case a rule keyed on the header
+    // string alone would wave through, and it must not.
+    const twoHere = compileRecipe("input | out $a\n\ninput | out $b");
+    expect(twoHere.validation.ok).toBe(false);
+
+    // Two peers, each reading their own machine's panel. This used to refuse —
+    // the flag was document-wide while its sentence said "per pipeline" — and
+    // it made every notebook wanting two people to paste anything unwritable.
+    const twoPeers = compileRecipe("@alice\ninput | out $a\n\n@bob\ninput | out $b");
+    expect(twoPeers.validation.errors.map((e) => e.message)).toEqual([]);
+    expect(twoPeers.validation.ok).toBe(true);
+
+    // A headerless cell is on every machine, so it meets a placed one.
+    const mixed = compileRecipe("input | out $a\n\n@alice\ninput | out $b");
+    expect(mixed.validation.ok).toBe(false);
+    expect(mixed.validation.errors.map((e) => e.message).join("\n")).toContain("`@alice`");
   });
 
   it("rejects retired gpgdecrypt alias", () => {

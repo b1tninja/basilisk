@@ -28,10 +28,19 @@
  * picking a side, because a cell whose result depends on whether a panel three
  * inches away happens to be full is the invisible state `f565ab1` killed.
  *
- * "Only one `shares` step per pipeline" was **not** loosened, and the last case
- * here is its pin: the two-cell workaround is still refused, so `tray=merge`
- * remains the only spelling and there is still exactly one place in a pipeline
- * where a set is assembled.
+ * The one-assembly-point rule was **not** loosened, and the last case here is
+ * its pin: the two-step workaround is still refused, so `tray=merge` remains
+ * the only spelling and there is still exactly one place in a pipeline where a
+ * set is assembled.
+ *
+ * The pin's *wording* moved once, deliberately. It used to read "Only one
+ * shares step is supported per pipeline", which was one document-wide boolean
+ * doing two jobs: this rule, and "one step may read the Inputs → shares tray,
+ * because there is one tray". The second job is per *machine* rather than per
+ * document — two peers each collecting into their own tray is the ordinary
+ * multi-peer notebook and it would not compile — so the two were separated,
+ * and each now says what it enforces. This one is still per pipeline, which is
+ * what its old sentence claimed and what nothing was actually doing.
  */
 import { generateKey } from "openpgp";
 import { describe, expect, it } from "vitest";
@@ -297,14 +306,30 @@ describe("a merged set is still one set of distinct shares", () => {
 
 describe("the rule that was not loosened", () => {
   it("still refuses a second shares step in one pipeline", () => {
-    // The two-cell workaround `a0c34cf` named as the other road to the hybrid.
+    // The two-step workaround `a0c34cf` named as the other road to the hybrid.
     // It stays closed, so `tray=merge` is the only spelling and a reader still
-    // has exactly one step to look at to know what went into a set.
+    // has exactly one step to look at to know what went into a set. Neither
+    // `shares` here reads the tray — the set comes down the pipe — so this is
+    // pinning the assembly-point rule and nothing else: if it were the panel
+    // rule wearing this name, this line would compile.
     const { validation } = compileRecipe(
       "gpg.decrypt count=all | shares | blip39 -d | shares | blip39 -d | sss.combine"
     );
-    expect(validation.errors.map((e) => e.message)).toContain(
-      "Only one shares step is supported per pipeline"
+    const said = validation.errors.map((e) => e.message).join("\n");
+    expect(said).toContain("assembles its share set in one place");
+    // The remedy is the spelling that exists, named where it can be read.
+    expect(said).toContain("tray=merge");
+  });
+
+  it("does not spend the pipeline's one assembly point on another cell's", () => {
+    // The half that moved. Two peers each collecting their own set is two
+    // pipelines, not one, and each has its own tray on its own machine.
+    const two = compileRecipe(
+      ["@ALICE", "shares | blip39 -d | out $a", "", "@BOB", "shares | blip39 -d | out $b"].join(
+        "\n"
+      )
     );
+    expect(two.validation.errors.map((e) => e.message)).toEqual([]);
+    expect(two.validation.ok).toBe(true);
   });
 });

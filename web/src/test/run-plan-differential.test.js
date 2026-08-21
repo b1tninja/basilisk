@@ -186,7 +186,7 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
       planned++;
     }
     expect(planned).toBeGreaterThanOrEqual(5);
-    // Four, and the header line is no longer what tells them apart — every one
+    // Five, and the header line is no longer what tells them apart — every one
     // of them is now just a peer, because that is all a header says. So the
     // second half of this pins what each of them publishes, which is the thing
     // the doc has to show and the thing that used to be readable off the
@@ -195,15 +195,19 @@ describe("every docs/RECIPE.md fence that compiles plans exactly as it runs toda
     // The first `@mara` is the dealer, publishing one of the three things its
     // cell writes: that is the case the step exists for, and a grammar
     // reference showing only the all-or-nothing form does not document it. The
-    // second is the `publish` section's own example. The third is the Comments
-    // section's, headered on purpose — the rule it states is *where* a cell's
-    // comments go, and "above the header" cannot be shown without one.
-    expect(headered).toEqual(["@alice", "@mara", "@mara", "@mara"]);
+    // second is the `publish` section's own example. The fourth `@alice` is
+    // "One panel per machine" — two peers each reading their own Inputs panel,
+    // which is the shape that would not compile while the panel rule was keyed
+    // per document, and it publishes nothing because the point it makes is
+    // about where a cell *reads*, not about what leaves. The last is the
+    // Comments section's, headered on purpose — the rule it states is *where* a
+    // cell's comments go, and "above the header" cannot be shown without one.
+    expect(headered).toEqual(["@alice", "@mara", "@mara", "@alice", "@mara"]);
     const published = fences
       .map((b) => compileRecipe(b))
       .filter((c) => c.validation.ok && hasHeader(c))
       .map((c) => publishedSlots(c.ast.chains[0]));
-    expect(published).toEqual([[], ["commitments"], ["expected"], ["set"]]);
+    expect(published).toEqual([[], ["commitments"], ["expected"], [], ["set"]]);
   });
 
   it("plans the doc's own placement example the way the doc reads it", () => {
