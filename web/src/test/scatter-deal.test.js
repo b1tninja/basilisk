@@ -92,6 +92,24 @@ vi.mock("../lib/recipient-picker.js", () => ({
   },
 }));
 
+/**
+ * The unlocked-key cache `gpg.decrypt` reads, standing in for a person having
+ * pressed Unlock in My Keys — which is what `openQuorumSession` does for real
+ * when a session starts (`execAgentUnlock` → `unlockVaultForUse` → `sessionPut`).
+ * Only the *storage* is faked: the decrypt path, the key parsing and the
+ * `zeroKeyMaterial` wipe are the shipped ones.
+ */
+const { sessionKeys } = vi.hoisted(() => ({ sessionKeys: new Map() }));
+
+vi.mock("../lib/vault-session.js", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    sessionList: () => [...sessionKeys.keys()].map((fingerprint) => ({ fingerprint })),
+    sessionGet: (fpr) => sessionKeys.get(String(fpr).toUpperCase()) || null,
+  };
+});
+
 globalThis.window = /** @type {any} */ (new EventTarget());
 globalThis.RTCPeerConnection = class {};
 
@@ -133,6 +151,7 @@ afterEach(() => {
   q.closeQuorumExchange("closed");
   FakeSession.instances = [];
   FakeSession.onStart = null;
+  sessionKeys.clear();
 });
 
 /** Open the room as `self`, with the given other members connected+verified. */
@@ -224,6 +243,144 @@ describe("seal to=each encrypts share i to member i's key", () => {
         `${member.fpr} (position ${positionOf(member.fpr)}) can open share ${header.index}`
       ).toBe(positionOf(member.fpr));
     }
+  });
+});
+
+describe("seal to=each | send to=each — the deal the owner asked for", () => {
+  /**
+   * The whole requirement in one body: **each peer gets a share of the same
+   * key, sealed to that peer, delivered to that peer and nobody else.**
+   *
+   * Before the pair survived `seal`, this line did not compile — `seal`'s
+   * armored output named nobody, so `send` had no pair to read and refused
+   * with a type error. The generated ceremony therefore dealt mnemonics in the
+   * clear under the transport's own key, which is what `6388ad0` recorded as
+   * deferred: a holder had no way to open a sealed share, so nothing sealed
+   * them.
+   *
+   * Two independent proofs, because the record and the cryptography are two
+   * claims: the wire carries armor addressed to the member whose share it is,
+   * and that member's own private key — nobody else's — opens it onto the
+   * share index that member's position in the canonical audience entitles them
+   * to.
+   */
+  it("puts armor on the wire that only its own member can open", async () => {
+    const session = await openRoom(others());
+    await run(
+      "random 32 | sss.split 2/3 | blip39.encode | scatter to=room\n  - seal to=each | send to=each"
+    );
+
+    // One wire send per *other* member: the pair whose member is this machine
+    // still never crosses a wire, sealed or not.
+    expect(session.sent).toHaveLength(members.length - 1);
+    expect(session.sent.map((s) => s.to).sort()).toEqual(others().sort());
+
+    for (const { to, text } of session.sent) {
+      expect(text, `what reached ${to} was not an OpenPGP message`).toContain(
+        "-----BEGIN PGP MESSAGE-----"
+      );
+      // Not a mnemonic any more — the thing this whole change is about. A
+      // readable share on the wire is what the unsealed deal put there.
+      expect(readShareHeader(text)).toBeFalsy();
+
+      const opened = await decrypt({
+        message: await readMessage({ armoredMessage: text }),
+        decryptionKeys: await readPrivateKey({
+          armoredKey: keys.find((k) => k.fpr === to).armoredPrivate,
+        }),
+      });
+      const header = readShareHeader(String(opened.data));
+      expect(header, `${to} opened their message onto something else`).toBeTruthy();
+      expect(
+        header.index,
+        `member ${to} (position ${positionOf(to)}) received share ${header.index}`
+      ).toBe(positionOf(to));
+
+      // And **only** that member: every other key in the room is refused by
+      // the same message. Sealing to the room instead of to the person would
+      // pass every assertion above and fail this one.
+      for (const other of keys.filter((k) => k.fpr !== to)) {
+        await expect(
+          decrypt({
+            message: await readMessage({ armoredMessage: text }),
+            decryptionKeys: await readPrivateKey({ armoredKey: other.armoredPrivate }),
+          }),
+          `${other.fpr} could open the message sealed to ${to}`
+        ).rejects.toThrow();
+      }
+    }
+  });
+
+  /**
+   * What the self-pair costs, and why the generated deal ends with a decrypt.
+   *
+   * `seal to=each` has no exception for the pair whose member is this machine:
+   * it seals every share to the key of the person it is for, and for one pair
+   * that person is the dealer. Skipping it would be worse than pointless — the
+   * shipped `- seal to=each | out $sealed | publish` would then publish the
+   * dealer's own share in the clear — so the dealer's retained payload is an
+   * OpenPGP message to themselves, and the honest way back to the mnemonic is
+   * the one every holder uses: open it with your own key.
+   */
+  it("leaves the dealer holding their own share, opened with their own key", async () => {
+    const { createSlotRegistry } = await import("../lib/toolkit/slot-registry.js");
+    const slotRegistry = createSlotRegistry();
+    sessionKeys.set(self.fpr, self.armoredPrivate);
+    const session = await openRoom(others());
+    const { ast, errors } = parseRecipe(
+      "random 32 | sss.split 2/3 | blip39.encode | scatter to=room\n" +
+        "  - seal to=each | send to=each | gpg.decrypt | out $share"
+    );
+    expect(errors).toEqual([]);
+    await runRecipe(ast, {}, { slotRegistry });
+
+    // The decrypt ran on exactly one pair — the one that stayed. A delivered
+    // pair's pipe ends at `send`, so nothing else reached it.
+    expect(session.sent).toHaveLength(members.length - 1);
+
+    const mine = slotRegistry.resolve("$share");
+    expect(mine.type, `the slot holds ${mine.type}`).toBe("text");
+    // A mnemonic, not the armor it was a moment ago: `$share` is the same
+    // shape on the dealer as `$share-i` is on every holder, which is what the
+    // recovery notebook reads back on whichever machine writes it.
+    expect(String(mine.data)).not.toContain("BEGIN PGP MESSAGE");
+    const header = readShareHeader(String(mine.data));
+    expect(header, "the dealer's slot does not hold a share mnemonic").toBeTruthy();
+    expect(header.index).toBe(positionOf(self.fpr));
+  });
+
+  /**
+   * The holder's half, which is the half that did not exist. `gpg.decrypt` was
+   * a source that read the Inputs panel and nothing else, so
+   * `quorum.recv from=<dealer> | gpg.decrypt` discarded the message that
+   * arrived and decrypted whatever had been pasted — a sealed share could be
+   * sent and not opened.
+   */
+  it("opens a received share on the holder's side, with the holder's own key", async () => {
+    const { createSlotRegistry } = await import("../lib/toolkit/slot-registry.js");
+    const holder = keys.find((k) => k.fpr === others()[0]);
+    const slotRegistry = createSlotRegistry();
+
+    // Deal from this machine, and take the envelope that went to that holder
+    // off the wire — nothing here reaches into the split.
+    const session = await openRoom(others());
+    await run(
+      "random 32 | sss.split 2/3 | blip39.encode | scatter to=room\n  - seal to=each | send to=each"
+    );
+    const envelope = session.sent.find((s) => s.to === holder.fpr).text;
+    q.closeQuorumExchange("closed");
+
+    // Now stand on the holder's machine: their key is unlocked, the dealer's
+    // message arrives down the pipe, and the recipe names no panel at all.
+    sessionKeys.set(holder.fpr, holder.armoredPrivate);
+    const { ast, errors } = parseRecipe("input | gpg.decrypt | out $share-2");
+    expect(errors).toEqual([]);
+    await runRecipe(ast, { inputs: { text: { value: envelope } } }, { slotRegistry });
+
+    const got = slotRegistry.resolve("$share-2");
+    const header = readShareHeader(String(got.data));
+    expect(header, "the holder's slot does not hold a share mnemonic").toBeTruthy();
+    expect(header.index).toBe(positionOf(holder.fpr));
   });
 });
 

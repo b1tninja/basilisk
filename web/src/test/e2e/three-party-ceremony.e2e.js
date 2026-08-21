@@ -321,7 +321,11 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     // destination is a derivation — `room` is the audience in canonical order,
     // `each` is this pair's member, and neither can name a person.
     expect(preview).toContain("scatter to=room");
-    expect(preview).toContain("- send to=each | out $share");
+    // Turned over from `- send to=each | out $share`: each share is sealed to
+    // its own member's key before it is delivered, and the trailing decrypt is
+    // the dealer opening the one pair that never crossed a wire (see
+    // `room-ceremony.e2e.js` step 1 for the whole argument).
+    expect(preview).toContain("- seal to=each | send to=each | gpg.decrypt | out $share");
 
     // **FINDING (5a), turned over — there are no phases to mislabel.** The
     // panel used to print "Dealing — run once, together" and "Recovering — run
@@ -634,10 +638,19 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     // printed: the visible home of this fact is the row above.
     const said = (await dealer.locator("[data-run-announcer]").innerText()).replace(/\s+/g, "");
     expect(said, `the live region: ${said}`).toContain("reached");
+    // **Turned over from naming the recoverer.** The region holds one line —
+    // the last announcement — and the two acks race: they are answers from two
+    // separate browsers to two sends the loop issued milliseconds apart, and
+    // nothing anywhere orders them. Pinning one of the two named a scheduling
+    // outcome, and it flipped the first time the payload's size changed (each
+    // share is now sealed to its member, so what goes on the wire is an armored
+    // message rather than a mnemonic). What this file is entitled to claim is
+    // what the prose above claims: the dealer was told, and told *whole* — the
+    // receipts a few lines up are what pin that both deliveries were confirmed.
     expect(
-      said,
+      [L.recoverer, L.bystander].filter((f) => said.includes(`${f}'ssession`)),
       `the live region: ${said}`
-    ).toContain(`${L.recoverer}'ssession`);
+    ).toHaveLength(1);
     const line = dealer.locator("[data-run-state]").locator("xpath=following-sibling::p[1]");
     expect(
       (await line.innerText()).trim(),

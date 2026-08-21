@@ -2036,10 +2036,28 @@ export function validateRecipe(ast) {
       sawInputText = true;
     }
 
-    if (step.name === "gpg.decrypt") {
+    /**
+     * One decrypt may read the OpenPGP panel, because there is one panel.
+     *
+     * The flag is document-wide, not per chain, and that is right for the state
+     * it describes: `buildBindings` fills `inputs.gpg` from a single ciphertext
+     * textarea shared by every cell, so two cells both reading it would be two
+     * cells silently decrypting the same message.
+     *
+     * What it must not do is count a decrypt that reads the *pipe*. A holder's
+     * `quorum.recv from=<dealer> | gpg.decrypt` never touches that panel — the
+     * step's own `whenInput` guard says so, and `stepInputNeeds` is where that
+     * guard is read — so N holders in one generated ceremony are N decrypts and
+     * no ambiguity at all. Asking the declarations rather than the step name is
+     * what keeps this rule and the panel it protects from being two opinions.
+     */
+    if (step.name === "gpg.decrypt" && stepInputNeeds(step, spec, current).includes("gpg")) {
       if (sawDecryptGpg) {
         errors.push({
-          message: "Only one decrypt step is supported per recipe",
+          message:
+            "Only one decrypt step can read Inputs → OpenPGP — there is one panel, " +
+            "so a second would decrypt the same message again. Pipe the other " +
+            "cell's message in (`quorum.recv from=… | gpg.decrypt`), or delete it.",
           start: step.start,
           end: step.end,
           stepIndex,

@@ -141,12 +141,25 @@ describe("every notebook the product can generate", () => {
       // spelling — the destinations are in the text, and none is chosen.
       expect(c.cells[0].recipe).toContain(`sss.split ${c.threshold}/${c.shares}`);
       expect(c.cells[0].recipe).toContain("scatter to=room");
-      expect(c.cells[0].recipe).toContain("send to=each | out $share");
-      // Exactly one receiving cell per holder, every one on the holder.
+      // **Turned over from `- send to=each | out $share`.** The deal now seals
+      // each share to the key of the member it is for before delivering it, so
+      // a share crosses the room readable by that one person rather than by
+      // anything that can read the session's traffic. `seal` had to survive
+      // into `send` for this line to exist at all — before that the sealed
+      // value named nobody and `send` refused it as a type error.
+      expect(c.cells[0].recipe).toContain(
+        "- seal to=each | send to=each | gpg.decrypt | out $share"
+      );
+      // Exactly one receiving cell per holder, every one on the holder, and
+      // every one *opening* what it receives with the holder's own key — the
+      // half `6388ad0` deferred because `gpg.decrypt` could not read the pipe.
       const receiving = c.cells.filter((cell) => cell.recipe.startsWith("quorum.recv from="));
       expect(receiving.map((cell) => cell.peer).sort()).toEqual([...holders].sort());
       expect(receiving).toHaveLength(n - 1);
-      for (const cell of receiving) expect(cell.recipe).toContain(`from=${dealer}`);
+      for (const cell of receiving) {
+        expect(cell.recipe).toContain(`from=${dealer}`);
+        expect(cell.recipe).toContain("| gpg.decrypt | out $share-");
+      }
     }
   });
 

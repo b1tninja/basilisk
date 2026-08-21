@@ -276,6 +276,43 @@ export async function createQuorumRoom({ count = 2, tamper } = {}) {
     const [path, query = ""] = raw.split("?");
     const params = new URLSearchParams(query);
 
+    /**
+     * The directory half of a key lookup.
+     *
+     * `loadRecipientKey` asks for two things at once — this JSON and the armor
+     * from `/pks/lookup` — and refuses the recipient if *either* is missing.
+     * Until a ceremony sealed anything, no page in these suites ever resolved a
+     * recipient, so the room served the armor alone and nothing noticed; the
+     * first `seal to=each` in a browser failed with the static server's own
+     * 404 body ("not found") for a key this fixture was holding all along.
+     *
+     * The payload is `api_key_detail`'s, narrowed to the fields a recipient is
+     * built from: `approved` because these identities are the fixture's own,
+     * and whole fingerprints because that is what the room deals in.
+     */
+    if (path.startsWith("/api/v1/key/")) {
+      const fpr = decodeURIComponent(path.slice("/api/v1/key/".length))
+        .replace(/^0x/i, "")
+        .toUpperCase();
+      if (!armoredByFpr.has(fpr)) {
+        faults.push(`directory asked for an unknown key: ${fpr}`);
+        json(res, 404, { error: "Not found" });
+        return true;
+      }
+      const i = fprs.indexOf(fpr);
+      json(res, 200, {
+        fingerprint: fpr,
+        key_id: fpr.slice(-16),
+        approval_state: "approved",
+        revoked: false,
+        key_expiration: null,
+        approved_uids: [{ raw: `<${String.fromCharCode(97 + i)}@quorum.test>` }],
+        certifications: [],
+        label: "",
+      });
+      return true;
+    }
+
     if (path === "/pks/lookup") {
       counts.lookups += 1;
       const search = String(params.get("search") || "");

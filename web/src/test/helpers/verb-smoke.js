@@ -1219,6 +1219,48 @@ genkey ec/p256 | export pkcs8 | pem | as keypair | export pkcs8 | out $priv2`,
       timeoutMs: 60_000,
     },
     {
+      /**
+       * Both roads at once, which is the only thing `pasted=merge` is for: one
+       * message down the pipe — where a `quorum.recv` would have put it — and
+       * one in the Inputs → OpenPGP panel, where a person pasted it. Without
+       * the word in the text this pairing refuses, so this case is also the
+       * proof that the word is what unlocks it rather than the run guessing.
+       */
+      id: "gpg.decrypt.pasted-merge",
+      recipe: `input | gpg.decrypt count=2 pasted=merge | foreach
+  - out $plain`,
+      mode: "run",
+      bindings: async () => {
+        const b = await gpgBindings("piped-message");
+        const one = await runRecipe(compileRecipe("input | gpg.encrypt policy=one").ast, b);
+        const other = await runRecipe(
+          compileRecipe("input | gpg.encrypt policy=one").ast,
+          { ...b, inputs: { ...b.inputs, text: { value: "pasted-message" } } }
+        );
+        return {
+          ...b,
+          inputs: {
+            ...b.inputs,
+            // The pipe's message arrives as this cell's `input`; the panel's
+            // is the one a person would have pasted.
+            text: { value: String(one[0]?.content || "") },
+            gpg: { ...b.inputs.gpg, armoredMessages: [String(other[0]?.content || "")] },
+          },
+        };
+      },
+      assert: (arts) => {
+        const said = arts
+          .filter((a) => /plain/.test(String(a.label || "")))
+          .map((a) => String(a.content));
+        // Both roads' plaintexts, and the pipe's first: a merge that yielded
+        // to the panel would be the old discard wearing a new word.
+        if (said.join("|") !== "piped-message|pasted-message") {
+          throw new Error(`pasted=merge decrypted ${JSON.stringify(said)}`);
+        }
+      },
+      timeoutMs: 60_000,
+    },
+    {
       id: "gpg.sign.verify.cleartext",
       recipe: `input | gpg.sign format=cleartext | out $signed
 

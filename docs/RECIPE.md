@@ -874,6 +874,25 @@ share to that one key — visibly different from `to=each` rather than
 differing by an absence. For everything else the body reuses `foreach
 :items`' vocabulary: `:key` is the member, `:value` the share.
 
+**They compose, in that order.** `seal` replaces the pair's payload with the
+armored message it made and hands the *member* on with it, so the sealed value
+is still addressed by the value rather than by anything ambient:
+
+```text
+random 32 | sss.split 2/3 | blip39.encode | scatter to=room
+  - seal to=each | send to=each | gpg.decrypt | out $share
+```
+
+That is the generated room ceremony's deal cell, and it is the whole of "each
+peer gets a share of the same key, sealed to that peer and delivered to that
+peer alone". `seal to=each` has no exception for the pair whose member is this
+machine — an exception would put this machine's own share in the clear into
+`- seal to=each | out $sealed | publish`, which publishes — so the one payload
+that stays here stays sealed to the key that is here, and the trailing
+`gpg.decrypt` opens it on the spot. `$share` is therefore a mnemonic on the
+dealer exactly as `$share-i` is on every holder, which is what the recovery
+notebook reads back on whichever machine writes it.
+
 Refusals: `to=each` outside a scatter body (there is no pair there); any
 `scatter to=` that is not `room`; a share count that is not the room's size —
 at **plan time** when the count is in the text (`sss.split K/N` states N, the
@@ -1015,6 +1034,25 @@ roads carrying two different splits, both refuse by set id and index out of each
 mnemonic's own header. `tray=` serializes only when it is `merge`, and "only one
 `shares` step per pipeline" is unchanged, so there is still exactly one place in
 a pipeline where a set is assembled.
+
+**`gpg.decrypt` answers the same question the same way.** It takes the armored
+message from the pipe when one arrives — `quorum.recv from=<dealer> |
+gpg.decrypt | out $share-2` is a holder opening the share a room sealed to
+their own key, and it is why the room ceremony can seal at all — and reads
+Inputs → OpenPGP only when nothing was piped. A piped message *and* a full
+panel with neither said refuses, naming both remedies; `gpg.decrypt
+pasted=merge` is the word that folds the panel in beside the pipe, for one
+share off the wire and one pasted out of mail:
+
+```text
+quorum.recv from=<dealer> | gpg.decrypt count=2 pasted=merge | shares | blip39 -d | sss.combine
+```
+
+`pasted=` serializes only when it is `merge`. It does not touch the tip's type:
+`count=` decides that before the run, as it always has, and a merge only changes
+how many messages have to add up to it. One decrypt per notebook may read the
+panel — there is one panel — but decrypts reading the *pipe* are not counted,
+which is what lets a generated ceremony give every holder their own.
 
 ## Serialization
 

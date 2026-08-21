@@ -3,6 +3,7 @@ import { decrypt, generateKey, readMessage } from "openpgp";
 import { base32ToBytes, bytesToBase32 } from "../lib/toolkit/encode.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
 import { compileRecipe } from "../lib/toolkit/recipe.js";
+import { getStep } from "../lib/toolkit/registry.js";
 import { digestArtifact } from "../lib/toolkit/receipt.js";
 import { actionById } from "../lib/toolkit/artifact-actions.js";
 
@@ -341,5 +342,204 @@ describe("gpg.decrypt yields plaintext", () => {
         },
       })
     ).rejects.toThrow(/is not an OpenPGP message/);
+  }, 60_000);
+});
+
+/**
+ * The two roads into `gpg.decrypt`, and the one rule they are held to.
+ *
+ * The pipe road is why this exists: `quorum.recv from=<dealer> | gpg.decrypt`
+ * is a holder opening the share a room sealed to their own key, and until the
+ * step collected its input that sentence compiled, warned that the received
+ * value was being discarded, and then decrypted whatever happened to be pasted
+ * into Inputs → OpenPGP. A sealed share could be sent and not opened, which is
+ * exactly why the generated ceremony sealed nothing.
+ *
+ * The rule for both roads being full is `635fd58`'s, reused rather than
+ * re-decided — the same shape `shares tray=merge` settled hours earlier. The
+ * value the recipe brought beats a panel that answers only when nothing was
+ * brought; the panel joins instead of yielding when the *text* says so; and
+ * the unspelled pairing refuses with both remedies performable on the screen
+ * the reader is looking at. A second, differently-shaped answer to "pipe or
+ * panel?" would be the divergence this codebase keeps rediscovering under new
+ * names.
+ */
+describe("gpg.decrypt reads the pipe, and says so when the panel is full too", () => {
+  /** One holder's key, minted once — every message below is addressed to it. */
+  let holder = null;
+  const holderKey = async () => {
+    if (!holder) {
+      holder = await generateKey({
+        type: "ecc",
+        curve: "curve25519",
+        userIDs: [{ name: "Holder", email: "holder@example.com" }],
+        format: "object",
+      });
+    }
+    return holder;
+  };
+
+  /** A message encrypted to that holder, with the key to open it. */
+  async function sealed(text) {
+    const { privateKey, publicKey } = await holderKey();
+    const { encrypt, createMessage } = await import("openpgp");
+    const armoredMessage = await encrypt({
+      message: await createMessage({ text }),
+      encryptionKeys: publicKey,
+    });
+    return { armoredMessage: String(armoredMessage), privateKeyArmored: privateKey.armor() };
+  }
+
+  it("opens what arrives on the pipe, with no panel asked for at all", async () => {
+    const s = await sealed("the share that crossed the room");
+    const { ast, validation } = compileRecipe("input | gpg.decrypt | out $plain");
+    expect(validation.errors).toEqual([]);
+    // **No discard warning and no `gpg` need.** Both used to be there, and the
+    // second is what would have stopped a run to demand a paste for a message
+    // that had already arrived.
+    expect(validation.warnings).toEqual([]);
+    expect(validation.inputNeeds).not.toContain("gpg");
+
+    const arts = await runRecipe(ast, {
+      inputs: {
+        text: { value: s.armoredMessage },
+        gpg: { privateKeyArmored: s.privateKeyArmored, passphrase: "" },
+      },
+    });
+    const plain = arts.find((a) => /plain/i.test(a.filename || a.label || ""));
+    expect(String(plain?.content || "")).toBe("the share that crossed the room");
+  }, 60_000);
+
+  it("refuses a piped message and a full panel, naming both remedies", async () => {
+    const a = await sealed("piped");
+    const b = await sealed("pasted");
+    const { ast } = compileRecipe("input | gpg.decrypt | out $plain");
+    await expect(
+      runRecipe(ast, {
+        inputs: {
+          text: { value: a.armoredMessage },
+          gpg: {
+            armoredMessages: [b.armoredMessage],
+            privateKeyArmored: a.privateKeyArmored,
+            passphrase: "",
+          },
+        },
+      })
+    ).rejects.toThrow(/will not choose between them/);
+
+    // Both remedies, and both performable where the reader is standing: write
+    // the word, or clear the panel. Neither is "go and decrypt it elsewhere".
+    await expect(
+      runRecipe(ast, {
+        inputs: {
+          text: { value: a.armoredMessage },
+          gpg: {
+            armoredMessages: [b.armoredMessage],
+            privateKeyArmored: a.privateKeyArmored,
+            passphrase: "",
+          },
+        },
+      })
+    ).rejects.toThrow(/pasted=merge.*or clear the OpenPGP panel/s);
+  }, 60_000);
+
+  it("merges both roads when the text says so, pipe first", async () => {
+    const a = await sealed("piped");
+    const b = await sealed("pasted");
+    const { ast, validation } = compileRecipe(
+      "input | gpg.decrypt count=2 pasted=merge | foreach\n  - out $plain"
+    );
+    expect(validation.errors).toEqual([]);
+    // The merge spelling wants the panel however full the pipe is — the same
+    // unguarded declaration `shares tray=merge` makes, and for the same reason:
+    // a panel the merge exists to read must not be hidden behind the pipe it
+    // is meant to join.
+    expect(validation.inputNeeds).toContain("gpg");
+
+    const arts = await runRecipe(ast, {
+      inputs: {
+        text: { value: a.armoredMessage },
+        gpg: {
+          armoredMessages: [b.armoredMessage],
+          privateKeyArmored: a.privateKeyArmored,
+          passphrase: "",
+        },
+      },
+    });
+    // Both roads' plaintexts, and **the pipe's first**: a merge that yielded to
+    // the panel would be the old discard wearing a new word, and the order is
+    // the only thing that tells the two apart when both succeed.
+    const said = arts
+      .filter((x) => /plain/i.test(x.filename || x.label || ""))
+      .map((x) => String(x.content));
+    expect(said).toEqual(["piped", "pasted"]);
+  }, 60_000);
+
+  it("does not change the tip's shape — count= still decides that alone", () => {
+    // The constraint `a0c34cf` bought: the checker knows the output type before
+    // the run, from a parameter in the text. A piped message must not move that
+    // boundary, or a bundle-or-text decision would depend on what a wire
+    // happened to deliver.
+    const one = compileRecipe("input | gpg.decrypt | out $plain");
+    const many = compileRecipe("input | gpg.decrypt count=all | shares");
+    expect(one.validation.errors).toEqual([]);
+    expect(many.validation.errors).toEqual([]);
+    expect(getStep("gpg.decrypt").effectiveIo({ count: "1" }).output).toBe("text");
+    expect(getStep("gpg.decrypt").effectiveIo({ count: "all" }).output).toBe("bundle");
+    // And the pipe changes neither answer, because `effectiveIo` never sees it.
+    expect(getStep("gpg.decrypt").effectiveIo({ count: "1", pasted: "merge" }).output).toBe(
+      "text"
+    );
+  });
+
+  it("keeps the fingerprint the message arrived under on the plaintext", async () => {
+    // **Decrypting is not a change of origin.** `meta.from` is what the cell's
+    // provenance line reads to say "$share-2 — from <dealer>", and it is set by
+    // the verb that took the message off the room. A decrypt that dropped it
+    // would leave the one machine that ends up holding a share with no
+    // readable record of who dealt it, which is `dealer-absent-recovery`'s
+    // finding 7a arriving by a new road.
+    const { createSlotRegistry } = await import("../lib/toolkit/slot-registry.js");
+    const slotRegistry = createSlotRegistry();
+    const dealer = "A1".repeat(20);
+    const s = await sealed("a share that crossed a room");
+    slotRegistry.register("$sealed", {
+      type: "text",
+      data: s.armoredMessage,
+      meta: { sensitive: true, from: dealer },
+    });
+
+    const { ast } = compileRecipe("in $sealed | gpg.decrypt | out $plain");
+    await runRecipe(
+      ast,
+      { inputs: { gpg: { privateKeyArmored: s.privateKeyArmored, passphrase: "" } } },
+      { slotRegistry }
+    );
+    expect(slotRegistry.resolve("$plain").meta.from).toBe(dealer);
+  }, 60_000);
+
+  it("corrects the count against the road it is actually reading", async () => {
+    // The panel road's remedy is "paste the missing message(s)", and on the
+    // pipe road that is advice about a panel this cell is not reading — the
+    // rule that a refusal never names a remedy that cannot be performed. So
+    // the sentence says which road holds what, and asks for the move that road
+    // has: send the missing message, or write the count that is true.
+    const a = await sealed("one");
+    const { ast } = compileRecipe("input | gpg.decrypt count=2 | foreach\n  - out $plain");
+    await expect(
+      runRecipe(ast, {
+        inputs: {
+          text: { value: a.armoredMessage },
+          gpg: { privateKeyArmored: a.privateKeyArmored, passphrase: "" },
+        },
+      })
+    ).rejects.toThrow(/the pipe carries 1 OpenPGP message\(s\).*send the missing/s);
+  }, 60_000);
+
+  it("names a piped value that is not armor, rather than reaching past it", async () => {
+    const { ast } = compileRecipe("input | gpg.decrypt | out $plain");
+    await expect(
+      runRecipe(ast, { inputs: { text: { value: "abandon abandon abandon" } } })
+    ).rejects.toThrow(/piped into gpg.decrypt is not an OpenPGP message/);
   }, 60_000);
 });

@@ -1032,6 +1032,15 @@ export function projectSelector(value, selector) {
  * boundary said at run time, for values that did not come through the
  * compiler.
  *
+ * **The member has always come off `meta`, and only the payload comes off the
+ * data.** That is what lets `seal to=each | send to=each` compose: `seal`
+ * replaces the pair's payload with the armored message it made for that member
+ * and keeps the member on the value it hands on, so the sealed message is still
+ * addressed by the value rather than by anything ambient. A verb that read the
+ * recipient out of the loop's own state instead would be the pairing chosen by
+ * a machine rather than derived on both — the one divergence nothing in this
+ * product would report.
+ *
  * @param {PipelineValue|null} value
  * @param {string} verb  `seal` or `send`
  * @returns {{ member: string, payload: PipelineValue }}
@@ -1041,7 +1050,11 @@ function requireScatterPair(value, verb) {
   const payload =
     value?.type === "item" && value.data && typeof value.data === "object"
       ? /** @type {PipelineValue} */ (value.data.value)
-      : null;
+      : // A pair whose payload has been sealed: the wrapper is gone because the
+        // armored message *is* the payload now, and the member rides with it.
+        value && value.type !== "item" && value.meta?.member
+        ? value
+        : null;
   if (!payload || !/^(?:[0-9A-F]{40}|[0-9A-F]{64})$/.test(member)) {
     throw new Error(
       `${verb} reads the pair a scatter hands it, and there is no scatter here`
@@ -1702,7 +1715,7 @@ async function execStepBody(step, value, bindings, artifacts) {
       };
     }
     case "gpg.decrypt":
-      return decryptGpgSource(bindings, step, artifacts);
+      return decryptGpgSource(value, bindings, step, artifacts);
     case "export": {
       // Projected `key` tip selects the half; which= only applies to full keypairs.
       const tipWhich =
@@ -2876,7 +2889,7 @@ async function execStepBody(step, value, bindings, artifacts) {
         to.toLowerCase() === "each"
           ? pair.member
           : to.toUpperCase().replace(/[^0-9A-F]/g, "");
-      return execStepBody(
+      const sealed = await execStepBody(
         {
           name: "gpg.encrypt",
           params: { to: member, mode: "combined" },
@@ -2887,6 +2900,27 @@ async function execStepBody(step, value, bindings, artifacts) {
         bindings,
         artifacts
       );
+      /**
+       * The armored message *is* this pair's payload now, and the pair's member
+       * rides on with it — which is what makes `- seal to=each | send to=each`
+       * a sentence rather than a type error. Without this the sealed value
+       * named nobody, so the verb that delivers it could only have been told
+       * who to deliver to by the loop it was running in, and the recipient
+       * would have stopped being half the input.
+       *
+       * `to=<fingerprint>` seals every share to one key and still hands the
+       * *pair's* member on, because the pair is what the body is iterating: a
+       * constant recipient decides who can open the message, never who it goes
+       * to, and `send`'s own `to=` is the one that decides that.
+       *
+       * The member and nothing else. The pair's `shareIndex` deliberately does
+       * not ride along: `gpg.encrypt` already stamped it on the *artifact* it
+       * made — that is what keeps the `Share N (GPG)` labelling — and putting
+       * it back on the tip would make every `- seal to=each | out $sealed`
+       * tile a second share-role artifact for a share that is already
+       * recorded once.
+       */
+      return { ...sealed, meta: { ...sealed.meta, member: pair.member } };
     }
     case "send": {
       // `quorum.send` addressed by the pair — and **the tip is what this
@@ -4305,6 +4339,63 @@ function looksLikePgpMessage(text) {
 }
 
 /**
+ * The armored messages a pipeline value carries into `gpg.decrypt`, if any.
+ *
+ * Nothing piped is not an error and never was — the panel road is the older one
+ * and stays — so an absent or `none` tip answers with an empty list and lets the
+ * caller decide what that means. What *is* an error is a value that arrived and
+ * cannot be decrypted: the compiler's `collects` check keeps `bytes` and
+ * `shares` out, so the states left here are a bundle carrying something other
+ * than text, and text that is not armor. Both name what arrived rather than
+ * asking the reader to go and look.
+ *
+ * **Each message keeps the fingerprint it arrived under.** `meta.from` is what
+ * `noteSlotTraffic` reads to say "$share-2, from <dealer>" under the cell, and
+ * it is set by the verb that took the message off the room. Decrypting is not
+ * a change of origin: the plaintext of a message that arrived from a peer
+ * arrived from that peer, and dropping the field here would leave the one
+ * machine that ends up holding a share with no readable record of who dealt it
+ * — the state `dealer-absent-recovery`'s finding 7a is about.
+ *
+ * @param {PipelineValue|null} value
+ * @returns {{ armored: string, from: string }[]}
+ */
+function armoredFromPipe(value) {
+  if (!value || value.type === "none") return [];
+  /** @type {PipelineValue[]} */
+  const parts =
+    value.type === "bundle"
+      ? Array.isArray(value.data?.parts)
+        ? value.data.parts
+        : []
+      : [value];
+  /** @type {{ armored: string, from: string }[]} */
+  const out = [];
+  parts.forEach((part, i) => {
+    const where =
+      value.type === "bundle"
+        ? `part ${i + 1} of ${parts.length} piped into gpg.decrypt`
+        : "the value piped into gpg.decrypt";
+    if (!part || part.type !== "text") {
+      throw new Error(
+        `gpg.decrypt: ${where} is ${part?.type || "nothing"}, and an OpenPGP message is text.`
+      );
+    }
+    const text = String(part.data ?? "").trim();
+    if (!text) return;
+    if (!looksLikePgpMessage(text)) {
+      throw new Error(
+        `gpg.decrypt: ${where} is not an OpenPGP message — armor begins with ` +
+          "-----BEGIN PGP MESSAGE-----. A mnemonic already in the clear needs no " +
+          "decrypt; pipe it into `shares`."
+      );
+    }
+    out.push({ armored: text, from: String(part.meta?.from || value.meta?.from || "") });
+  });
+  return out;
+}
+
+/**
  * `gpg.decrypt count=` at run time: `1`, a positive integer, or `all`.
  *
  * Read here as well as in `effectiveIo` because the two answer different
@@ -4861,19 +4952,42 @@ async function resolveGpgDetachedSignature(bindings, refOrText) {
  * decrypted externally still have a road in — the `shares` collector's own
  * tray, which is the road `CUSTODIAN_RECOVERY` already takes.
  *
+ * ## Two roads in, and the rule for both being full is not a new one
+ *
+ * A message may arrive down the pipe — `quorum.recv from=<dealer> |
+ * gpg.decrypt` is a holder opening the share a room sealed to their key, and
+ * until this read the pipe that sentence could be written, would warn that the
+ * received value was discarded, and would then decrypt whatever was pasted in
+ * the panel instead. So the pipe is read first and the panel answers when
+ * nothing was piped.
+ *
+ * With both full, this refuses. That is `635fd58`'s rule for `shares tray=`,
+ * reused deliberately rather than answered a second way: the recipe's own value
+ * beats a panel, an explicit word in the text is what makes the panel join
+ * instead, and the unspelled pairing of the two is a state nobody meant and
+ * gets a refusal with both remedies on the screen the reader is looking at. A
+ * second, differently-shaped answer to "pipe or panel?" would be the divergence
+ * neither the reader nor the two ends of a room could hold in their heads.
+ *
+ * @param {PipelineValue|null} value
  * @param {RuntimeBindings} bindings
  * @param {import("./recipe.js").RecipeStep} step
  * @param {ToolkitArtifact[]} _artifacts
  * @returns {Promise<PipelineValue>}
  */
-async function decryptGpgSource(bindings, step, _artifacts) {
+async function decryptGpgSource(value, bindings, step, _artifacts) {
   void _artifacts;
   const gpg = bindings.inputs?.gpg;
   const chunks = gpg?.armoredMessages || [];
   const want = resolveDecryptCount(step?.params?.count);
+  const merge =
+    String(step?.params?.pasted || "fallback").trim().toLowerCase() === "merge";
 
-  /** @type {string[]} */
-  const ciphertexts = [];
+  /** Armor that arrived through the pipe — refuses here if it is not armor. */
+  const piped = armoredFromPipe(value);
+
+  /** @type {{ armored: string, from: string }[]} */
+  const pasted = [];
   /** @type {number} */
   let notArmor = 0;
 
@@ -4881,40 +4995,81 @@ async function decryptGpgSource(bindings, step, _artifacts) {
     const text = String(raw || "").trim();
     if (!text) continue;
     if (looksLikePgpMessage(text)) {
-      ciphertexts.push(text);
+      // A pasted block came from a person at this keyboard, so it has no peer
+      // to name and says so with an empty origin rather than borrowing one.
+      pasted.push({ armored: text, from: "" });
       continue;
     }
     notArmor += 1;
   }
 
+  // The state nobody meant: a message on the pipe and blocks in the panel, with
+  // the text saying nothing about which. Counted over every pasted block rather
+  // than only the armored ones, because the true state is that somebody typed
+  // into that panel — deciding for them that their non-armor paste did not
+  // count would be this cell choosing a side by another name.
+  const pastedBlocks = pasted.length + notArmor;
+  if (piped.length && pastedBlocks && !merge) {
+    throw new Error(
+      `gpg.decrypt: ${piped.length} OpenPGP message(s) arrived on the pipe and the ` +
+        `Inputs → OpenPGP panel holds ${pastedBlocks} pasted block(s), and this cell ` +
+        "will not choose between them. Write `gpg.decrypt pasted=merge` to decrypt " +
+        "both, or clear the OpenPGP panel to use only what arrived on the pipe."
+    );
+  }
+
+  /**
+   * Which road (or roads) this run is reading, and the words for saying so in
+   * a refusal. `fallback` is still what a bare `gpg.decrypt` means.
+   */
+  const usingPanel = merge || !piped.length;
+  /** @type {{ armored: string, from: string }[]} */
+  const ciphertexts = merge ? [...piped, ...pasted] : piped.length ? piped : pasted;
+  // Carries its own verb, because the plural one reads as a mistake otherwise:
+  // "the pipe and the panel holds 1" is a sentence a reader stops on.
+  const where = merge
+    ? "the pipe and the panel hold"
+    : piped.length
+      ? "the pipe carries"
+      : "the panel holds";
+
   if (!ciphertexts.length) {
-    // Two states, and they are different mistakes: an empty panel, and a panel
-    // holding something that is not armor. Naming which one is in force is the
-    // whole point — the old sentence asked for "OpenPGP-encrypted shares
-    // and/or already-decrypted BLIP39 mnemonics (share rows)", which named a
-    // remedy that no longer decrypts anything and never described this step.
+    // Three states now, and they are different mistakes: an empty panel with an
+    // empty pipe, a panel holding something that is not armor, and — since the
+    // pipe road exists — a pipe that carried nothing where the panel was never
+    // asked. Naming which one is in force is the whole point; the old sentence
+    // asked for "OpenPGP-encrypted shares and/or already-decrypted BLIP39
+    // mnemonics (share rows)", which named a remedy that no longer decrypts
+    // anything and never described this step.
     throw new Error(
       notArmor
         ? `gpg.decrypt: ${notArmor} pasted block(s), and none is an OpenPGP message — ` +
             "armor begins with -----BEGIN PGP MESSAGE-----."
-        : "gpg.decrypt: no ciphertext — paste an OpenPGP message into Inputs → OpenPGP."
+        : "gpg.decrypt: no ciphertext — nothing arrived on the pipe, and Inputs → " +
+            "OpenPGP is empty. Pipe a message in (`quorum.recv from=… | gpg.decrypt`) " +
+            "or paste one into the panel."
     );
   }
-  if (notArmor) {
+  if (notArmor && usingPanel) {
     throw new Error(
-      `gpg.decrypt: ${notArmor} of ${ciphertexts.length + notArmor} pasted block(s) ` +
+      `gpg.decrypt: ${notArmor} of ${pastedBlocks} pasted block(s) ` +
         "is not an OpenPGP message. This step decrypts armor; a mnemonic already in " +
         "the clear belongs in Inputs → shares, which `shares` reads."
     );
   }
   if (want !== "all" && ciphertexts.length !== want) {
-    // The count is in the recipe text and the panel is not, so the text is what
+    // The count is in the recipe text and neither road is, so the text is what
     // gets corrected — and the correction is a spelling the reader can type.
+    // `where` keeps the sentence true when the messages did not come from the
+    // panel: telling somebody to paste a missing message would be a remedy for
+    // a road this cell is not reading.
     throw new Error(
-      `gpg.decrypt count=${want}: the panel holds ${ciphertexts.length} OpenPGP message(s). ` +
+      `gpg.decrypt count=${want}: ${where} ${ciphertexts.length} OpenPGP message(s). ` +
         (ciphertexts.length > want
           ? `Write count=${ciphertexts.length} or count=all to take them all as a bundle.`
-          : `Write count=${ciphertexts.length}, or paste the missing message(s).`)
+          : usingPanel
+            ? `Write count=${ciphertexts.length}, or paste the missing message(s).`
+            : `Write count=${ciphertexts.length}, or send the missing message(s).`)
     );
   }
 
@@ -4992,9 +5147,9 @@ async function decryptGpgSource(bindings, step, _artifacts) {
     );
     const soft = !!step?.params?.soft;
 
-    /** @type {{ text: string, verdict: import("../pgp/decrypt-verify.js").DecryptVerdict }[]} */
+    /** @type {{ text: string, verdict: import("../pgp/decrypt-verify.js").DecryptVerdict, from: string }[]} */
     const plaintexts = [];
-    for (const armored of ciphertexts) {
+    for (const { armored, from } of ciphertexts) {
       // A message that will not decrypt refuses the run. The old code pushed
       // the reason onto a `decryptNotes` array that nothing ever read and
       // carried on, so a run could report success having decrypted none of
@@ -5055,6 +5210,7 @@ async function decryptGpgSource(bindings, step, _artifacts) {
             ? result.data
             : new TextDecoder().decode(result.data),
         verdict,
+        from,
       });
     }
 
@@ -5065,7 +5221,11 @@ async function decryptGpgSource(bindings, step, _artifacts) {
       return {
         type: "text",
         data: plaintexts[0].text,
-        meta: { sensitive: true, signature: plaintexts[0].verdict },
+        meta: {
+          sensitive: true,
+          signature: plaintexts[0].verdict,
+          ...(plaintexts[0].from ? { from: plaintexts[0].from } : {}),
+        },
       };
     }
     /**
@@ -5081,10 +5241,10 @@ async function decryptGpgSource(bindings, step, _artifacts) {
      * when something projects them — `foreach … | out`, or `shares` — at which
      * point `attachPipeMeta` copies each part's own verdict onto its own tile.
      */
-    const parts = plaintexts.map(({ text, verdict }) => ({
+    const parts = plaintexts.map(({ text, verdict, from }) => ({
       type: "text",
       data: text,
-      meta: { sensitive: true, signature: verdict },
+      meta: { sensitive: true, signature: verdict, ...(from ? { from } : {}) },
     }));
     return {
       type: "bundle",

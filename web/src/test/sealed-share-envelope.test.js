@@ -391,19 +391,23 @@ describe("the recovery cell can be written without leaving the language", () => 
     expect(errorsFor(src)).toEqual([]);
   });
 
-  it("still discards a piped envelope, and now refuses further downstream", () => {
-    // `gpg.decrypt` is a *source* with no `collects`, so `in $sealed |
-    // gpg.decrypt` throws the envelope away and reads the Inputs tray instead.
-    // That is the defect `dc5d7cb` fixed for `shares` and has still not been
-    // fixed here — pinned as the state that is true rather than asserted away.
-    expect(getStep("gpg.decrypt").collects).toBeUndefined();
+  it("takes a piped envelope now, and still refuses further downstream", () => {
+    // **Turned over.** This used to pin the absence: `gpg.decrypt` was a source
+    // with no `collects`, so `in $sealed | gpg.decrypt` threw the envelope away
+    // and read the Inputs panel instead — the defect `dc5d7cb` fixed for
+    // `shares`, recorded here as true rather than asserted away. It is fixed
+    // now, for the reason the deferral named: a share sealed to its holder can
+    // be sent but not opened while the verb that opens it cannot be reached
+    // from a pipe.
+    expect(getStep("gpg.decrypt").collects).toEqual(["text", "bundle"]);
     expect(getStep("shares").collects).toEqual(["text", "bundle"]);
 
-    // What has changed is what happens next. This spelling used to compile
+    // What has not changed is what happens next. This spelling used to compile
     // clean, because a decrypt claimed `shares` and `blip39 -d` was happy to
-    // take it. A decrypt now yields plaintext, so the mnemonics have to be
-    // collected before they can be decoded, and the compiler says so. The
-    // discarded envelope is still silent; the type error is not.
+    // take it. A decrypt yields plaintext, so the mnemonics have to be
+    // collected before they can be decoded, and the compiler still says so —
+    // the envelope now reaches the decrypt instead of being dropped, and the
+    // type error after it is untouched by that.
     const src =
       `"x" | out $sealed\n\nin $sealed | gpg.decrypt | blip39 -d | sss.combine | out $secret`;
     const errors = errorsFor(src);

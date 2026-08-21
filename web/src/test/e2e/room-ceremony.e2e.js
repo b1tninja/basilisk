@@ -143,6 +143,29 @@ async function reveal(page, i, label) {
   return (await body.innerText()).trim();
 }
 
+/**
+ * Uncover the tile one `out $label` wrote, and read it.
+ *
+ * `reveal` filters tiles by *containment*, which was unambiguous while a deal
+ * cell's only tiles were its slots. A sealed deal also emits one `Share N
+ * (GPG)` artifact per envelope, so "share" now matches those first — and the
+ * armor they hold is exactly what a broken decrypt would leave in `$share`,
+ * which is the one confusion this assertion must not be able to make. So the
+ * label is matched whole, off `.artifact-label`, which carries it verbatim.
+ */
+async function revealSlot(page, i, label) {
+  const tile = cell(page, i)
+    .locator("[data-artifact-kind]")
+    .filter({ has: page.locator(".artifact-label", { hasText: new RegExp(`^${label}$`) }) })
+    .first();
+  await tile.waitFor({ state: "visible", timeout: 20000 });
+  const button = tile.getByRole("button", { name: "Reveal" });
+  if (await button.count()) await button.click();
+  const body = tile.locator(".artifact-body");
+  await body.waitFor({ state: "visible", timeout: 10000 });
+  return (await body.innerText()).trim();
+}
+
 /** The ceremony's slots, as the Slots tab prints them, on one machine. */
 async function ceremonySlots(page) {
   await trayTab(page, "Slots");
@@ -270,9 +293,18 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // pair's member, so no constant `quorum.send <fpr>` appears — the pairing
     // is derived on every machine and chosen by nobody.
     expect(preview).toContain("scatter to=room");
-    expect(preview).toContain("- send to=each | out $share");
+    // **Turned over from `- send to=each | out $share`.** Every share is now
+    // sealed to the key of the member it is for before it is delivered, which
+    // is the property this whole ceremony exists to give: the room's transport
+    // is no longer the thing standing between a share and everybody who is not
+    // its holder. The trailing `gpg.decrypt` is the self-pair — `seal to=each`
+    // has no exception, so the one payload that stays here stays sealed to the
+    // key that is right here, and is opened again on the spot.
+    expect(preview).toContain("- seal to=each | send to=each | gpg.decrypt | out $share");
     expect(preview).not.toContain(`quorum.send ${L.holder}`);
-    expect(preview).toContain(`quorum.recv from=${L.dealer}`);
+    // And the holder's cell *opens* what it receives, with the holder's own
+    // key — the half `6388ad0` recorded as not existing end to end.
+    expect(preview).toContain(`quorum.recv from=${L.dealer} | gpg.decrypt | out $share-2`);
     // Whole keys in the preview too — the one place a reader checks who is
     // being handed a share before anyone is handed one.
     expect(preview).not.toContain("…");
@@ -503,6 +535,21 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     expect(expectedDigest, "the split wrote no digest of the master").toMatch(
       /^[0-9a-f]{64}$/
     );
+
+    // **The self-pair, in a real browser.** `seal to=each` sealed this
+    // machine's own share to this machine's own key like everybody else's, and
+    // the body's `gpg.decrypt` opened it again with that key — so what is in
+    // `$share` is a mnemonic and not the armor it was a moment earlier. A
+    // decrypt that silently read the Inputs panel instead of the pipe cannot
+    // produce this: that panel has never been touched on this page.
+    const dealerShare = await revealSlot(dealer, 0, "share");
+    expect(dealerShare, "the dealer's own share stayed sealed").not.toContain(
+      "BEGIN PGP MESSAGE"
+    );
+    expect(
+      dealerShare.trim().split(/\s+/).length,
+      `the dealer's $share is not a mnemonic: ${dealerShare.slice(0, 40)}`
+    ).toBeGreaterThan(8);
   });
 
   /* ── 5. the holder receives, on a machine that split nothing ─────────────── */
@@ -525,6 +572,23 @@ describe.runIf(availability.ok)("a ceremony generated from the room, end to end"
     // no set, and could not have produced a share of this split by itself.
     expect(held).not.toContain("set");
     expect(held).not.toContain("expected");
+
+    // **The whole requirement, on the machine it is about.** What crossed the
+    // room was an OpenPGP message sealed to this holder's key — the deal cell's
+    // text says `seal to=each`, and the dealer sent nothing else — and the only
+    // copy of the key that opens it is in this browser, unlocked when this
+    // machine joined the session. So a mnemonic in this tile is a share opened
+    // with the holder's own key, and armor in it would be the decrypt having
+    // failed to read the pipe.
+    const holderShare = await revealSlot(holder, 1, "share-2");
+    expect(
+      holderShare,
+      "the holder's slot holds the envelope, not the share — the decrypt did not read the pipe"
+    ).not.toContain("BEGIN PGP MESSAGE");
+    expect(
+      holderShare.trim().split(/\s+/).length,
+      `the holder's $share-2 is not a mnemonic: ${holderShare.slice(0, 40)}`
+    ).toBeGreaterThan(8);
   });
 
   /* ── 6. and the secret comes back, on the machine that never held it ─────── */

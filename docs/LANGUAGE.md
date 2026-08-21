@@ -479,6 +479,46 @@ ties: both can seal a set, but only a design in which the shares flow *through*
 the body without stopping makes "the dealer retained nothing" a property of the
 text rather than of somebody's diligence.
 
+#### `seal | send`, and the verb that had to learn to read a pipe
+
+The deal above publishes; the *room's* deal delivers, and the two verbs had to
+compose for that to mean anything:
+
+```text
+@me
+random 32 | sss.split 2/3 | blip39 | scatter to=room
+  - seal to=each | send to=each | gpg.decrypt | out $share
+```
+
+They compose because `seal` replaces the pair's payload and hands the pair's
+**member** on with the armored message. The member has always been read off the
+value rather than off the loop (`requireScatterPair`), which is what keeps the
+pairing derived on both machines instead of chosen by one; a `send` that had
+looked up the recipient in the loop's own state would have been that property
+quietly given away in exchange for a spelling.
+
+For a long time the generated ceremony did *not* seal, and the reason was a
+verb that could not be reached from a pipe. `gpg.decrypt` was a source: it read
+Inputs → OpenPGP and nothing else, so `quorum.recv from=<dealer> | gpg.decrypt`
+discarded the message that had arrived and decrypted whatever had been pasted.
+A share could be sealed and sent and not opened, so nothing sealed them —
+a finished mechanism with no consumer, which is this codebase's signature
+defect seen from the other end. `gpg.decrypt` now takes its message from the
+pipe and falls back to the panel, under `shares tray=`'s rule for both being
+full: what the recipe brought beats a panel, `pasted=merge` is the word that
+makes the panel join instead, and the unspelled pairing refuses rather than
+picking a side. One rule, two verbs — a second answer to "pipe or panel?" would
+be a dialect.
+
+The self-pair has no exception and the trailing `gpg.decrypt` is why. `seal
+to=each` seals every share to the key of the person it is for, including the
+one person who is this machine; skipping it would put the dealer's own share in
+the clear into `- seal to=each | out $sealed | publish`, which publishes. So
+the pair that never crosses a wire stays sealed to the key that is right here
+and is opened again on the spot, and `$share` is a mnemonic on the dealer
+exactly as `$share-i` is on every holder — one shape for one thing, which is
+what the recovery notebook reads back on whichever machine writes it.
+
 ### A ceremony and its reversal are two agreements, so they are two notebooks
 
 The generated ceremony writes the deal and the recovery into one notebook, and

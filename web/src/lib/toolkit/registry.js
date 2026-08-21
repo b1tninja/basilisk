@@ -932,22 +932,75 @@ export const STEPS = [
     toolbox: "openpgp",
     shelf: "pubkey",
     conjugateOf: "gpg.encrypt",
-    doc: "Decrypt OpenPGP ciphertext at run time and emit the plaintext. Browser vault keys only (no smartcard/YubiKey in-page). Example: `gpg.decrypt | out $plain`. Signatures are verified against `signers=` when written, else against the room's audience when a session is live, else reported unverified. A signer the room does not name is *reported*, never refused — the room is ambient, not a claim you wrote. A signer `signers=` does not name refuses (`-q` reports instead), and a bad signature always refuses. A plaintext that happens to be BLIP39 mnemonics is read by the steps that read mnemonics: `gpg.decrypt count=all | shares | blip39 -d | sss.combine | …`.",
+    doc: "Decrypt OpenPGP ciphertext at run time and emit the plaintext. Browser vault keys only (no smartcard/YubiKey in-page). Takes the armored message from the pipe when one arrives — `quorum.recv from=… | gpg.decrypt | out $share-2` is how a holder opens a share sealed to their own key — and falls back to Inputs → OpenPGP when nothing is piped. Example: `gpg.decrypt | out $plain`. Signatures are verified against `signers=` when written, else against the room's audience when a session is live, else reported unverified. A signer the room does not name is *reported*, never refused — the room is ambient, not a claim you wrote. A signer `signers=` does not name refuses (`-q` reports instead), and a bad signature always refuses. A plaintext that happens to be BLIP39 mnemonics is read by the steps that read mnemonics: `gpg.decrypt count=all | shares | blip39 -d | sss.combine | …`.",
     input: "none",
     output: "text",
     entropy: "none",
+    /**
+     * ## The pipe is one of the places a message arrives
+     *
+     * Declared for the reason `shares` declares it, and the same one word of
+     * argument applies: a discard here costs somebody the thing they were sent.
+     * Until this existed the holder's half of a sealed deal was unexpressible —
+     * `quorum.recv from=<dealer> | gpg.decrypt` compiled, warned that the
+     * received value was being discarded, and then decrypted whatever happened
+     * to be pasted into the OpenPGP panel instead. A sealed share could be sent
+     * and not opened.
+     *
+     * `bundle` as well as `text` because `quorum.recv count=`, `qr.scan count=`
+     * and this step's own `count=all` all hand a set of messages down one pipe,
+     * and a set of envelopes is exactly what `count=all` is for.
+     */
+    collects: ["text", "bundle"],
     // One panel: the ciphertext. This step used to also declare the share rows,
     // because it used to *be* a share reader — it merged externally decrypted
     // mnemonics into its own output. Decrypting is not collecting, and the
     // collector already exists: `shares` reads that tray when the recipe names
     // nothing else, which is the road `CUSTODIAN_RECOVERY` takes.
-    unresolvedInputs: ["gpg"],
+    //
+    // Two entries, two claims — `shares`' shape, for `shares`' reasons. The
+    // panel stops being a need the moment the pipe carries armor, because a
+    // cell whose message already arrived must not sit waiting for a paste; and
+    // `pasted=merge` wants the panel *however* full the pipe is, since a merge
+    // exists to read it.
+    unresolvedInputs: [
+      { panel: "gpg", whenInput: ["none"] },
+      { panel: "gpg", when: { pasted: "merge" } },
+    ],
     params: [
       {
         name: "count",
         type: "string",
         default: "1",
-        doc: "How many messages the panel holds: 1 (text), a number, or `all` (bundle, for `foreach` / `shares`)",
+        doc: "How many messages arrive: 1 (text), a number, or `all` (bundle, for `foreach` / `shares`) — counted over the pipe and the panel together",
+      },
+      /**
+       * ## Which road's ciphertext this cell means, when both have one
+       *
+       * `635fd58` settled this exact ambiguity for `shares` hours before this
+       * param existed, and the answer is reused rather than re-decided: a
+       * second, different rule for "pipe or panel?" is the divergence a reader
+       * cannot hold in their head. So — the pipe is what the recipe names and
+       * beats a panel that answers only when nothing was named; the panel joins
+       * the set instead of being dropped when the text says `pasted=merge`; and
+       * a cell with a message on the pipe *and* messages in the panel, saying
+       * neither, refuses rather than picking a side.
+       *
+       * `fallback` is the default and serializes away, so no shipped recipe
+       * changes shape. `merge` is a word in the text of every cell that does it,
+       * because a cell that decrypted one message or three depending on whether
+       * a panel three inches away happened to be full is the invisible state
+       * this codebase keeps rediscovering.
+       *
+       * It does not touch the tip's type: `count=` decides that before the run,
+       * and a merge only changes how many messages have to add up to it.
+       */
+      {
+        name: "pasted",
+        type: "enum",
+        default: "fallback",
+        enum: ["fallback", "merge"],
+        doc: "What the Inputs → OpenPGP panel is to this cell. `fallback`: it answers only when nothing is piped in. `merge`: its messages join whatever the pipe carried — one sealed share off the wire beside one pasted from mail. A piped message plus a full panel with neither said refuses.",
       },
       /**
        * Who this decrypt will believe wrote the message.
@@ -5306,7 +5359,7 @@ export const STEPS = [
      * the note there). Mnemonic payloads only — the channel carries text, so
      * scatter raw shares through `blip39` first.
      */
-    doc: "Deliver a scatter pair's payload to the pair's member over the exchange (`quorum.send` addressed by the value): `- send to=each`. The member that is this machine keeps its share locally — it never crosses a wire. `to=<fingerprint>` sends every share to that one peer instead. Only valid inside a `scatter` body — the pair is the input.",
+    doc: "Deliver a scatter pair's payload to the pair's member over the exchange (`quorum.send` addressed by the value): `- send to=each`, or `- seal to=each | send to=each` to deliver each share sealed to the key of the person it is for. The member that is this machine keeps its share locally — it never crosses a wire. `to=<fingerprint>` sends every share to that one peer instead. Only valid inside a `scatter` body — the pair is the input.",
     input: "item",
     output: "text",
     entropy: "none",
@@ -5324,6 +5377,15 @@ export const STEPS = [
     ],
     overloads: [
       { when: { base: "item", kind: "mnemonic" }, output: { base: "text", kind: "mnemonic" } },
+      /**
+       * The pair after `seal` has consumed it: the armored message is the
+       * payload and the member rides on its meta (`requireScatterPair`), so
+       * this is the same pair one verb later rather than a second kind of
+       * input. It is what makes the sealed deal one line — every share
+       * encrypted to the key of the person it is for, and delivered to that
+       * person and nobody else.
+       */
+      { when: { base: "text", kind: "armored" }, output: { base: "text", kind: "armored" } },
     ],
   },
 ];

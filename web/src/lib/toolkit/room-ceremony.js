@@ -119,6 +119,25 @@ export const DEALER_KEEPS_ONE =
   "Dealing leaves this machine holding exactly one share — its own, in $share. The others go straight from the split onto the wire, each to its member, so there is no set of shares anywhere to reveal or to forget to delete.";
 
 /**
+ * The property the owner asked for, said where the decision is made.
+ *
+ * Until `seal` and `send` composed, the generated deal put mnemonics on the
+ * wire in the clear: readable to anything that could read the session's own
+ * traffic, and to whatever a peer's machine did with a chat message after it
+ * arrived. Now each share is encrypted to the key of the person it is for
+ * before it leaves, so the only key that can open share i is the key of member
+ * i — the transport is no longer the thing standing between a share and
+ * everybody who is not its holder.
+ *
+ * The self-pair has no exception and this sentence does not pretend otherwise:
+ * the dealer's own share is sealed to the dealer's own key like everybody
+ * else's, and the deal cell opens it again immediately, which is why `$share`
+ * is a mnemonic here and on every holder alike.
+ */
+export const SEALED_TO_ITS_HOLDER =
+  "Each share is sealed to the key of the person it is for before it leaves this machine, and delivered to that person alone — so the only key in the world that can open share i is member i's own, and the room's transport is not what is keeping it secret. This machine's own share is sealed to this machine's own key too, and opened again here, so every slot in the ceremony holds a mnemonic.";
+
+/**
  * Why this notebook contains no recovery, said where the deal is offered.
  *
  * The claim that makes it safe to say is the BLIP39 header: threshold, share
@@ -295,9 +314,30 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
   // recovery that quietly produced the wrong bytes would look exactly like
   // one that worked. The digest is that something, and it discloses nothing:
   // it is a SHA-256 of thirty-two random bytes.
+  //
+  // ## Why the body seals, and why it then decrypts
+  //
+  // `seal to=each` encrypts each pair's payload to that pair's member before
+  // `send to=each` delivers it, so a share crosses the room readable only by
+  // the one person it belongs to. That is the requirement this ceremony exists
+  // for — "each peer gets a share of the same key, sealed to that recipient,
+  // output to only that recipient" — and it was deferred until now for one
+  // concrete reason recorded in `6388ad0`: a holder had no way to open a
+  // sealed share, because `gpg.decrypt` read the Inputs panel and could not
+  // take a message from the pipe. It can now, so the holder's cell below is
+  // writable and the deal can seal.
+  //
+  // The trailing `gpg.decrypt` is the self-pair's whole story. `seal to=each`
+  // has no exception for the pair whose member is this machine — an exception
+  // would put this machine's own share in the clear into the shipped
+  // `- seal to=each | out $sealed | publish`, which publishes — so the one
+  // payload that stays here stays sealed to the key that is right here, and is
+  // opened again on the spot. The alternative was `$share` holding armor on
+  // the dealer and a mnemonic on every holder: two shapes for one thing, and
+  // the recovery notebook reads that slot on whichever machine writes it.
   cells.push({
     peer: me,
-    why: `Draws the secret, splits it ${threshold}-of-${shares}, and deals share i to member i over the room — writing down a digest of the secret, never the secret, and keeping only this machine's own share in $share.`,
+    why: `Draws the secret, splits it ${threshold}-of-${shares}, seals share i to member i's own key and delivers it to them alone — writing down a digest of the secret, never the secret, and keeping only this machine's own share in $share.`,
     recipe: [
       "random 32 | tee",
       "  - digest sha-256 | encode hex | out $expected",
@@ -305,7 +345,7 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
       // this generator writes is the text `serializeRecipe` would write back
       // and the preview cannot differ from the notebook by a respelling.
       `| sss.split ${threshold}/${shares} | blip39.encode | scatter to=room`,
-      "  - send to=each | out $share",
+      "  - seal to=each | send to=each | gpg.decrypt | out $share",
     ].join("\n"),
   });
 
@@ -322,8 +362,13 @@ export function roomCeremony({ audience = [], self = "" } = {}) {
     if (m === me) return;
     cells.push({
       peer: m,
-      why: `Receives share ${i + 1}, on the holder's own machine, into a slot named for it.`,
-      recipe: `quorum.recv from=${me} | out $share-${i + 1}`,
+      why: `Receives share ${i + 1} sealed to this holder's own key, opens it with that key, and puts it in a slot named for it.`,
+      // The message arrives down the pipe and `gpg.decrypt` reads the pipe —
+      // no panel, no paste, nothing for the holder to do but press Run. The
+      // key it opens with is whichever of this machine's keys the message was
+      // addressed to, which the session has already unlocked; no other machine
+      // in the room holds it.
+      recipe: `quorum.recv from=${me} | gpg.decrypt | out $share-${i + 1}`,
     });
   });
 
@@ -391,6 +436,7 @@ export function roomCeremonySummary(ceremony) {
     // number without the reason will try to lower it.
     `${threshold} is a majority of ${shares}, so no two separate groups can ever rebuild it independently — any two groups of ${threshold} share at least one person.`,
     MASTER_NEVER_OUT,
+    SEALED_TO_ITS_HOLDER,
     DEALER_KEEPS_ONE,
     RECOVERY_IS_ITS_OWN_NOTEBOOK,
     DEALER_BASED,

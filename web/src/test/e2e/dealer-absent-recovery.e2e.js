@@ -641,6 +641,13 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
     await cell(recoverer, 1).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(recoverer);
     expect(await ceremonySlots(recoverer)).toEqual(["share-2"]);
+    // The receive cell says who dealt it. The share arrived sealed and was
+    // opened here with this machine's own key, and decrypting is not a change
+    // of origin — so the record that later lets the gather answer "did this
+    // recovery need the dealer?" starts on this cell, on the machine that took
+    // delivery.
+    const took = (await cell(recoverer, 1).innerText()).replace(/\s+/g, "");
+    expect(took, `the receive cell does not name the dealer: ${took}`).toContain(L.dealer);
 
     // **The picker, with the dealer dead.** The deal's record still lists the
     // dealer as a holder — that is true, their share existed — so the choice
