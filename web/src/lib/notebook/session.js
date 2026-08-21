@@ -49,16 +49,18 @@
  * do is not that. `approval-gate.js` puts it as *"Grants are minted only by a
  * human clicking, never by a param."*
  *
- * **Two more kinds carry no document at all**, and are named apart from the
+ * **Three more kinds carry no document at all**, and are named apart from the
  * four for that reason: `notebook-ack` says a proposal reached the far session,
- * and `notebook-held` says this session is holding one it has not sent. Neither
- * has a signature, because neither makes a claim that outlives its channel —
+ * `notebook-held` says this session is holding one it has not sent, and
+ * `cell-state` says a cell on this machine started, finished or was refused.
+ * None has a signature, because none makes a claim that outlives its channel —
  * they are facts about *this pair, now*, and the pairwise key is exactly the
  * right authority for that. A signature on them would be this layer swearing to
  * something on a person's behalf, which is the line the paragraph above draws.
  * See `_acknowledgeNotebook` for why an acknowledgment is a kind here rather
- * than a tap on `chat`, and `announceNotebookHeld` for what the second one
- * refuses to carry.
+ * than a tap on `chat`, `announceNotebookHeld` for what the second one refuses
+ * to carry, and `announceCellState` for why the third is the only one of the
+ * three that leaves as an event rather than as a field on the roster.
  *
  * **The run manifest is not among them, and a fifth kind that carried it was
  * removed rather than left unused.** `handoffContext` *derives* the manifest
@@ -331,6 +333,24 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  *   offered them or that the values may be registered. `acceptCellResult` plus
  *   a person answers both, and the run this result unblocks is restarted by
  *   whoever presses Run.
+ * @property {(row: {
+ *   from: string, cell: number, state: "running"|"done"|"refused",
+ *   slots: string[], ts: number,
+ * }) => void} [onCellState]
+ *   A peer said one of their own cells started, finished, or was refused — see
+ *   `announceCellState` for what the frame carries and what it refuses to.
+ *
+ *   **An event, not a peer fact**, which is why it is a callback of its own
+ *   rather than something recorded on the roster beside `notebookHeld`. The
+ *   roster is for facts that are *true continuously* — this peer is holding a
+ *   notebook, this peer has attested to this digest — and a run is a sequence.
+ *   Folding it into a peer record would collapse the sequence to its last
+ *   element and make the ordering unrecoverable.
+ *
+ *   `ts` is the **sender's** clock, carried because it is the only stamp that
+ *   orders one peer's own transitions; nothing here compares it against another
+ *   peer's or against this machine's, because two browsers' clocks agree about
+ *   nothing.
  * @property {(status: string) => void} [onStatus]
  * @property {(moved: { epoch: number, roomId: string, audience: string[],
  *   removed: string[] }) => void} [onRotate]
@@ -371,6 +391,57 @@ const DOCUMENT_NOUN = Object.freeze({
   notebook: "notebook proposal",
 });
 
+/**
+ * The three things a cell announcement may say — see `announceCellState`.
+ *
+ * Three and not four. `declined` is missing on purpose: the placement gate's
+ * declines are the answer to *whose cell is this*, and every peer derives that
+ * answer from the notebook header they already hold. An announcement of it
+ * would be this session telling the room something the room computed for
+ * itself, and a second answer to a placement question is the one thing
+ * `placement.js` refuses to become.
+ */
+const CELL_STATES = new Set(["running", "done", "refused"]);
+
+/** How many slot labels one cell announcement may carry. */
+const CELL_STATE_SLOT_CAP = 32;
+
+/** How long one of those labels may be. */
+const CELL_STATE_LABEL_CAP = 64;
+
+/**
+ * The slot labels of a cell announcement, or `null` if the list may not go.
+ *
+ * **Refused whole, never trimmed**, and that is the point of returning `null`
+ * rather than a shortened array. "The slots this cell wrote" is a claim about
+ * a set; a list quietly cut to the first thirty-two would be a smaller set
+ * presented as the whole one, and a reader has no way to tell the two apart.
+ * An announcement that cannot be made honestly is not made.
+ *
+ * The caps are transport hygiene and nothing more — they keep one peer's row
+ * flat the way `ATTESTED_PER_PEER_CAP` does, against a confirmed peer that is
+ * nonetheless broken or hostile. Deliberately **not** a check against the
+ * recipe's slot-label grammar: this layer is a courier, `recipe-parse.js` owns
+ * what a label may look like, and a grammar opinion duplicated here would go
+ * stale silently the day that grammar moved — announcements would simply stop,
+ * with nothing on any screen saying why.
+ *
+ * @param {unknown} slots
+ * @returns {string[]|null}
+ */
+function sendableSlotLabels(slots) {
+  if (!Array.isArray(slots)) return null;
+  if (slots.length > CELL_STATE_SLOT_CAP) return null;
+  const out = [];
+  for (const raw of slots) {
+    if (typeof raw !== "string") return null;
+    const label = raw.replace(/^\$/, "");
+    if (!label || label.length > CELL_STATE_LABEL_CAP) return null;
+    if (!out.includes(label)) out.push(label);
+  }
+  return out;
+}
+
 export class NotebookSession {
   /** @param {NotebookSessionOpts} opts */
   constructor(opts) {
@@ -391,6 +462,7 @@ export class NotebookSession {
     this.onNotebook = opts.onNotebook;
     this.onOffer = opts.onOffer;
     this.onResult = opts.onResult;
+    this.onCellState = opts.onCellState;
     this.onStatus = opts.onStatus;
     this.onRotate = opts.onRotate;
     this.onOwnKeyElsewhere = opts.onOwnKeyElsewhere;
@@ -524,6 +596,17 @@ export class NotebookSession {
      * @type {boolean}
      */
     this._sharedEver = false;
+    /**
+     * The tail of the cell-announcement send queue — see `announceCellState`
+     * for why one exists at all.
+     *
+     * A promise and not a list: each send chains onto whatever was last, so the
+     * writes reach the ordered channel in the order the run made them, and
+     * nothing accumulates. It is never awaited by a caller and never rejects,
+     * so a session that announces nothing carries one resolved promise.
+     * @type {Promise<unknown>}
+     */
+    this._cellStateTail = Promise.resolve();
     /**
      * Whether `stop()` has run. Read only by `_sealAndSend`, which explains
      * there why a torn-down session's late signalling is dropped in silence
@@ -1342,6 +1425,144 @@ export class NotebookSession {
       this.onError?.(err instanceof Error ? err : new Error(String(err)));
       return false;
     }
+  }
+
+  /**
+   * Say that a cell is running, has finished, or was refused **here** — to
+   * everybody, as it happens.
+   *
+   * ## The gap this closes
+   *
+   * Nine kinds crossed this channel before this one and not one of them said
+   * *I ran cell N*. `handoff` says **please run this**, `result` returns the
+   * published slots of a cell somebody else delegated, and an `attestation`
+   * signs a whole finished run after the fact. A peer running their **own**
+   * cells — which is the ordinary case, and the whole of what a placed
+   * ceremony is — was invisible to the room. In a deal, nobody could see that
+   * the dealer's cell had run until a share happened to arrive; until then the
+   * only honest reading of every other screen was that nothing had happened.
+   *
+   * `run.record.cells` has held exactly this fact, per cell, since the run was
+   * reified — and it is local. A finished record reaching nobody across the
+   * boundary where it matters.
+   *
+   * ## An announcement, not a state
+   *
+   * Fire-and-forget, and every part of that is deliberate. There is no
+   * acknowledgment, no sequence number, no replay and **no catch-up on join**.
+   * A peer who was not meshed when this went out simply does not have that row,
+   * and that is correct rather than tolerated: these are events pushed as they
+   * happen, and the run record and the receipt remain the authority at the end.
+   * A peer that could ask "what did I miss" would be asking this session to
+   * speak for a run that had already finished, which is what a receipt is for.
+   *
+   * ## What crosses, and what deliberately does not
+   *
+   * A cell index, one of three states, and the slot *labels* the cell wrote.
+   * **Never a value, and never a reason.**
+   *
+   * The labels are safe for a reason worth stating rather than assuming: every
+   * peer in this room already holds the shared notebook text — that is what
+   * `_sharedEver` below gates on — so they already know what cell N is and
+   * which slots it writes. `notebook-held`'s digest argument is the test, and
+   * this passes it: a listener who could guess the recipe learns nothing from
+   * a label they could have read off the recipe. What the announcement adds
+   * over the text everyone has is *activity timing*, and nothing else.
+   *
+   * A refusal carries `refused` and no sentence. A run-time refusal's text can
+   * name slots, key ids, file names or reasons that are the running peer's own
+   * business — `withheldSlotMessage` alone prints a slot and a peer — and none
+   * of that is the room's. *Their cell 2 refused* is the shared fact; why is
+   * not.
+   *
+   * ## Why a press unlocks it
+   *
+   * `_sharedEver`, exactly as `announceNotebookHeld` uses it, and the consent
+   * argument is the same one and strictly weaker here: a notebook nobody
+   * shared is nobody's business, and after a Share press this disclosure is
+   * *smaller* than the consent already given — that press offered these peers
+   * the entire text, and this offers them the fact that a line of it ran.
+   * Typing does not un-say it; `stop()` does.
+   *
+   * The gate lives here rather than in the caller for `announceNotebookHeld`'s
+   * reason: a consent rule a caller can forget to apply is not a consent rule,
+   * and this one has a hot caller — the run loop, once or twice per cell.
+   *
+   * ## Ordered, and why that needs a queue
+   *
+   * A data channel is ordered, so two frames written in order arrive in order.
+   * The writes are what can race: every send here seals under a pairwise key
+   * first, and `encryptSessionPayload` is a promise. Two `void` calls made back
+   * to back — which is precisely how the run loop calls this, `done` for one
+   * cell and `running` for the next with no await between them — are two
+   * independent chains, and the one that resolves first writes first. A cell
+   * whose `done` overtook its own `running` would leave a row saying a finished
+   * cell had just started. So the sends are chained through one tail promise:
+   * the caller still never waits, and the wire still sees them in the order the
+   * run produced them.
+   *
+   * @param {{ cell: number, state: "running"|"done"|"refused",
+   *   slots?: string[] }} what
+   * @returns {Promise<number>} peers written to — 0 when nobody has pressed
+   *   Share, when nobody is confirmed, or when the frame was refused here
+   */
+  async announceCellState({ cell, state, slots = [] }) {
+    if (this._stopped || !this._sharedEver) return 0;
+    if (!CELL_STATES.has(state)) return 0;
+    // The receiver's rule, kept the same way on the way out: `Number(null)` is
+    // zero, so coercing here would let a caller with no cell index announce
+    // about cell 0. Both ends check the value they were given.
+    if (!Number.isInteger(cell) || cell < 0) return 0;
+    // Only a finished cell has written anything, and a `running` frame that
+    // carried labels would be claiming an outcome the cell has not reached.
+    const labels = state === "done" ? sendableSlotLabels(slots) : [];
+    if (labels === null) return 0;
+    const body = JSON.stringify({
+      kind: "cell-state",
+      cell,
+      state,
+      slots: labels,
+      ts: Date.now(),
+    });
+    const send = async () => {
+      let sent = 0;
+      for (const [, peer] of this.peers) {
+        if (
+          !peer.channel ||
+          peer.channel.readyState !== "open" ||
+          !peer.sessionKey ||
+          !peer.kcVerified ||
+          // Ours as well as theirs, which is `announceNotebookHeld`'s finding:
+          // a peer who has not had our key confirmation drops everything we
+          // send as unauthenticated. There the cost was a sentence lost
+          // forever; here it is one row, and the next transition replaces it —
+          // so this declines rather than awaiting a confirmation the run loop
+          // would then be waiting behind.
+          !peer.kcSent
+        ) {
+          continue;
+        }
+        try {
+          const blob = await encryptSessionPayload(peer.sessionKey, body);
+          peer.channel.send(JSON.stringify({ v: 1, blob }));
+          sent += 1;
+        } catch (err) {
+          // One peer's channel is not the run's problem. Reported and stepped
+          // over: the announcement is a courtesy to the room and a run must
+          // never fail because a courtesy did.
+          this.onError?.(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+      return sent;
+    };
+    const queued = this._cellStateTail.then(send, send);
+    // The tail swallows, so one refused send cannot poison every later one; the
+    // returned promise is the honest one and still rejects for its caller.
+    this._cellStateTail = queued.then(
+      () => undefined,
+      () => undefined
+    );
+    return queued;
   }
 
   /**
@@ -2323,6 +2544,14 @@ export class NotebookSession {
         this._onNotebookHeld(peer);
         return;
       }
+      // The third kind carrying no document, and the only one of the three that
+      // is an *event* rather than a fact about the pair. Handled here for the
+      // two above's reason — there is no signature to check because there is no
+      // claim that outlives this channel.
+      if (msg.kind === "cell-state") {
+        this._onCellState(peerFpr, peer, msg);
+        return;
+      }
       if (msg.kind === "handoff") {
         this._onOffer(peerFpr, peer, msg);
         return;
@@ -2560,6 +2789,62 @@ export class NotebookSession {
     if (!peer.kcVerified || peer.notebookHeld) return;
     peer.notebookHeld = true;
     this._emitRoster();
+  }
+
+  /**
+   * A peer saying one of their own cells started, finished, or was refused.
+   *
+   * **Handed straight up and recorded nowhere here.** The two neighbours above
+   * write a peer field and emit a roster, because what they carry is true
+   * continuously. This is a moment: keeping the latest one on the peer record
+   * would make the roster the transcript of a run, and the roster is emitted
+   * several times a second by ICE — a listener could not tell a fresh
+   * announcement from a re-render of the last one. So it leaves by the door
+   * events leave by, and the layer above decides what a table made of them
+   * looks like.
+   *
+   * **Nothing is trusted beyond the pairwise key.** The frame is a peer's claim
+   * about their own machine and this session cannot check a word of it — there
+   * is no run here to compare against, and there deliberately is not: a peer's
+   * announcement must never touch a slot, a cell status or a run record on this
+   * machine. The one thing key confirmation buys is *who said it*, which is the
+   * whole of what the row above it will print.
+   *
+   * Every malformed frame is dropped in silence, `_onNotebookAck`'s rule: a
+   * refusal would let any confirmed peer put errors on this screen by sending
+   * rubbish. That covers a state this version does not know, which is also how
+   * a future state reaches an old receiver — as nothing, rather than as a row
+   * saying something it cannot read.
+   *
+   * @param {string} peerFpr
+   * @param {NotebookPeerState} peer
+   * @param {{ cell?: unknown, state?: unknown, slots?: unknown, ts?: unknown }} msg
+   */
+  _onCellState(peerFpr, peer, msg) {
+    if (!peer.kcVerified) return;
+    const state = String(msg.state || "");
+    if (!CELL_STATES.has(state)) return;
+    // Asked of the value as it arrived, never of `Number(...)` of it. `Number`
+    // maps `null`, `""` and `false` to **zero**, so a frame with no cell index
+    // at all would have been read as an announcement about cell 0 — a real
+    // cell, on a notebook everybody in the room is holding. A test found it;
+    // the rule it leaves behind is that a coercion is not a validation.
+    const cell = msg.cell;
+    if (!Number.isInteger(cell) || /** @type {number} */ (cell) < 0) return;
+    // Re-checked on arrival rather than trusted from the send, and not because
+    // the sender is suspected: a receiver that believed a peer's caps would
+    // have no caps at all. `null` refuses the frame whole, for the reason
+    // `sendableSlotLabels` gives — a trimmed list is a smaller claim wearing
+    // the shape of the full one.
+    const slots = state === "done" ? sendableSlotLabels(msg.slots ?? []) : [];
+    if (slots === null) return;
+    this.onCellState?.({
+      from: peerFpr,
+      cell,
+      state: /** @type {"running"|"done"|"refused"} */ (state),
+      slots,
+      ts: Number(msg.ts) || Date.now(),
+    });
   }
 
   /**

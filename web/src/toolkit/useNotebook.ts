@@ -7,6 +7,7 @@ import {
 } from "../lib/toolkit/handoff-shell.js";
 import {
   getPendingHandoffs,
+  getPeerCellStates,
   takeHandoff,
   getLiveSession,
   getProposedNotebook,
@@ -38,6 +39,7 @@ import {
   offersOwed,
 } from "../lib/toolkit/run-offers.js";
 import { cellsInScope, createRun, noteOfferVerdicts } from "../lib/toolkit/run.js";
+import { describeCellState, facesFor } from "../lib/toolkit/cell-state.js";
 import { offerForSkipped, resultForCell } from "../lib/toolkit/handoff-shell.js";
 import { manifestDigest } from "../lib/toolkit/manifest.js";
 import { beginApprovalRun, clearApprovalGrants } from "../lib/toolkit/approval-gate.js";
@@ -103,6 +105,14 @@ export type RunCause = import("../lib/toolkit/run.js").RunCause;
 
 /** What one cell's last run here read, wrote and received (`kernel.js`). */
 export type CellProvenance = import("../lib/toolkit/kernel.js").CellProvenance;
+
+/** One thing a peer said about one of *their* cells — see `cell-state.js`. */
+export type PeerCellState = import("../lib/toolkit/cell-state.js").PeerCellState;
+/** A finished cell's slot, and whether this machine holds it. */
+export type SlotFace = import("../lib/toolkit/cell-state.js").SlotFace;
+
+/** One row of the room's card table, with its slots already turned over. */
+export type PeerCellRow = PeerCellState & { faces: SlotFace[] };
 
 /** What `manifestAttestedBy` answers about one manifest. */
 export type AttestationCoverage = Awaited<ReturnType<typeof manifestAttestedBy>>;
@@ -1906,6 +1916,50 @@ export function useNotebook() {
    * below hand this different scopes and different causes, and the record says
    * which press it was.
    */
+  /**
+   * Tell the room that one of *this machine's* cells moved.
+   *
+   * **The gap this closes, stated where the caller is.** Nine payload kinds
+   * crossed the document channel and none of them said "I ran cell N":
+   * `handoff` asks somebody else to run one, `result` returns a cell they
+   * delegated, `attestation` signs a whole finished run. A peer running their
+   * own cells was invisible, so in a shared ceremony nobody could see that the
+   * deal cell had run until a value happened to arrive. `run.record.cells` has
+   * held this fact per cell since `a529802` and it never left the machine.
+   *
+   * **The record is read, never moved.** `done` takes its slot labels from
+   * `run.record.cells` — the ledger the kernel writes as the cell executes —
+   * and changes nothing about it. That record and the receipt remain the
+   * authority at the end; this is a live announcement that happens to need one
+   * fact they already hold.
+   *
+   * **`done` is also how a declined cell says nothing.** The kernel pushes a
+   * record entry when it *performs* a cell and returns before that when the
+   * placement gate declines, so the entry's presence is exactly "this machine
+   * ran it". A declined cell announcing anything would be this browser
+   * reporting on a cell that is somebody else's to report on — and they will.
+   *
+   * Labels and never values, and the leak argument is `announceCellState`'s:
+   * everybody in this room holds the shared notebook, so they already know
+   * which slots cell N writes. Fire-and-forget for the same reason a ticker is
+   * — a run must never wait on a courtesy, and the session chains its own sends
+   * so the wire still sees these in order.
+   */
+  const announceCell = useCallback(
+    (run: Run, cell: number, state: "running" | "done" | "refused") => {
+      const session = getLiveSession();
+      if (!session) return;
+      const performed = run.record.cells.find((c) => c.cell === cell);
+      if (state === "done" && !performed) return;
+      void session.announceCellState({
+        cell,
+        state,
+        slots: state === "done" ? (performed?.writes ?? []).map((w) => w.slot) : [],
+      });
+    },
+    []
+  );
+
   const startRun = useCallback(
     async (cause: RunCause, scope: { from: number; to: number }) => {
       if (!compiled.validation?.ok) {
@@ -2023,7 +2077,20 @@ export function useNotebook() {
           // and the outcome below is the one they came for.
           setRunStatus(`Running cell ${i}…`);
           at = i;
+          // **Only for a cell this machine will actually perform.** `mine` is
+          // the plan's own answer, the same field `placementGate.admit` reads
+          // — read here, never re-derived, which is the rule `placement.js`
+          // exists to keep. Announcing before knowing would leave every peer
+          // holding a `running` row for a cell the gate then declined, and
+          // nothing would ever move it: a declined cell has no outcome to
+          // announce, because on this machine it had no outcome.
+          if (!run.plan || run.plan.cells[i]?.mine) announceCell(run, i, "running");
           await kernelRef.current.runCell(i, chains[i], bindings, placement, run);
+          // After, not in a `finally`: the throw path is announced once, as
+          // `refused`, from the catch below — and it names the cell that threw
+          // rather than the cell the loop was on, which are the same index here
+          // and would stop being one the day this loop grows a second await.
+          announceCell(run, i, "done");
         }
         setKernelEpoch((n) => n + 1);
         narrate("Done");
@@ -2037,6 +2104,13 @@ export function useNotebook() {
         // answers "what happened here". Prefixed, never reworded: the thrown
         // sentence is the part that names the remedy.
         const msg = err instanceof Error ? err.message : String(err);
+        // **The state crosses and the sentence does not.** `msg` is the one
+        // thing on this line that is the running peer's own business: a
+        // withheld-slot refusal names a slot and a peer, an op's refusal can
+        // name a key id or a file, and none of that is the room's to read.
+        // "Their cell 2 refused" is the shared fact. Why is not — and there is
+        // deliberately no field on the wire that could grow into it.
+        if (at >= 0) announceCell(run, at, "refused");
         refuse(at >= 0 ? `Cell [${at}] — ${msg}` : msg);
         setRunStatus("Failed");
       } finally {
@@ -2104,7 +2178,13 @@ export function useNotebook() {
     // `source` is not listed because it is `serializeRecipe(chains)` and cannot
     // move without `chains` moving; adding it would be a second name for a
     // dependency already here.
-    [buildBindings, chains, compiled.validation, handoffWho, narrate, refuse, unmetForCell]
+    //
+    // `announceCell` is appended rather than sorted into place, and the reason
+    // is a test: `run-offers.test.js` reads this list by anchoring on the three
+    // names it opens with, because *that* list losing `handoffWho` is the
+    // defect the paragraph above is about. A new dependency belongs at the end,
+    // where it cannot move the anchor.
+    [buildBindings, chains, compiled.validation, handoffWho, narrate, refuse, unmetForCell, announceCell]
   );
 
   /**
@@ -3103,6 +3183,80 @@ export function useNotebook() {
   }, [quorumState]);
 
   /**
+   * What every peer has said about their own cells — the room's card table.
+   *
+   * The receiving half of `announceCell`. Where the two disclosures above are
+   * peer *facts* read off the roster, these are **events**: a peer's cell
+   * starting, finishing or being refused, pushed as it happens with no sync, no
+   * replay and no catch-up on join. A peer who was not meshed when a cell ran
+   * simply has no row for it — the absence of a row is "nothing has been said",
+   * never "this has not happened", and `cell-state.js` keeps that distinction
+   * in the copy.
+   *
+   * Held on the exchange and re-read here, `getPendingHandoffs`' shape: the
+   * event names which row moved and `getPeerCellStates` is the one place a row
+   * is read from, so there is a single copy of what a peer said.
+   */
+  const [peerCellStates, setPeerCellStates] = useState<PeerCellState[]>([]);
+  useEffect(() => {
+    const onCellState = (ev: Event) => {
+      const rows = getPeerCellStates();
+      setPeerCellStates(rows);
+      const detail = (ev as CustomEvent).detail || {};
+      const row = rows.find(
+        (r) => r.from === detail.from && r.cell === detail.cell
+      );
+      if (!row) return;
+      // **The rule is `announcement`'s, applied rather than restated.** A
+      // peer's cell *finishing or refusing* is an event a person needs and
+      // cannot otherwise learn, so it goes to the live region. A peer's cell
+      // *starting* is their ticker, and the ticker has been deliberately silent
+      // since the region existed: twelve cells across three peers is roughly
+      // thirty-six interruptions, which is precisely what would drown the
+      // announcements that matter. `describeCellState` returns "" for those.
+      //
+      // Announced and not printed, which is `notebook-ack`'s finding: an
+      // arriving fact routed through `narrate` replaces the run's own verdict
+      // on screen milliseconds after a person could read it. The visible home
+      // of this fact is the table in Connections.
+      //
+      // The registry is asked at *this* moment rather than through `slotMetas`,
+      // and not only to keep this effect off a render-derived dependency: what
+      // makes a slot face up is a value having arrived here, and the live
+      // registry is the only thing that knows. A memo from the last render
+      // could call a slot face down that landed a moment ago.
+      const held = new Set(
+        (kernelRef.current.listSlots?.() || []).map((m: { label: string }) =>
+          String(m.label || "").replace(/^\$/, "")
+        )
+      );
+      const said = describeCellState(row, (label: string) => held.has(label));
+      if (said) announce(said);
+    };
+    window.addEventListener("basilisk:quorum-cell-state", onCellState);
+    return () =>
+      window.removeEventListener("basilisk:quorum-cell-state", onCellState);
+  }, [announce]);
+
+  /**
+   * The same rows with each finished cell's slots turned over — what the table
+   * draws.
+   *
+   * `slotMetas` is a dependency and that is the point: a row drawn face down
+   * turns face up the moment the value actually lands here, with no
+   * announcement involved. Possession is this machine's registry answering, not
+   * a peer's claim, so the two facts move independently and the row is honest
+   * at every instant of the gap between them.
+   */
+  const peerCellRows = useMemo<PeerCellRow[]>(() => {
+    const held = new Set(slotMetas.map((m) => m.label));
+    return peerCellStates.map((row) => ({
+      ...row,
+      faces: facesFor(row, (label: string) => held.has(label)),
+    }));
+  }, [peerCellStates, slotMetas]);
+
+  /**
    * Where the last press stands — the wire fact, and what came back.
    *
    * `null` until somebody presses Share in this session, because there is no
@@ -4036,6 +4190,7 @@ export function useNotebook() {
     shareNotebook,
     peersWithoutNotebook,
     peersHoldingNotebook,
+    peerCellRows,
     notebookDelivery,
     notebookDeliveryNote,
     attestManifest,

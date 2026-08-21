@@ -12,6 +12,7 @@
  * UI coupling is one-way through window events so this module never imports
  * React and the shell never imports WebRTC:
  *  - dispatches `basilisk:quorum-state` with the current exchange snapshot
+ *  - dispatches `basilisk:quorum-cell-state` naming one peer's cell that moved
  *  - listens for `basilisk:quorum-cancel` (RunBar/SessionStrip Cancel)
  * @module lib/toolkit/quorum-ops
  */
@@ -85,6 +86,31 @@ const IDLE_STATE = Object.freeze({
  * } | null}
  */
 let current = null;
+
+/**
+ * One thing a peer said about one of their own cells.
+ *
+ * @typedef {object} PeerCellState
+ * @property {string} from    whole fingerprint of the peer who said it
+ * @property {number} cell    which cell, by index in the shared notebook
+ * @property {"running"|"done"|"refused"} state
+ * @property {string[]} slots slot labels a finished cell wrote — **labels, not
+ *   values**, and empty for every other state. See `announceCellState`.
+ * @property {number} ts      the *sender's* clock at the announcement
+ */
+
+/**
+ * How many cells of one peer's notebook this exchange will remember.
+ *
+ * `ATTESTED_PER_PEER_CAP`'s rule, applied where the same argument holds: a
+ * confirmed peer can still be a broken one, and every announcement carries a
+ * cell index that peer chose. The table is keyed by cell, so an honest peer
+ * occupies exactly as many entries as their notebook has cells and re-runs
+ * overwrite in place; only a peer inventing indices reaches this, and the
+ * oldest of their rows is dropped rather than the newest, so the row a person
+ * is looking at now is the one that survives.
+ */
+const PEER_CELL_CAP = 256;
 
 /**
  * One `quorum.send`, remembered until its delivery is confirmed (§36).
@@ -228,6 +254,34 @@ function emitNotebookProposal() {
   );
 }
 
+/**
+ * Say that one peer's cell moved, and say *which* one.
+ *
+ * The event carries the row's **identity** and not the row. That is the middle
+ * of the two shapes above and it is chosen rather than split the difference:
+ * `emitHandoffs` carries a count because a listener only needs to re-read a
+ * queue, and this listener needs more than that — the live region announces a
+ * cell *finishing* and stays silent on one *starting*, so it has to know which
+ * row is new, and diffing a whole table on every arrival to rediscover a fact
+ * the emitter already had would be a second answer to it.
+ *
+ * It stops at the identity for `emitNotebookProposal`'s reason. The row itself
+ * lives on the exchange and `getPeerCellStates` is the only way to read one, so
+ * there is one copy of what a peer said. An event that carried the state and
+ * the slot labels would be a second copy, and a listener acting on it after a
+ * later transition had already replaced the first would draw a row the table no
+ * longer holds.
+ *
+ * @param {string} from
+ * @param {number} cell
+ */
+function emitCellState(from, cell) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(
+    new CustomEvent("basilisk:quorum-cell-state", { detail: { from, cell } })
+  );
+}
+
 /** @param {Partial<QuorumExchangeState>} patch */
 function patchState(patch) {
   if (!current) return;
@@ -359,6 +413,43 @@ export function getPendingHandoffs() {
 }
 
 /**
+ * What every peer has said about their own cells, latest per cell.
+ *
+ * **A table, not a log**, and that is the whole of the bound. The owner's model
+ * for this is a card table: a hand is dealt or it is not, and a row that has
+ * moved from `running` to `done` is the same hand in a later state rather than
+ * a second event to keep. Keeping the transitions would make this grow with
+ * every press for the life of a session, for a view whose only question is
+ * *where does the room stand now*. The transitions are not lost — they are what
+ * the live region was told as they happened, and the run record and receipt on
+ * the machine that ran them is the ledger.
+ *
+ * **Nothing catches up.** A peer who joined late, or whose channel dropped and
+ * came back, has no row for what they missed, and that is correct: these are
+ * announcements, and there is no protocol here for asking what was said before
+ * you arrived. The absence of a row means *nothing has been said about this*,
+ * never *this has not happened*.
+ *
+ * A copy per read, `getPendingHandoffs`' rule: a component holds these across
+ * renders and must not be able to edit what the next arrival merges into.
+ *
+ * Sorted by peer and then by cell so the table's row order is a property of the
+ * room rather than of the order announcements happened to arrive in — otherwise
+ * a row would jump under a reader's cursor every time its peer moved.
+ *
+ * @returns {PeerCellState[]}
+ */
+export function getPeerCellStates() {
+  if (!current) return [];
+  /** @type {PeerCellState[]} */
+  const out = [];
+  for (const byCell of current.cellStates.values()) {
+    for (const row of byCell.values()) out.push({ ...row, slots: [...row.slots] });
+  }
+  return out.sort((a, b) => a.from.localeCompare(b.from) || a.cell - b.cell);
+}
+
+/**
  * The notebook a peer last proposed, or null.
  *
  * **One slot, not a queue**, which is the opposite of `handoffs` and deliberate:
@@ -448,6 +539,11 @@ export function closeQuorumExchange(reason = "closed") {
   }
   ex.inbox.length = 0;
   ex.handoffs.length = 0;
+  // What the room was doing goes with the room. These rows are announcements
+  // about runs on machines this browser can no longer hear from, so keeping
+  // them would leave a table of live-looking states that nothing can ever
+  // move again — including cells stuck at `running` for the rest of the page.
+  ex.cellStates.clear();
   // Only the correlation state goes — the activity entries stay, reading
   // whatever was confirmed by the time the room closed. An ack cannot arrive
   // on a closed exchange, so an entry still unconfirmed here is one this
@@ -475,6 +571,9 @@ export function closeQuorumExchange(reason = "closed") {
   // now observe: nothing pending, because there is nothing to be pending in.
   emitHandoffs();
   emitNotebookProposal();
+  // With no peer and no cell, because the identity in this one names a row that
+  // is gone: the listener re-reads an empty table and draws nothing.
+  emitCellState("", -1);
 }
 
 if (typeof window !== "undefined") {
@@ -757,6 +856,45 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
       emitHandoffs();
     },
     /**
+     * A peer saying one of their own cells started, finished, or was refused.
+     *
+     * **Recorded and nothing else.** No slot is registered, no cell status on
+     * this machine moves, no run is resumed — this is somebody's report about
+     * their own screen, and the whole reason it is safe to show is that it
+     * cannot do anything. It is the weakest arrival on this channel and it is
+     * treated as the weakest: `onResult`'s note says a result that resumed a
+     * run on a peer's say-so would continue this machine on values nobody
+     * looked at, and a *state* has not even got values.
+     *
+     * Latest per cell wins, because a cell that has finished is not also
+     * running. There is no ordering to defend beyond that: the sender chains
+     * its own sends so its transitions reach the ordered channel in order, and
+     * two peers' announcements are not comparable at all — neither clock means
+     * anything to the other.
+     */
+    onCellState: (row) => {
+      const ex = current;
+      if (!ex) return;
+      let byCell = ex.cellStates.get(row.from);
+      if (!byCell) {
+        byCell = new Map();
+        ex.cellStates.set(row.from, byCell);
+      }
+      // Deleted before it is set, so a re-announcement of a cell already in the
+      // table moves to the end of the insertion order. That is what makes the
+      // eviction below drop the *stalest* row rather than the one that happens
+      // to have the lowest index — a peer whose row keeps moving is a peer
+      // somebody is watching.
+      byCell.delete(row.cell);
+      byCell.set(row.cell, row);
+      while (byCell.size > PEER_CELL_CAP) {
+        const oldest = byCell.keys().next();
+        if (oldest.done) break;
+        byCell.delete(oldest.value);
+      }
+      emitCellState(row.from, row.cell);
+    },
+    /**
      * The notebook a peer is proposing both ends run.
      *
      * Verified against that peer's key by `documents.js` before it gets here,
@@ -921,6 +1059,12 @@ export async function execQuorumOpen(params, privateKey, iceServers, role) {
     /** Ack dedupe, `from sha ts` — see `deliveryAckTap` on replays. */
     ackSeen: new Set(),
     handoffs: [],
+    /**
+     * What each peer has said about each of their own cells — see
+     * `PEER_CELL_CAP` and `getPeerCellStates`.
+     * @type {Map<string, Map<number, PeerCellState>>}
+     */
+    cellStates: new Map(),
     /**
      * The notebook a peer last proposed — one slot, see `getProposedNotebook`.
      * @type {{ from: string, title: string, source: string, proposedAt: string,

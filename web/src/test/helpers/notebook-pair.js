@@ -56,6 +56,11 @@ import { installWebPubSubDouble } from "./webpubsub-double.js";
  * @property {any[]} results        cell results that arrived, were checked against
  *   the sender's key and parsed — equally pending: no slot registered, no run
  *   restarted, and nothing in the session that could do either
+ * @property {any[]} cellStates     every announcement this side heard about a
+ *   peer's own cell, in arrival order. The weakest arrival on this channel and
+ *   collected as such: it carries a cell index, a state and slot *labels*, and
+ *   the session records none of it against the peer — see `announceCellState`
+ *   for why it leaves as an event rather than as a roster field.
  * @property {string[]} statuses
  * @property {{ epoch: number, roomId: string, audience: string[],
  *   removed: string[] }[]} rotations
@@ -206,6 +211,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       notebooks: [],
       offers: [],
       results: [],
+      cellStates: [],
       statuses: [],
       rotations: [],
       ownKeyElsewhere: 0,
@@ -221,6 +227,7 @@ export async function makeQuorumPair({ tamper, sameKey = false } = {}) {
       onNotebook: (/** @type {any} */ d) => side.notebooks.push(d),
       onOffer: (/** @type {any} */ d) => side.offers.push(d),
       onResult: (/** @type {any} */ d) => side.results.push(d),
+      onCellState: (/** @type {any} */ d) => side.cellStates.push(d),
       onStatus: (/** @type {string} */ s) => side.statuses.push(s),
       onRotate: (/** @type {any} */ m) => side.rotations.push(m),
       onOwnKeyElsewhere: () => {

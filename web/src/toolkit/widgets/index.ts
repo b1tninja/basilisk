@@ -69,6 +69,7 @@ export {
 export { InspectorArtifact, hasInspectorRenderer, type InspectSnapshot } from "./InspectorArtifact";
 export { CellTypeErrors, type CellTypeError } from "./CellTypeErrors";
 export { CellProvenance, provenanceRows, type CellProvenanceData } from "./CellProvenance";
+export { RoomCells, type PeerCellRow, type SlotFace } from "./RoomCells";
 export { GpgKeyBinder } from "./GpgKeyBinder";
 export {
   KeyVault,

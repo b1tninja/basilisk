@@ -68,6 +68,7 @@ import {
   DocsFooter,
   CellTypeErrors,
   CellProvenance,
+  RoomCells,
   GpgKeyBinder,
   KeyVault,
   type VaultKeyView,
@@ -4585,6 +4586,28 @@ export function ToolkitShell() {
                       </p>
                     ) : null}
                   </section>
+
+                  {/* **The room's own cells, as they run.** The two sentences
+                      above are about a notebook crossing; this is about what
+                      happens once it has. Nothing on this wire said "I ran cell
+                      N" before it — `handoff` asks somebody to run one,
+                      `result` returns one they were handed, `attestation`
+                      signs a finished run — so a peer running their own cells
+                      was invisible, and in a ceremony that meant the deal cell
+                      running looked exactly like a dealer who had walked away.
+
+                      Only while a session is live, because every row is an
+                      announcement from a peer over a channel: with no session
+                      there is no room to be running anything, and an empty
+                      table drawn beside a Start button would be reporting on a
+                      room that does not exist. The widget's own empty state is
+                      for the honest case — a live room where nobody has
+                      started a cell yet. */}
+                  {sessionLive ? (
+                    <section className="mt-3 border-t border-[var(--border)] pt-3">
+                      <RoomCells rows={nb.peerCellRows} />
+                    </section>
+                  ) : null}
 
                   {/* Below the connections, because it is what the connections
                       are *for*. The plan says where a cell runs, the panel

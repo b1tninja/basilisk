@@ -256,6 +256,70 @@ async function meshReport(wire, names) {
   return JSON.stringify(out, null, 1);
 }
 
+/**
+ * Watch one machine's card table, and its live region, for the whole of a run
+ * happening somewhere else.
+ *
+ * **Sampled during, never after**, which is `notebook-cells.e2e.js`'s finding
+ * about the announcer applied to a table: read once the run has settled, a row
+ * holds `done` whether or not it ever said `running`, and the transition — the
+ * whole claim that this is live rather than a summary printed at the end —
+ * would be invisible. A MutationObserver is the only witness to what a person
+ * watching the screen actually saw move.
+ *
+ * Both surfaces at once because the split between them is the decision under
+ * test: every transition reaches the table, and only the outcome reaches the
+ * live region.
+ */
+async function watchRoom(page, peerFpr) {
+  await page.evaluate((fpr) => {
+    /** @type {string[]} */
+    const rows = [];
+    /** @type {string[]} */
+    const said = [];
+    const readRows = () => {
+      for (const li of document.querySelectorAll("[data-room-cell]")) {
+        if (li.getAttribute("data-room-cell-peer") !== fpr) continue;
+        const at = `${li.getAttribute("data-room-cell-index")}:${li.getAttribute(
+          "data-room-cell-state"
+        )}`;
+        if (rows[rows.length - 1] !== at) rows.push(at);
+      }
+    };
+    const region = document.querySelector("[data-run-announcer]");
+    const readSaid = () => {
+      const t = (region?.textContent || "").replace(/\s+/g, " ").trim();
+      if (t && said[said.length - 1] !== t) said.push(t);
+    };
+    readRows();
+    readSaid();
+    // The whole body, because the table's rows are created and destroyed rather
+    // than edited: a row that did not exist when this was installed has no
+    // element to observe.
+    const obs = new MutationObserver(() => {
+      readRows();
+      readSaid();
+    });
+    obs.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      characterData: true,
+    });
+    Object.assign(window, {
+      __room: { rows, said },
+      __roomStop: () => obs.disconnect(),
+    });
+  }, peerFpr);
+}
+
+/** Stop watching and hand back what moved. */
+const roomSeen = (page) =>
+  page.evaluate(() => {
+    window.__roomStop();
+    return window.__room;
+  });
+
 /** Seed one browser's vault with the identity that browser is, and reload onto the shell. */
 async function becomeMember(page, member, uid) {
   const stored = await page.evaluate(
@@ -612,6 +676,26 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
   /* ── 4. the deal, and what the dealer is left holding ────────────────────── */
 
   it("deals both shares in one press and keeps exactly one — its own", async () => {
+    // **The reproduction, set up before the press.** Both holders are on the
+    // panel where the room's live facts are drawn, and both are empty: no peer
+    // has said anything about any cell, because until this pass nothing on
+    // this wire could. `handoff` asks a peer to run a cell, `result` returns
+    // one they were handed, `attestation` signs a finished run — and the
+    // dealer is about to run *their own* cell, which is none of the three.
+    for (const page of [recoverer, bystander]) {
+      await trayTab(page, "Connections");
+      const table = page.locator("[data-room-cells]");
+      await table.waitFor({ state: "visible", timeout: 20000 });
+      expect(
+        await table.locator("[data-room-cell]").count(),
+        "a holder had a row before anybody ran anything"
+      ).toBe(0);
+      expect(await table.innerText()).toContain(
+        "Nobody has said they are running anything"
+      );
+      await watchRoom(page, L.dealer);
+    }
+
     await cell(dealer, 0).getByRole("button", { name: "Run", exact: true }).click();
     await runSettled(dealer);
 
@@ -620,6 +704,111 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
     expect(dealt[0], why).toBe("ok"); // draw, split, deal
     expect(dealt[1], `the dealer performed the recoverer's cell — ${why}`).toBe("declined");
     expect(dealt[2], `the dealer performed the bystander's cell — ${why}`).toBe("declined");
+
+    // **What the room saw, on the two machines that did not press anything.**
+    //
+    // Both holders' receive cells are still idle and neither holds a share in a
+    // slot — step 5 is the press that does that. What each of them has is a row
+    // that appeared, moved, and settled while the dealer's cell ran, which is
+    // the fact this whole pass exists for: a peer running their own cells used
+    // to be invisible, and a holder's screen was indistinguishable from a
+    // dealer who had walked away right up until a share happened to land.
+    for (const [name, page] of Object.entries({ recoverer, bystander })) {
+      const row = page.locator(
+        `[data-room-cell][data-room-cell-peer="${L.dealer}"][data-room-cell-index="0"]`
+      );
+      await expect
+        .poll(async () => await row.getAttribute("data-room-cell-state"), {
+          timeout: 60000,
+          intervals: [250],
+        })
+        .toBe("done");
+
+      const seen = await roomSeen(page);
+      const trail = JSON.stringify(seen, null, 1);
+      // **Live, and the transition is the proof.** Read after the fact the row
+      // would say `done` whether it had ever said anything else, so what is
+      // asserted is the sequence a person watching actually saw.
+      expect(seen.rows, `${name} never saw the dealer's cell start — ${trail}`).toEqual([
+        "0:running",
+        "0:done",
+      ]);
+
+      // **Face down.** The dealer's cell wrote `$expected` and `$share`, and
+      // neither of them is here — this browser has never run `random` and was
+      // dealt a share under a different name. The row says the slots exist and
+      // says they are not this machine's, which is the whole of what is true.
+      const faces = row.locator("[data-room-cell-slot]");
+      const labels = {};
+      for (const face of await faces.all()) {
+        labels[await face.getAttribute("data-room-cell-slot")] =
+          await face.getAttribute("data-room-cell-face");
+      }
+      expect(labels, `${name}'s view of the dealer's cell — ${trail}`).toEqual({
+        expected: "down",
+        share: "down",
+      });
+      const text = (await row.innerText()).replace(/\s+/g, " ");
+      expect(text).toContain("on their machine — it did not come here");
+      // The peer is named whole. A row saying who just did something is the
+      // last place to print part of who they are.
+      expect(text.replace(/\s/g, "")).toContain(L.dealer);
+
+      // **And no value crossed for it.** The digest of the master is on the
+      // dealer's screen in a tile; nothing about this row could carry it, and
+      // the assertion is on the *panel* rather than on the frame so that a
+      // future field that leaked one would fail here too.
+      const panel = await page.locator("[data-room-cells]").innerText();
+      expect(panel, `${name}'s table printed a value`).not.toMatch(/[0-9a-f]{64}/);
+
+      // **The live region got the outcome and not the ticker.** `7ac9f50`'s
+      // rule, and with three peers and twelve cells it is what stops thirty-six
+      // interruptions from drowning the announcements that matter. Nothing here
+      // says a cell *started*.
+      const transcript = seen.said.join(" · ");
+      expect(transcript, `${name}'s live region — ${trail}`).toContain(
+        "finished cell 0"
+      );
+      // **Once, and the count is the assertion.** The row moved twice and the
+      // region was written once: a version that announced the start as well
+      // would leave two entries here, which over twelve cells and three peers
+      // is the thirty-six interruptions `7ac9f50` silenced the local ticker to
+      // avoid. Counting is what catches it — a negative match on the word
+      // "running" would survive any announcement that happened to be worded
+      // differently.
+      expect(
+        seen.said.filter((s) => s.includes("cell 0")),
+        `a peer's ticker reached ${name}'s live region — ${trail}`
+      ).toHaveLength(1);
+      // And it named the face-down slots as theirs, with no remedy — there is
+      // none, and a sentence hinting at one would tell a reader to do something
+      // no control on this screen can do.
+      expect(transcript).toContain("did not come here");
+      expect(transcript).not.toMatch(/ask them|request it/i);
+
+      // **One row, and only one.** The dealer's run walked all three cells and
+      // the gate declined two of them — those are the holders' own cells, and a
+      // machine that announced a cell it refused to perform would be reporting
+      // on somebody else's work. Each holder hears about the one cell the
+      // dealer actually ran.
+      const all = page.locator("[data-room-cell]");
+      expect(
+        await all.evaluateAll((rows) =>
+          rows.map(
+            (r) =>
+              `${r.getAttribute("data-room-cell-peer")}:${r.getAttribute(
+                "data-room-cell-index"
+              )}`
+          )
+        ),
+        `${name}'s table held more than the dealer's one cell — ${trail}`
+      ).toEqual([`${L.dealer}:0`]);
+    }
+
+    // The holders' own cells did not move, which is what makes every row above
+    // an announcement rather than something this browser worked out.
+    expect(await cellStatus(recoverer, 1)).toBe("idle");
+    expect(await cellStatus(bystander, 2)).toBe("idle");
 
     // **FINDING (4a), turned over — the revealable `$set` is unconstructable.**
     // The dealer's Slots tab used to hold `$set`, *every share*, on the one
