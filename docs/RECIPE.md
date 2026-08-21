@@ -87,8 +87,10 @@ the value it is said about.
 ```text
 chain     := header? pipeline
 header    := "@" peer                    # at the chain head
-peer      := LABEL | "*"                 # "*" = every participant (rendezvous)
+peer      := LABEL | FINGERPRINT | "*"   # "*" = every participant (rendezvous)
 LABEL     := /^[A-Za-z][A-Za-z0-9_-]*$/  # the slot label grammar, shared
+FINGERPRINT := /^[0-9A-Fa-f]{40}$/       # v4, whole
+             | /^[0-9A-Fa-f]{64}$/       # v6, whole
 ```
 
 ```text
@@ -104,7 +106,9 @@ random 32 | out $nonce
 
 | Form | Meaning |
 |------|---------|
-| `@alice` | This cell belongs to the peer named `alice` |
+| `@alice` | This cell belongs to the peer named `alice`, resolved through the roster |
+| `@83421F2C…ABCDEF` | The same claim, written as a whole fingerprint — 40 hex for v4, 64 for v6. Canonical, and upper-cased on parse |
+| `@83421F2C0B1E4D5A` | Compile error: a partial key id is a suffix, so more than one key answers to it |
 | `@*` | Rendezvous: every participant, together — **parses, and this build refuses to plan it** (see below) |
 
 `@alice publish` and `@alice publish=$a,$b` are the retired spelling. They still
@@ -162,11 +166,34 @@ Rules:
   `two-owners`.
 - `*` is spelled `*` rather than `all` because it cannot be a label, so the
   wildcard can never collide with a participant actually called `all`.
-- **A peer is a name, never a fingerprint.** A hex label of 16 characters or
-  more is refused at compile *and* at share: the room is derived from a digest
-  of the audience precisely so fingerprints never travel, and a fingerprint in
-  shared recipe text would hand the room to anyone holding the link. A
-  fingerprint remains an ordinary argument everywhere else (`hkp.get 4F2A…`).
+- **A peer is a name or a whole fingerprint.** Both spellings parse. A name is
+  what a person reads; a whole fingerprint is what a room binds, and it is the
+  canonical spelling — `planRun` resolves a name through the roster, while a
+  fingerprint is already the answer and maps to itself.
+- **A partial key id is refused, and the reason is not length.** Any hex run
+  that is not a whole fingerprint is a *suffix* of one, so more than one key
+  answers to it and no room can bind it. The refusal says exactly that:
+
+  > `` `@83421F2C0B1E4D5A` is 16 hex characters, which is part of a key rather
+  > than a key. A short id is a suffix of a fingerprint, so more than one key
+  > answers to it and no room can bind it — write the whole fingerprint (40
+  > characters for v4, 64 for v6), or a name. ``
+
+  A hex run too short to look like a key id at all falls to the ordinary
+  grammar refusal instead, which names both spellings a peer may take.
+- **Case is settled at parse.** `normalizePeerRef` upper-cases a fingerprint,
+  so `@83421f2c…` and `@83421F2C…` are one header by the time anything compares
+  them, and `serializeRecipe` writes the upper-cased form. Two authors who
+  typed the same key in different case digest to the same manifest.
+- **What a fingerprint in shared text discloses, stated rather than designed
+  around.** The room id is a digest of the audience, so it reveals nobody; a
+  fingerprint written into the recipe is different — it names a participant to
+  anyone holding the notebook, which is everyone the notebook is shared with
+  and anyone they pass a `#r=` link to. That is the cost of a header a room can
+  bind without a roster, and it is why a name remains a legitimate spelling
+  rather than a legacy one. `plan.js`'s module header carries the full
+  argument. A fingerprint is an ordinary argument everywhere else (`hkp.get
+  4F2A…`), where it discloses nothing about a room.
 - The header is **inert**. It records who a cell is for; it does not run
   anything, anywhere, for anyone.
 
