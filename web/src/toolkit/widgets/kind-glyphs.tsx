@@ -45,7 +45,6 @@ import { Glyph, type GlyphSize } from "./Glyph";
  * was written against, not a case of it.
  */
 export const KIND_GLYPHS: Record<string, LucideIcon | string> = {
-  text: AlignLeft,
   bytes: Binary,
   /*
    * The six key roles draw project glyphs, not lucide, because lucide has one
@@ -117,12 +116,9 @@ export const KIND_GLYPHS: Record<string, LucideIcon | string> = {
    */
   "openpgp-key": "key-openpgp",
   share: Users,
-  shares: Users,
-  recipients: Users,
   diag: Activity,
   stats: Activity,
   connstate: Activity,
-  inspect: Binary,
   secret: Shield,
   signature: Signature,
   artifact: FileDown,
@@ -130,7 +126,6 @@ export const KIND_GLYPHS: Record<string, LucideIcon | string> = {
   endpoint: Network,
   candidate: Radio,
   session: Cable,
-  channel: Cable,
   /*
    * The four remaining pipeline types, all lucide, all chosen at 12px.
    *
@@ -316,9 +311,20 @@ export function glyphExists(id: string | undefined | null): boolean {
 export function kindGlyph(kind: string | undefined | null): LucideIcon | string | null {
   if (!kind) return null;
   const k = String(kind).toLowerCase();
-  // `KIND_GLYPHS` first, so a name that is both a role and a glyph id keeps
-  // the chrome icon it already had — `share` is `Users` here and `shares` in
-  // `GLYPH_PATHS`, and the tray tab is the one that owns that name.
+  // The order stopped mattering, and that is the point. It used to be a
+  // precedence rule justified by an example that was not a conflict at all --
+  // `share` is `Users` here and `shares` is an asset in `GLYPH_PATHS`, which
+  // are two different names that never met. Where names really did meet,
+  // precedence silently threw the drawn mark away: `text`, `shares`,
+  // `recipients`, `inspect` and `channel` each had a purpose-drawn asset that
+  // no consumer of this function could reach, so `inspect` drew the same
+  // `Binary` as `bytes` while a magnifying glass sat unused, and a `recipients`
+  // toolbox tab drew two people while a `recipients` badge drew `Users`.
+  //
+  // The invariant now is that no name is in both maps -- pinned by
+  // `glyph-shadowing.test.js`, which is what keeps this `||` unable to shadow
+  // anything again. If a name needs a drawn mark, it goes in `GLYPH_PATHS` and
+  // comes out of here.
   return KIND_GLYPHS[k] || (GLYPH_PATHS[k] ? k : null);
 }
 

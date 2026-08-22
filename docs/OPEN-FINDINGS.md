@@ -142,13 +142,17 @@ changes what a query finds.
 
 ## 4a. One decision nobody has made
 
-**`shares` and `recipients` draw the same mark.** Both resolve to lucide `Users`
-in `KIND_GLYPHS`. It is half-deliberate — `GLYPH_PATHS` already holds a distinct
-`shares` asset (offset cards), and `kindGlyph` consults `KIND_GLYPHS` first *on
-purpose*, so the tray tab keeps its chrome icon. `bca32b8` pinned that exact
-pair rather than allowing "some collisions", so a **second** collision fails a
-test — but this one stands, and the map's own rule is that drawing two concepts
-with one pictogram is the defect it was written against.
+**A connection state, a diagnostic and a statistic all draw lucide `Activity`.**
+This is what is left of the shadowing item, and it is the half that is a design
+call rather than a defect: none of the three has a drawing of its own, so
+nothing is being thrown away and the only question is whether they should be
+told apart at all. It is on the exemption list in `glyph-shadowing.test.js`,
+which may only shrink, so a *new* collision fails rather than joining a crowd.
+
+The rest of that item is closed. It was recorded as `shares` and `recipients`
+sharing a mark; it was five names, not two, and the previous entry's claim that
+`bca32b8` had pinned the pair was false — no test guarded `KIND_GLYPHS`
+duplication at all.
 
 `int` and `host` have no mark at all. Both are real registry types with cards on
 the Types tab, and neither appears on any step signature, so neither can reach a
