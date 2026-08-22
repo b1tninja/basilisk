@@ -1062,10 +1062,19 @@ export function OpsShelf({
         </div>
         )}
       </ScrollArea>
-      {/* Kit bar filters the op tree, so it has nothing to act on in Types. */}
+      {/* Kit bar filters the op tree, so it has nothing to act on in Types.
+
+          `flex-wrap` for the same reason the solo rows got it in `bca32b8`:
+          four `flex-1` buttons have a combined min-content width no shrinking
+          can get under, so at the panel's 160px minimum the bar was 173px wide
+          inside a 160px box and pushed "HMAC" out of the panel entirely -- the
+          one kit with no other way in, since the footer is the sole entry point
+          for kit-only ops. Wrapping spends a second row of height at that width
+          and nothing at 220; `min-w-0` was the alternative and it buys the
+          same 13px by clipping the labels, which is the defect, not the fix. */}
       <div
         className={cn(
-          "flex gap-1.5 border-t border-[var(--border)] px-2.5 py-2",
+          "flex flex-wrap gap-1.5 border-t border-[var(--border)] px-2.5 py-2",
           bare && "px-0",
           mode === "types" && "hidden"
         )}

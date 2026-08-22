@@ -151,9 +151,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **The footer kit bar overflows at 160px**: `.ops-panel` is scrollWidth 173 /
-  clientWidth 160, and the element outside is the "HMAC" kit button.
-  Pre-existing, present before any kit is opened.
 - **`.pane-splitter` is styled in three stylesheets and rendered by nothing.**
   `site.css`, `toolkit.css` and `.ds-styles.css` all carry rules for it; a sweep
   of every `.tsx`, `.ts`, `.js`, `.html` and template in the repo finds no

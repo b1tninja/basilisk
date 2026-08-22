@@ -286,6 +286,64 @@ describe.skipIf(!availability.ok)("no shipped page scrolls sideways", () => {
     });
   }
 
+  /**
+   * A pane dragged to its own minimum does not scroll sideways either.
+   *
+   * The page-level sweep below cannot see this one. `.ops-panel` clips its own
+   * x axis, so `offender()` correctly rules it contained and the document
+   * never scrolls -- yet at the panel's 160px floor the footer kit bar was
+   * 173px wide inside it, and the element pushed out was the "HMAC" button.
+   * The footer is the *sole* entry point for kit-only ops (§20a), so that kit
+   * had no other way in at that width. Contained overflow is still lost
+   * content when the container has no scrollbar to reach it with.
+   *
+   * 160 is `OPS_PANE_LIMITS.min`, restored from `localStorage` the way the
+   * shelf's own fit sweep does it. 220 is the default and the control: it was
+   * never overflowing, and a fix that traded one width for the other would be
+   * a trade rather than a fix.
+   */
+  for (const opsW of [160, 220]) {
+    it(`the ops pane contains its own footer at ${opsW}px`, async () => {
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      try {
+        await page.addInitScript((w) => {
+          localStorage.setItem("basilisk.toolkit.layout", JSON.stringify({ opsW: w }));
+        }, opsW);
+        await page.goto(`${server.origin}/toolkit`, { waitUntil: "load" });
+        await page.waitForSelector(".ops-category code");
+        await page.waitForTimeout(500);
+        const seen = await page.evaluate(() => {
+          const el = document.querySelector(".ops-panel");
+          if (!el) return { missing: true };
+          const box = el.getBoundingClientRect();
+          const out = [];
+          for (const k of el.querySelectorAll("*")) {
+            const r = k.getBoundingClientRect();
+            if (r.width && r.right > box.right + 1)
+              out.push(`<${k.tagName.toLowerCase()}> ${JSON.stringify((k.textContent || "").trim().slice(0, 24))}`);
+          }
+          return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, out };
+        });
+        expect(seen.missing, "the ops panel never mounted, so nothing was measured").toBeUndefined();
+        // Both, and the second is the one that means it. `scrollWidth` alone
+        // is satisfied by `overflow: hidden` on the bar -- which clips the
+        // button out of reach and reports a tidy number, scoring as a fix
+        // while making the defect permanent. A rect is unaffected by
+        // clipping, so this half still sees the button sitting outside.
+        expect(
+          seen.out,
+          `elements laid out past the right edge of .ops-panel at ${opsW}px`
+        ).toEqual([]);
+        expect(
+          seen.scrollWidth,
+          `.ops-panel is ${seen.scrollWidth}px inside ${seen.clientWidth}px. Escaping: ${seen.out.join("; ")}`
+        ).toBeLessThanOrEqual(seen.clientWidth);
+      } finally {
+        await page.close();
+      }
+    });
+  }
+
   for (const width of WIDTHS) {
     for (const path of PAGES) {
       it(`${path} at ${width}px`, async () => {
