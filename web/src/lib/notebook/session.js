@@ -211,7 +211,10 @@ import { openPeerLink } from "../webrtc/peer-link.js";
  * @property {CryptoKeyPair|null} localEcdh
  * @property {JsonWebKey|null} localEcdhJwk
  * @property {string|null} localHelloNonce
- * @property {boolean} kcSent
+ * @property {boolean} kcSent  the frame reached the channel, not that one was
+ *   decided on -- see `_maybeSendKeyConfirm`
+ * @property {Promise<void>|null} kcSending  the confirmation currently being
+ *   written, so a concurrent caller joins it rather than skipping past it
  * @property {boolean} polite      perfect negotiation: lower fingerprint yields on glare
  * @property {boolean} makingOffer
  * @property {boolean} ignoreOffer
@@ -972,6 +975,7 @@ export class NotebookSession {
       peer.sessionKey = null;
       peer.transcriptHash = null;
       peer.kcSent = false;
+      peer.kcSending = null;
       peer.kcVerified = false;
       peer.ecdhPublicJwk = null;
       peer.helloNonce = null;
@@ -1400,9 +1404,17 @@ export class NotebookSession {
     //
     // The channel is ordered, so the fix is an ordering one: put our own key
     // confirmation on the wire first and everything after it is read by a peer
-    // who has already confirmed us. `_maybeSendKeyConfirm` is a no-op once it
-    // has run, so awaiting it costs nothing on the ordinary path and closes the
-    // window on the path that bit.
+    // who has already confirmed us.
+    //
+    // That sentence used to end "`_maybeSendKeyConfirm` is a no-op once it has
+    // run", and the await below did not close the window it claimed to. The
+    // no-op fired on intent: `kcSent` went true before the encrypt, so a caller
+    // arriving while `onopen`'s fire-and-forget send was still inside that
+    // encrypt was told the confirmation had gone out, sent this announcement
+    // ahead of it, and burned the bound on a frame the far end dropped. It is a
+    // no-op once it has *finished* now, and a caller landing mid-write joins
+    // that write instead of stepping over it, which is what makes awaiting it
+    // mean anything.
     await this._maybeSendKeyConfirm(peerFpr);
     if (this._stopped || !peer.kcSent || peer.channel.readyState !== "open") {
       // Declined without marking, so the next roster tick tries again — and one
@@ -2251,6 +2263,7 @@ export class NotebookSession {
     peer.sessionKey = null;
     peer.transcriptHash = null;
     peer.kcSent = false;
+    peer.kcSending = null;
     peer.kcVerified = false;
     peer.ecdhPublicJwk = null;
     peer.helloNonce = null;
@@ -2314,6 +2327,7 @@ export class NotebookSession {
       localEcdhJwk: null,
       localHelloNonce: null,
       kcSent: false,
+      kcSending: null,
       polite: this.myFpr < fpr,
       makingOffer: false,
       ignoreOffer: false,
@@ -3043,7 +3057,34 @@ export class NotebookSession {
     await this._maybeSendKeyConfirm(peerFpr);
   }
 
-  /** @param {string} peerFpr */
+  /**
+   * Put our key confirmation on the wire, once.
+   *
+   * **`kcSent` means the frame reached the channel, not that a send was
+   * decided on.** It used to be set before the `await` that encrypts, which
+   * made the flag a statement of intent — and `announceNotebookHeld` reads it
+   * as a statement of fact. That method awaits this one specifically so the
+   * ordered channel carries our confirmation ahead of anything else it says;
+   * with the flag set early, a second caller arriving inside the encrypt
+   * returned immediately, sent its announcement first, and had it dropped at
+   * the far end as unauthenticated — burning a once-per-member bound on a
+   * sentence nobody received. `_wireChannel`'s `onopen` fires this without
+   * awaiting it, so a first caller sitting inside that window is the ordinary
+   * case rather than a rare one.
+   *
+   * `kcSending` is what keeps it to one frame now that the flag lands late: a
+   * concurrent caller joins the send in flight instead of starting a second or
+   * skipping past it. The promise identity check is for the peer being reset
+   * mid-write — `_resetPeer` and the epoch rotation both clear these — so a
+   * write that lands after its peer was torn down cannot mark the new state
+   * as confirmed.
+   *
+   * A throw leaves `kcSent` false. The write is the only failure that matters
+   * here, and a peer marked as confirmed when the channel refused the frame is
+   * one nothing retries.
+   *
+   * @param {string} peerFpr
+   */
   async _maybeSendKeyConfirm(peerFpr) {
     const peer = this.peers.get(peerFpr);
     if (
@@ -3055,7 +3096,7 @@ export class NotebookSession {
     ) {
       return;
     }
-    peer.kcSent = true;
+    if (peer.kcSending) return peer.kcSending;
     const body = JSON.stringify({
       kind: "kc",
       fpr: this.myFpr,
@@ -3063,8 +3104,19 @@ export class NotebookSession {
       transcriptHash: peer.transcriptHash,
       ts: Date.now(),
     });
-    const blob = await encryptSessionPayload(peer.sessionKey, body);
-    peer.channel.send(JSON.stringify({ v: 1, blob }));
+    const sessionKey = peer.sessionKey;
+    const channel = peer.channel;
+    const inflight = (async () => {
+      const blob = await encryptSessionPayload(sessionKey, body);
+      channel.send(JSON.stringify({ v: 1, blob }));
+    })();
+    peer.kcSending = inflight;
+    try {
+      await inflight;
+      if (peer.kcSending === inflight) peer.kcSent = true;
+    } finally {
+      if (peer.kcSending === inflight) peer.kcSending = null;
+    }
   }
 
   /**

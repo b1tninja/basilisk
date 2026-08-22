@@ -137,12 +137,6 @@ changes what a query finds.
   newcomer is told nothing until an offered cell is refused. Closing it means
   announcing "a notebook exists here" unconditionally, which is a new disclosure
   on the wire rather than a wording change.
-- **A narrow race in that announcement.** If the hook's effect flushes inside
-  `_maybeSendKeyConfirm`'s single `await` — `kcSent` true, frame not yet written
-  — the announcement can be dropped *and* the once-per-member bound burned. The
-  failure mode is the newcomer not being told, which is today's behaviour, never
-  a false statement. Closing it means moving `kcSent` after the write (a
-  double-send guard) or moving the trigger into the session's kc handler.
 
 ---
 
