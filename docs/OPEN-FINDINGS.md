@@ -129,6 +129,36 @@ changes what a query finds.
   a false statement. Closing it means moving `kcSent` after the write (a
   double-send guard) or moving the trigger into the session's kc handler.
 
+### 2.3 `playbook.verify`'s documentation names the wrong standard
+
+Its registry doc says it works "on `jose.verify`'s reasoning", which reads as a
+JOSE delegation. The code (`web/src/lib/toolkit/engine.js:3795`) calls
+`verifiedCleartextOpenPgp` — an **OpenPGP cleartext signature**, RFC 9580 §7.
+The prose describes a different standard from the one it implements.
+
+Found while completing the spec references in `5bf8e04`, which deliberately did
+not add a citation: the op sits in the leave-alone set, and citing RFC 9580 §7
+would have made the doc and the reference disagree in a second place rather than
+fixing the first. Fix the sentence, then the citation follows.
+
+---
+
+## 4a. One decision nobody has made
+
+**`shares` and `recipients` draw the same mark.** Both resolve to lucide `Users`
+in `KIND_GLYPHS`. It is half-deliberate — `GLYPH_PATHS` already holds a distinct
+`shares` asset (offset cards), and `kindGlyph` consults `KIND_GLYPHS` first *on
+purpose*, so the tray tab keeps its chrome icon. `bca32b8` pinned that exact
+pair rather than allowing "some collisions", so a **second** collision fails a
+test — but this one stands, and the map's own rule is that drawing two concepts
+with one pictogram is the defect it was written against.
+
+`int` and `host` have no mark at all. Both are real registry types with cards on
+the Types tab, and neither appears on any step signature, so neither can reach a
+`needs …` caption. Recorded in `UNDRAWN_TYPES` with a may-only-shrink rule and a
+test that fails the moment a step declares one — rather than guessing two more
+marks, which is the reflex that once put one `KeyRound` on six key roles.
+
 ---
 
 ## 5. User-visible, small, and real
@@ -186,6 +216,20 @@ changes what a query finds.
 Take the top of §1 first. Everything there is a control that does not control,
 which is worse than a missing feature: somebody is relying on it. §2 is next,
 because a check that cannot fire is indistinguishable from one that passes.
+
+## A hint that has paid off five times
+
+Before building a mechanism, check whether it already exists and is simply
+unused. In one day: `caption` was computed for every conjugate row and read
+nowhere; `KIND_GLYPHS` was a carefully measured type vocabulary referenced zero
+times from the shelf; `GLYPH_PATHS` shipped `gpg-decrypt` and four other reverse
+glyphs that reached no screen; `step-docs.js` already cited 92 of 132 ops; and
+the ITU-T X.690 entry was already the precedent for citing a paywalled
+non-RFC standard. Each time, the work was wiring rather than inventing, and each
+time the first instinct was to build something new.
+
+The corollary is the failure mode: a mechanism with no consumer looks exactly
+like a mechanism that is finished. Ask who reads it, not whether it works.
 
 When an item is closed, delete it and say so in the commit — a findings file
 that accumulates ticks stops being read.
