@@ -198,13 +198,25 @@ type CellView = "pipeline" | "source";
 
 type SuiteState = "verified" | "unverified" | "error";
 
-/** Extends the OpenPGP/WebCrypto/SSS CAST suite map with a client-side WebAuthn capability check. */
-type ToolkitSuiteStatus = {
+/**
+ * The three suites the POST/CAST self-test actually qualifies — the same map
+ * `getSuiteStatus()` returns and `suite-gate.js` gates on.
+ *
+ * WebAuthn used to be a fourth key here, holding the result of a browser
+ * feature probe in the vocabulary of a self-test. It is not in this type any
+ * more, and the reason is the whole point of `webauthnApiPresence` below: an
+ * algorithm that answered a known-answer vector correctly and a browser that
+ * happens to expose an API are two different facts, and one type spelled in
+ * one set of words is how they came to share a count.
+ */
+type CastSuiteStatus = {
   openpgp: SuiteState;
   webcrypto: SuiteState;
   sss: SuiteState;
-  webauthn: SuiteState;
 };
+
+/** What this browser exposes of the WebAuthn API — see `webauthnApiPresence`. */
+type WebAuthnPresence = "present" | "absent";
 
 /**
  * `file.read | qr.scan` on a photo of a share card.
@@ -280,19 +292,35 @@ function oneLinePreview(content: string, max = 140): string {
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
-function webauthnCapabilityStatus(): SuiteState {
-  // WebAuthn isn't covered by the POST/CAST self-test (crypto-self-test.js) —
-  // this is a plain browser-capability probe, not a verified algorithm test.
+/**
+ * Whether this browser exposes the WebAuthn API at all.
+ *
+ * This is a feature check and nothing more. It is not covered by the POST/CAST
+ * self-test (crypto-self-test.js), because there is nothing here to test
+ * against a known answer: the credential is made inside an authenticator this
+ * page cannot see, so no vector can be run against it. It returns its own two
+ * words rather than `verified`/`unverified` for exactly that reason — it used
+ * to return the self-test's, and every line downstream then counted a browser
+ * feature as a qualified algorithm.
+ *
+ * Note what it does *not* establish. `PublicKeyCredential` being defined says
+ * the API exists, not that a platform authenticator is attached and usable —
+ * that is `isUserVerifyingPlatformAuthenticatorAvailable()`, which is async
+ * and belongs to the `webauthn.caps` op, not to a synchronous render path.
+ * So the word here is "present", about the API, and the copy that shows it
+ * must not promise a passkey.
+ */
+function webauthnApiPresence(): WebAuthnPresence {
   return typeof window !== "undefined" && typeof window.PublicKeyCredential !== "undefined"
-    ? "verified"
-    : "unverified";
+    ? "present"
+    : "absent";
 }
 
-const SUITE_BADGE_LABEL: Record<keyof ToolkitSuiteStatus, string> = {
+/** The self-tested suites, in the order the badges read. */
+const SUITE_BADGE_LABEL: Record<keyof CastSuiteStatus, string> = {
   webcrypto: "WebCrypto",
   openpgp: "OpenPGP",
   sss: "SSS",
-  webauthn: "WebAuthn",
 };
 
 // Same localStorage key/shape as toolkit-legacy.js's pane layout, so the
@@ -2263,25 +2291,31 @@ export function ToolkitShell() {
   const [playbookState, setPlaybookState] = useState<Record<string, PlaybookOpening>>({});
   const [workspaceOpening, setWorkspaceOpening] = useState("");
   const [inspectedSlot, setInspectedSlot] = useState<string | null>(null);
-  const [suiteStatus, setSuiteStatus] = useState<ToolkitSuiteStatus>(() => ({
+  const [suiteStatus, setSuiteStatus] = useState<CastSuiteStatus>(() => ({
     openpgp: "unverified",
     webcrypto: "unverified",
     sss: "unverified",
-    webauthn: "unverified",
   }));
+  /**
+   * Held apart from `suiteStatus` rather than as a fourth key in it: the two
+   * are answered by different machinery (a known-answer test vs. a `typeof`),
+   * settle at different times, and mean different things. Two states is how
+   * the render sites are stopped from adding them up.
+   */
+  const [webauthnApi, setWebauthnApi] = useState<WebAuthnPresence>("absent");
   const [fipsMode, setFipsModeState] = useState(() => getFipsMode());
 
   useEffect(() => {
     // The POST/CAST self-test is kicked off once at boot in pages/toolkit.tsx
     // and runs async (it's idempotent — this just awaits the same promise).
     // Read suite status once it settles so the badges reflect the real
-    // result rather than the pre-test default. WebAuthn has no CAST
-    // coverage, so it's a separate browser-capability probe done eagerly.
+    // result rather than the pre-test default. The WebAuthn probe answers
+    // immediately and has nothing to wait for, so it is read on its own.
     let cancelled = false;
-    setSuiteStatus((prev) => ({ ...prev, webauthn: webauthnCapabilityStatus() }));
+    setWebauthnApi(webauthnApiPresence());
     void runCryptoSelfTests().finally(() => {
       if (cancelled) return;
-      setSuiteStatus({ ...getSuiteStatus(), webauthn: webauthnCapabilityStatus() });
+      setSuiteStatus(getSuiteStatus());
     });
     return () => {
       cancelled = true;
@@ -2293,40 +2327,48 @@ export function ToolkitShell() {
     setFipsModeState(on);
   };
 
-  const unverifiedSuiteNames = (Object.keys(suiteStatus) as (keyof ToolkitSuiteStatus)[]).filter(
+  const unverifiedSuiteNames = (Object.keys(suiteStatus) as (keyof CastSuiteStatus)[]).filter(
     (k) => suiteStatus[k] !== "verified"
   );
 
-  // TopBar's single suiteStatus pill, worst-tone-wins (design v2 §21e) — the
-  // four per-suite checks are unchanged, only their render site moves here.
-  const suiteDetail: SuiteDetail[] = (
-    Object.keys(SUITE_BADGE_LABEL) as (keyof ToolkitSuiteStatus)[]
+  /**
+   * The rows behind TopBar's pill, worst-tone-wins (design v2 §21e).
+   *
+   * Three suite rows and then one row that is not a suite. The WebAuthn row
+   * is last and says `present`/`absent` where the others say `verified`,
+   * because sharing their word is what let it be read as a fourth self-test —
+   * and it is kept out of `castSuiteRows` so that the count above it can only
+   * ever be a count of self-tests.
+   */
+  const castSuiteRows: SuiteDetail[] = (
+    Object.keys(SUITE_BADGE_LABEL) as (keyof CastSuiteStatus)[]
   ).map((suite) => {
     const state = suiteStatus[suite];
     const tone: SuiteTone = state === "verified" ? "ok" : state === "error" ? "error" : "warn";
-    const note =
-      suite === "webauthn"
-        ? state === "verified"
-          ? "browser"
-          : "unavailable"
-        : state === "verified"
-          ? "verified"
-          : state === "error"
-            ? "error"
-            : "unverified";
-    return { name: SUITE_BADGE_LABEL[suite], tone, note };
+    return { name: SUITE_BADGE_LABEL[suite], tone, note: state };
   });
+  const suiteDetail: SuiteDetail[] = [
+    ...castSuiteRows,
+    {
+      name: "WebAuthn API",
+      tone: webauthnApi === "present" ? "ok" : "warn",
+      note: webauthnApi,
+    },
+  ];
   const suitePillStatus = (() => {
-    const worst: SuiteTone = suiteDetail.some((s) => s.tone === "error")
+    // Tone follows the self-tests only. A browser without the WebAuthn API is
+    // a browser that cannot do one thing, not a suite that answered a vector
+    // wrongly, and colouring the pill for it would say a cipher had failed.
+    const verified = castSuiteRows.filter((s) => s.tone === "ok").length;
+    const worst: SuiteTone = castSuiteRows.some((s) => s.tone === "error")
       ? "error"
-      : suiteDetail.some((s) => s.tone === "warn")
+      : castSuiteRows.some((s) => s.tone === "warn")
         ? "warn"
         : "ok";
-    const issues = suiteDetail.filter((s) => s.tone !== "ok").length;
     const label =
-      issues === 0
-        ? `${suiteDetail.length} suites ready`
-        : `${suiteDetail.length - issues} suites ready · ${issues} issue${issues === 1 ? "" : "s"}`;
+      verified === castSuiteRows.length
+        ? `${verified} suites verified`
+        : `${verified} of ${castSuiteRows.length} suites verified`;
     return { label, tone: worst };
   })();
 
@@ -2351,21 +2393,27 @@ export function ToolkitShell() {
     [nb.chains, nb.cellRecipientSlots]
   );
 
-  // FIPS banner: prefer the real recipe-based check (suite-gate.js) against
-  // the crypto suites it actually knows about (openpgp/webcrypto/sss); fall
-  // back to the WebAuthn capability flag since suite-gate doesn't track it.
+  /**
+   * The FIPS banner: what `suite-gate.js` would say about this recipe.
+   *
+   * It asks the gate about the suites the gate has, and about nothing else.
+   * There used to be a second arm here that raised "FIPS mode: blocked —
+   * webauthn unverified" whenever the browser lacked `PublicKeyCredential`,
+   * on any recipe at all. Nothing about that sentence was true:
+   * `toolboxToSuite("webauthn")` returns `null`, so `suitesUsedBySteps` can
+   * never yield a WebAuthn suite and `assertRecipeAllowedUnderFips` has
+   * nothing to refuse — the run it announced as blocked would have proceeded,
+   * and on a recipe with no WebAuthn step in it. A refusal that does not
+   * happen is worse than a missing warning, because a reader believes it and
+   * stops. The absent API is now reported where it is true, in the Params
+   * tab, as an absent API and not as a FIPS block.
+   */
   const fipsBlockedMessage = useMemo(() => {
     if (!fipsMode) return null;
     const usedGated = suitesUsedByAst(nb.compiled.ast);
-    const blockedGated = unverifiedSuitesAmong(
-      { openpgp: suiteStatus.openpgp, webcrypto: suiteStatus.webcrypto, sss: suiteStatus.sss },
-      usedGated
-    );
+    const blockedGated = unverifiedSuitesAmong(suiteStatus, usedGated);
     if (blockedGated.length) {
       return `FIPS mode: recipe uses unverified ${blockedGated.join(", ")} ops`;
-    }
-    if (suiteStatus.webauthn !== "verified") {
-      return "FIPS mode: blocked — webauthn unverified";
     }
     return null;
   }, [fipsMode, nb.compiled.ast, suiteStatus]);
@@ -5218,7 +5266,7 @@ export function ToolkitShell() {
                       Crypto self-test (POST)
                     </p>
                     <div className="flex flex-wrap gap-1.5">
-                      {(Object.keys(SUITE_BADGE_LABEL) as (keyof ToolkitSuiteStatus)[]).map(
+                      {(Object.keys(SUITE_BADGE_LABEL) as (keyof CastSuiteStatus)[]).map(
                         (suite) => {
                           const verified = suiteStatus[suite] === "verified";
                           return (
@@ -5233,6 +5281,46 @@ export function ToolkitShell() {
                         }
                       )}
                     </div>
+
+                    {/* WebAuthn under its own heading, and below the badges
+                        rather than among them. It was the fourth badge here,
+                        wearing the same ✓ under the same "self-test" heading
+                        — which said this page had run a vector against a
+                        passkey. It had run `typeof PublicKeyCredential`. The
+                        badge is `secondary`, not `ok`: present is a fact
+                        about the browser, not a pass. */}
+                    <p className="text-[length:11px] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+                      Browser capability
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Badge
+                        variant={webauthnApi === "present" ? "secondary" : "warn"}
+                        className="rounded-full px-[9px] py-[3px] text-[10.5px] normal-case tracking-normal"
+                      >
+                        WebAuthn API {webauthnApi}
+                      </Badge>
+                    </div>
+                    <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+                      {webauthnApi === "present" ? (
+                        <>
+                          This browser exposes the WebAuthn API. That is not a self-test
+                          result — the credential is made inside an authenticator this page
+                          cannot see, so there is no known answer to check it against.
+                          Whether an authenticator is attached and usable is a further
+                          question, which{" "}
+                          <code className="font-mono text-[11px]">webauthn.caps</code> asks
+                          directly.
+                        </>
+                      ) : (
+                        <>
+                          This browser exposes no WebAuthn API, so the webauthn ops cannot
+                          run here. That is not a self-test failure — nothing was tested,
+                          because there is no known answer to test a passkey against.
+                        </>
+                      )}{" "}
+                      FIPS mode's suite check knows only the three suites above, so no
+                      webauthn op is blocked by it either way.
+                    </p>
 
                     <label className="flex items-center justify-between gap-3 border-t border-[var(--border)] py-2.5">
                       <span className="text-sm">FIPS mode</span>
@@ -5258,11 +5346,26 @@ export function ToolkitShell() {
                         />
                       </button>
                     </label>
+                    {/* What this switch does on this page, rather than what
+                        the gate behind it is capable of. The refusal in
+                        `assertRecipeAllowedUnderFips` is real, but it only
+                        ever runs for a caller that passes `fipsMode` into
+                        `runRecipe` — `executeToolkitRun`, reached by the
+                        crypto-worker's `toolkit-run` message, and nobody
+                        sends that one. The notebook runs through
+                        `createKernel`, which never sets the flag, so with the
+                        switch on, the banner below is the entire effect: the
+                        recipe is flagged before the run and not refused. The
+                        sentence said "blocks adding or running ops" and there
+                        is no code that blocks either. Making that true is a
+                        change in kernel.js and useNotebook.ts, which this
+                        pass did not own; the copy was in reach, so the copy
+                        is what stopped claiming it. */}
                     <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
                       {unverifiedSuiteNames.length
-                        ? `Blocks adding or running ops on an unverified suite (${unverifiedSuiteNames
+                        ? `Flags any recipe that uses an unverified suite (${unverifiedSuiteNames
                             .map((s) => SUITE_BADGE_LABEL[s])
-                            .join(", ")}, above).`
+                            .join(", ")}, above) before you run it.`
                         : FIPS_MODE_DISCLAIMER}
                     </p>
 

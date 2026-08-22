@@ -21,6 +21,14 @@ export function toolboxToSuite(toolbox) {
   // and verb smoke instead (§29g).
   if (tb === "ssh") return "webcrypto";
   if (tb === "sss") return "sss";
+  // `webauthn` falls through here on purpose, and the fall-through is the
+  // whole of FIPS mode's position on it: there is no suite to name, so
+  // `suitesUsedBySteps` never reports one, so nothing this file does can
+  // block a webauthn op. Nor could it honestly — a passkey's keypair lives
+  // inside an authenticator this page cannot address, so there is no vector
+  // to run and no result to gate on. Anything upstream that shows WebAuthn
+  // beside the three suites above is showing a capability, not a
+  // verification, and must not say "verified" or add it to their count.
   return null;
 }
 
