@@ -104,7 +104,19 @@ function shelfNames() {
           name,
           from,
           title: (button.getAttribute("title") || "").trim(),
-          glyphOnly: (button.textContent || "").trim().length <= 1,
+          /**
+           * A direction handle, by what it *is* rather than by how much text
+           * it happens to hold.
+           *
+           * This was `textContent.trim().length <= 1`, which classified a
+           * control by the fact that it drew a glyph and nothing else. The
+           * pair rows' handles print their op's direction now — `encrypt`,
+           * `symdecrypt` — so that test silently reclassified every one of
+           * them as "not a handle", and the sweep it feeds went from eleven
+           * rows to none while still passing. `data-dir` is the attribute
+           * `OpsTile` puts on a direction handle and on nothing else.
+           */
+          handle: !!button.getAttribute("data-dir"),
           add: (button.textContent || "").trim() === "+",
         });
       }
@@ -213,7 +225,11 @@ describe.skipIf(!availability.ok)("the toolkit shell says what it is", () => {
     // add to the recipe", 36) and well under the shortest doc that was being
     // read out in its place.
     const long = rows
-      .filter((r) => r.glyphOnly && r.name.length > 60)
+      // `add || handle` is the set the old `glyphOnly` predicate covered: the
+      // `+` buttons, whose 245-character docs were the original report, and
+      // the direction handles. Written out because the handles print a word
+      // now and would otherwise have quietly left the sweep.
+      .filter((r) => (r.add || r.handle) && r.name.length > 60)
       .map((r) => `${r.op}: ${r.name.length} chars from ${r.from}`);
     expect(long, `glyph-only controls announcing prose:\n  ${long.join("\n  ")}`).toEqual([]);
   });
@@ -234,10 +250,10 @@ describe.skipIf(!availability.ok)("the toolkit shell says what it is", () => {
   });
 
   it("leaves the pair rows naming their own direction", () => {
-    // The control. These handles were already right — `base64 — encode` — and
-    // a change to `AddButton` must not reach them. If this fails alongside the
-    // assertions above, the sweep is measuring the wrong thing.
-    const handles = rows.filter((r) => !r.add && r.glyphOnly);
+    // The control. These handles were already right — `base64.encode — encode`
+    // — and a change to `AddButton` must not reach them. If this fails
+    // alongside the assertions above, the sweep is measuring the wrong thing.
+    const handles = rows.filter((r) => !r.add && r.handle);
     const wrong = handles
       .filter((r) => !/ — (encode|decode)(,|$)/.test(r.name))
       .map((r) => `${r.op}: ${JSON.stringify(r.name.slice(0, 90))}`);

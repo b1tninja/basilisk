@@ -231,6 +231,56 @@ export function decodeTwinToken(spec, decode) {
 }
 
 /**
+ * @typedef {{ stem: string, forward: string, reverse: string }} PairTokenParts
+ */
+
+/**
+ * Split a conjugate row's two recipe tokens into the part they share and the
+ * parts that tell them apart.
+ *
+ * A shelf row that prints one of its two ops is naming half of itself, and a
+ * row that prints both spends the width of a sentence on a column two
+ * characters wide. Splitting the tokens lets the row print what the pair has
+ * in common once and give each button the word that tells it from the other:
+ * `gpg.encrypt` and `gpg.decrypt` become `gpg` with `encrypt` and `decrypt`.
+ *
+ * The stem is the longest run of leading dot-separated segments the two tokens
+ * share, and it is only a stem if a non-empty tail is left on **both** sides.
+ * That proviso is what makes `playbook` / `playbook.verify` share nothing:
+ * taking `playbook` would leave the forward button with nothing at all to
+ * print. `wrap` / `unwrap`, `pem` / `der` and `input` / `out` share nothing to
+ * begin with. What such a row prints on the left instead is not decided here —
+ * see `pairFamilyLabel`, which falls back to the op's toolbox — because that
+ * is a display choice and this is token arithmetic.
+ *
+ * Tokens, not labels. `pairTileLabel` would give this row `Encrypt`/`Decrypt`
+ * and `otp.uri`'s `Build`/`Read`, and a button reading `Build` names no step.
+ * Every tail this returns is the back half of a real op name.
+ *
+ * @param {string} forward forward direction's recipe token (`gpg.encrypt`)
+ * @param {string} reverse reverse direction's recipe token (`gpg.decrypt`)
+ * @returns {PairTokenParts}
+ */
+export function pairTokenParts(forward, reverse) {
+  const f = String(forward || "");
+  const r = String(reverse || "");
+  const fs = f.split(".");
+  const rs = r.split(".");
+  let shared = 0;
+  // `length - 1` on both sides is the "leaves a tail" proviso, enforced while
+  // matching rather than checked afterwards, so `a.b` / `a.b.c` stops at zero.
+  while (shared < fs.length - 1 && shared < rs.length - 1 && fs[shared] === rs[shared]) {
+    shared += 1;
+  }
+  if (!shared) return { stem: "", forward: f, reverse: r };
+  return {
+    stem: fs.slice(0, shared).join("."),
+    forward: fs.slice(shared).join("."),
+    reverse: rs.slice(shared).join("."),
+  };
+}
+
+/**
  * Hint when the user typed a removed Basilisk-legacy token.
  * @param {string} raw
  * @returns {string|null}

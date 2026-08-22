@@ -13,6 +13,7 @@ import {
   getStep,
   listDrawerRows,
   listOpCollections,
+  pairRowMatches,
   KEY_FORMAT_PICKS,
   KEY_FORMAT_META,
   formatDirectionForTip,
@@ -426,14 +427,14 @@ export function OpsShelf({
 
   const grouped = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    const filtered = q
-      ? ops.filter(
-          (op) =>
-            op.name.toLowerCase().includes(q) ||
-            (op.doc || "").toLowerCase().includes(q) ||
-            (op.label || "").toLowerCase().includes(q)
-        )
-      : ops;
+    // `pairRowMatches` is why the row survives a query that only names its
+    // reverse half — see its comment in the registry. This is the second of
+    // the two places the shelf's op list is cut by the same query.
+    const hit = (op: { name: string; doc?: string; label?: string }) =>
+      op.name.toLowerCase().includes(q) ||
+      (op.doc || "").toLowerCase().includes(q) ||
+      (op.label || "").toLowerCase().includes(q);
+    const filtered = q ? ops.filter((op) => pairRowMatches(asStep(op), hit)) : ops;
 
     const byTb = new Map<string, OpsShelfOp[]>();
     for (const op of filtered) {

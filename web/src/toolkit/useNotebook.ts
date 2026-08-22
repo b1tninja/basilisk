@@ -59,7 +59,7 @@ import {
   resolvePresetPair,
   bridgeModeMeta,
 } from "../lib/toolkit/conjugate-stitch.js";
-import { listSteps, getStep } from "../lib/toolkit/registry.js";
+import { listSteps, getStep, pairRowMatches } from "../lib/toolkit/registry.js";
 import { readShareHeader } from "../lib/slip39/blip39.js";
 import { wiredForCell } from "../lib/toolkit/slot-graph.js";
 import {
@@ -4034,12 +4034,16 @@ export function useNotebook() {
     const q = opsFilter.trim().toLowerCase();
     const all = listSteps();
     if (!q) return all;
-    return all.filter(
-      (s: { name: string; doc?: string; toolbox?: string }) =>
-        s.name.includes(q) ||
-        (s.doc || "").toLowerCase().includes(q) ||
-        (s.toolbox || "").toLowerCase().includes(q)
-    );
+    // The shelf draws a conjugate pair on its forward op and discards the
+    // reverse, so cutting the list step by step deletes any row whose reverse
+    // half was the only match — the shelf went blank on `unwrap`, and now that
+    // the reverse handle prints its own name it would go blank on a name it
+    // had just shown. `pairRowMatches` lifts this test onto the row.
+    const hit = (s: { name: string; doc?: string; toolbox?: string }) =>
+      s.name.includes(q) ||
+      (s.doc || "").toLowerCase().includes(q) ||
+      (s.toolbox || "").toLowerCase().includes(q);
+    return all.filter((s) => pairRowMatches(s, hit));
   }, [opsFilter]);
 
   /*

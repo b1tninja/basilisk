@@ -10,7 +10,7 @@
  * Prefer positional short form in docs (`genkey ec/p256`, `out $public`, `in $kp`).
  */
 
-import { BASE_ENCODINGS, CIPHER_DISPATCH_TARGETS } from "./step-names.js";
+import { BASE_ENCODINGS, CIPHER_DISPATCH_TARGETS, decodeTwinToken } from "./step-names.js";
 import {
   POLYMORPHIC_STEPS,
   genkeyOutputBase,
@@ -5953,6 +5953,41 @@ export function defaultCollapsedShelfKeys() {
     }
   }
   return [...keys];
+}
+
+/**
+ * Lift a per-step search test onto the *row* that step draws.
+ *
+ * `listDrawerRows` draws a conjugate pair once, on the forward op, and drops
+ * every step carrying `conjugateOf`. So a filter applied step by step and then
+ * handed here silently deletes any row whose reverse half was the only match:
+ * typing `unwrap` used to render no `wrap` / `unwrap` row at all, and
+ * `gpg.decrypt`, `symdecrypt` and `otp.parse` behaved the same way. That was
+ * survivable while those names appeared nowhere on screen. It stopped being
+ * survivable when the reverse handle started printing `symdecrypt` — a name
+ * the shelf shows you and then cannot find is worse than a name it never
+ * showed.
+ *
+ * Takes the caller's own predicate rather than a query string because the two
+ * places that cut the op list for the shelf do not agree on which fields they
+ * read (one matches `toolbox`, the other `label`); unifying that is a separate
+ * change, and this one has to be true at both of them either way.
+ *
+ * The synthetic `{ name }` is the decode twin, which has no spec of its own —
+ * `blip39.decode` is a string the row prints and no step is called. Every
+ * caller's predicate reads the other fields through `|| ""`, so a bare name is
+ * the whole of what that direction can contribute.
+ *
+ * @param {StepSpec} step a step that might draw a row
+ * @param {(s: { name: string, doc?: string, label?: string, toolbox?: string }) => boolean} hit
+ * @returns {boolean} whether the row this step draws matches
+ */
+export function pairRowMatches(step, hit) {
+  if (!step) return false;
+  if (hit(step)) return true;
+  if (step.decodeTwin && hit({ name: decodeTwinToken(step, true) })) return true;
+  const partner = step.conjugate ? getStep(step.conjugate) : null;
+  return !!partner && hit(partner);
 }
 
 /**
