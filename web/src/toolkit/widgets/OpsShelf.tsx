@@ -215,13 +215,34 @@ function OpsRow({
  */
 function AddButton({
   onClick,
-  title,
+  name,
+  description,
   dragName,
   disabledReason,
   reasonId,
 }: {
   onClick: () => void;
-  title?: string;
+  /**
+   * What this button adds, in the words printed beside it.
+   *
+   * The accessible name is built from this and nothing else. It used to be
+   * built from `title`, which every solo row filled with the op's registry
+   * doc — so a glyph-only `+` announced a 245-character paragraph about
+   * WebCrypto curves that never once said the word `genkey`. Measured on the
+   * shipped bundle at 1440×900: 38 of the shelf's 75 add buttons named
+   * themselves with over 100 characters of prose, 29 of them with over 200,
+   * the longest 1039. A control whose name does not name the control is
+   * 07d4eea's defect wearing different clothes.
+   */
+  name?: string;
+  /**
+   * Prose about it — the registry doc, or the refusal's own sentence. Stays
+   * in `title`, which is both the hover tooltip a pointer already relies on
+   * (a solo row has no ToolCard behind it, unlike a pair) and, now that
+   * `aria-label` supplies the name, the accessible *description*: announced
+   * after the name rather than instead of it.
+   */
+  description?: string;
   /**
    * Step name to put on the drag payload. Omitted only where there is no
    * single step to drag (the HMAC kit's sugar rows).
@@ -238,11 +259,14 @@ function AddButton({
   reasonId?: string;
 }) {
   const refusal = useRefusal(disabledReason, { reasonId });
-  const label = title || "Add to the recipe";
+  // Name first, the way the pair rows say `base64 — encode`: one vocabulary
+  // across the two kinds of row in one shelf, and the word you are hunting
+  // for arrives before the phrase you already know.
+  const label = name ? `${name} — add to the recipe` : "Add to the recipe";
   return (
     <button
       type="button"
-      title={label}
+      title={description || label}
       aria-label={label}
       {...refusal.aria}
       draggable={!refusal.refused && !!dragName}
@@ -363,6 +387,16 @@ export function OpsShelf({
    * can never leak into the next gap's session.
    */
   const [showAll, setShowAll] = useState(false);
+  /**
+   * The heading the panel is named by, when it draws one.
+   *
+   * `bare` embeds the shelf in a host that owns the chrome, and `hideSearch`
+   * takes the block the name lives in with it; in either case there is no
+   * heading to point at and the landmark goes unnamed rather than being given
+   * a second name nobody can see.
+   */
+  const headingId = useId();
+  const namesItself = !bare && !hideSearch;
   useEffect(() => {
     setShowAll(false);
   }, [tipFitProp]);
@@ -512,9 +546,15 @@ export function OpsShelf({
       {!hideSearch ? (
         <div className={cn("border-b border-[var(--border)] px-2.5 py-2", bare && "px-0")}>
           {!bare ? (
-            <p className="mb-1.5 text-[0.65rem] font-bold uppercase tracking-wider text-[var(--muted-foreground)]">
+            /* The shelf already printed its own name here; it was a `<p>`, so
+               the page's outline had nothing in it and the `<aside>` around it
+               was an unnamed landmark. Same six pixels of type, now a heading
+               — the box is declared in toolkit.css because site.css sizes h2
+               for a document and its element rule is unlayered, which beats
+               any utility class regardless of specificity. */
+            <h2 id={headingId} className="ops-shelf-heading">
               Toolkit
-            </p>
+            </h2>
           ) : null}
           <div
             role="tablist"
@@ -803,7 +843,8 @@ export function OpsShelf({
                                         }
                                         reasonId={why}
                                         dragName={row.step!.name}
-                                        title={
+                                        name={row.step!.name}
+                                        description={
                                           unfit
                                             ? `${row.step!.name} ${needsReason(row.step!)}`
                                             : row.step!.doc
@@ -908,6 +949,7 @@ export function OpsShelf({
 
   return (
     <aside
+      aria-labelledby={namesItself ? headingId : undefined}
       className={cn(
         "flex min-h-0 w-[220px] shrink-0 flex-col border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))]",
         className
@@ -1106,7 +1148,8 @@ function FormatKit({
                       : `${direction} ${meta.label} ${needs}, and the caret is holding something else. Move the caret to a step that produces one.`
                   }
                   reasonId={fit ? undefined : whyId}
-                  title={
+                  name={`${direction} ${meta.label}`}
+                  description={
                     fit
                       ? `${direction}: ${meta.title}`
                       : `${direction} ${meta.label} does not fit here`
@@ -1135,7 +1178,8 @@ function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
         action={() => (
           <AddButton
             dragName="sign"
-            title="Insert sign (HMAC keys via genkey hmac/sha256)"
+            name="sign"
+            description="Insert sign (HMAC keys via genkey hmac/sha256)"
             onClick={() => onAppend("sign")}
           />
         )}
@@ -1146,7 +1190,8 @@ function MacKit({ onAppend }: { onAppend: Props["onAppend"] }) {
         action={() => (
           <AddButton
             dragName="verify"
-            title="Insert verify (recipe sugar: hmac.verify)"
+            name="verify"
+            description="Insert verify (recipe sugar: hmac.verify)"
             onClick={() => onAppend("verify")}
           />
         )}

@@ -261,6 +261,18 @@ function runRefusal(
  */
 const cellReadinessId = (cell: number) => `cell-readiness-${cell}`;
 
+/**
+ * The two ids the workspace's landmarks are named by.
+ *
+ * Constants rather than `useId`, because both are referenced across the shell
+ * — the notebook's `<main>` is named by a heading that lives up in the top
+ * bar, several hundred lines away and inside another component — and because
+ * exactly one shell renders per page, so a generated id would buy uniqueness
+ * that is already guaranteed and cost the ability to point at it from here.
+ */
+const NOTEBOOK_TITLE_ID = "toolkit-notebook-title";
+const TRAY_TITLE_ID = "toolkit-tray-title";
+
 /** Collapse an artifact's content to one displayable line for OutputList (§20h). */
 function oneLinePreview(content: string, max = 140): string {
   const flat = content.replace(/\s+/g, " ").trim();
@@ -2564,6 +2576,7 @@ export function ToolkitShell() {
         <TopBar
           title={nb.title}
           onRename={(next) => nb.setTitle(next)}
+          headingId={NOTEBOOK_TITLE_ID}
           subtitle={`${nb.chains.length} cell${nb.chains.length === 1 ? "" : "s"}`}
           suiteStatus={suitePillStatus}
           suiteDetail={suiteDetail}
@@ -2892,8 +2905,24 @@ export function ToolkitShell() {
           toolkit.css for how the desktop row still draws it third.
         */}
         <div className="toolkit-workspace min-h-0 flex-1" ref={opsWorkspaceRef}>
-          {/* Notebook — first in the document, third in the desktop row. */}
-          <section
+          {/*
+            Notebook — first in the document, third in the desktop row, and
+            the page's `<main>`.
+
+            It was a `<section>` with no name, which is not a landmark at all:
+            measured on the shipped bundle the page carried `nav` and one
+            `aside` and nothing else, so the subject of the page sat in no
+            region, offered no skip target, and could not be jumped to. `main`
+            is the tightest honest choice — it is *this* pane, not the shell,
+            because a `main` wrapping the top bar and both side panes would
+            land a skip link on the chrome again.
+
+            Named by the top bar's `<h1>`, which is the notebook's title and
+            already on screen. Pointing at it beats minting an `sr-only`
+            heading here: same words, one copy, and a rename moves both.
+          */}
+          <main
+            aria-labelledby={NOTEBOOK_TITLE_ID}
             className="toolkit-notebook flex min-w-0 flex-1 flex-col"
             onDragOver={(e) => {
               if ([...e.dataTransfer.types].includes(STEP_MIME) || [...e.dataTransfer.types].includes("text/plain")) {
@@ -3906,7 +3935,7 @@ export function ToolkitShell() {
                 </details>
               </div>
             </ScrollArea>
-          </section>
+          </main>
 
           {opsCollapsed ? (
             <button
@@ -4060,7 +4089,26 @@ export function ToolkitShell() {
 
         {/* Session tray — persistent, not modal. Replaces the old Keyring/Variables/Crypto sheets. */}
         {trayOpen ? (
-          <div className="toolkit-tray flex w-[328px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)]">
+          <aside
+            aria-labelledby={TRAY_TITLE_ID}
+            className="toolkit-tray flex w-[328px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface)]"
+          >
+            {/*
+              The one heading here that is not already on screen, and it stays
+              that way. The shelf's name was visible and only needed promoting;
+              this panel has no title bar, and giving it one would be 328px of
+              new furniture on the densest column in the shell to state
+              something its own tab strip already says. `sr-only` is what an
+              honest heading looks like when the picture is complete without
+              it — a name for the landmark and a stop for heading navigation,
+              costing no pixels.
+
+              Not `aria-label` on the aside alone: that names the region and
+              leaves the outline as empty as it was found.
+            */}
+            <h2 id={TRAY_TITLE_ID} className="sr-only">
+              Session tray
+            </h2>
             <div
               role="tablist"
               aria-label="Session tray"
@@ -5201,7 +5249,7 @@ export function ToolkitShell() {
                 </ScrollArea>
               </>
             ) : null}
-          </div>
+          </aside>
         ) : (
           <button
             type="button"

@@ -447,6 +447,50 @@ body.layout-app:has(#app > .toolkit-shell) {
 }
 
 /*
+ * Two headings that were already on the screen as something else.
+ *
+ * The shell shipped with `h1: 0, h2: 0` — heading navigation did nothing on
+ * the page, and the one `h3` on it belonged to the key vault four levels
+ * down. The repair is not new furniture. The notebook's name is already the
+ * top bar's rename control and the shelf already prints "Toolkit" over its
+ * search field, so each becomes the heading it was reading as, and the third
+ * region — the tray — takes an `sr-only` one because it has no title bar and
+ * does not need to grow one.
+ *
+ * What that costs is a box. site.css sizes `h1` and `h2` for a document
+ * (24px, 16.8px, margins of their own) and both of these are chrome. It has
+ * to be undone here rather than with utility classes: `@import "tailwindcss"`
+ * puts utilities in `@layer utilities`, site.css's element rules are
+ * unlayered, and an unlayered rule beats a layered one no matter what the
+ * specificity says. That is not a theory — the `<p>` the shelf heading
+ * replaces was already rendering site.css's `p { margin: .5rem 0 }` instead
+ * of its own `mb-1.5`, which is why the margin below is written as `.5rem`:
+ * the promotion has to be invisible, so the box it keeps is the box it had.
+ */
+.topbar-heading {
+  /* Flex, and for a measured reason: the title control used to be a flex item
+     of the bar itself and so was blockified. Inside an ordinary block heading
+     it goes back to `inline-block`, sits on a text baseline, and the line
+     box's descender space made the bar 77px instead of 76 at a 375px
+     viewport — the whole page a pixel lower. A flex parent blockifies it
+     again and the bar measures exactly what it did before. */
+  display: flex;
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+.ops-shelf-heading {
+  margin: 0.5rem 0;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/*
  * The workspace row, and why its order is written down twice.
  *
  * Left to right on a desktop this reads `[Toolkit panel][splitter][notebook]
