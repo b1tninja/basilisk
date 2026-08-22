@@ -277,17 +277,26 @@ describe.skipIf(!availability.ok)("the shelf draws the type it names", () => {
       byShape.set(shape, [...(byShape.get(shape) || []), text].sort());
     }
     const collisions = [...byShape.values()].filter((g) => g.length > 1).map((g) => g.join(" = "));
-    // **One**, and it is older than this file. `shares` and `recipients` both
-    // resolve to lucide's `Users` in `KIND_GLYPHS`, and `kindGlyph`'s own
-    // comment records why the obvious fix is not free: `GLYPH_PATHS` already
-    // has a `shares` asset — the offset share cards — but the map is
-    // consulted first *on purpose*, so the tray tab that owns the name keeps
-    // the chrome icon it has. Reported rather than quietly widened: this
-    // asserts the exact pair, so a second collision fails here.
+    // **None**, and the exemption that used to be here is what closed it.
+    // This asserted the exact pair `shares = recipients`, both of which
+    // resolved to lucide's `Users` in `KIND_GLYPHS` while `GLYPH_PATHS` held a
+    // drawing for each. The comment justifying that consulted `kindGlyph`'s
+    // own note about the tray tab keeping its chrome icon — which turned out
+    // to be about `share`, a different name that never collided with either.
+    //
+    // Five names were shadowed that way, not two. They are out of
+    // `KIND_GLYPHS` now and draw their own art, and the invariant that keeps
+    // them there is pinned at the unit layer by `glyph-shadowing.test.js`: no
+    // name may appear in both maps.
+    //
+    // Spending the exemption rather than deleting the assertion, because the
+    // sweep above is still satisfied by one glyph everywhere. An empty list is
+    // the strongest form this test has ever had, and any new collision fails
+    // it — which is what the exact-pair form was for.
     expect(
       collisions,
       `types sharing a mark: ${collisions.join("; ")}`
-    ).toEqual(["needs recipients = needs shares"]);
+    ).toEqual([]);
   });
 
   it("never asks for `any`, which is not a type", () => {

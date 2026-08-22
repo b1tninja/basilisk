@@ -91,7 +91,16 @@ function readTray() {
     capabilityHeading: all.find((t) => /^Browser capability$/.test(t)) || null,
     capabilityBadge: all.find((t) => /^WebAuthn API /.test(t)) || null,
     capabilityProse: all.find((t) => /^This browser exposes/.test(t)) || null,
-    fipsBlurb: all.find((t) => /^Flags any recipe|^Blocks adding|^Verified suites only/.test(t)) || null,
+    // Every wording this paragraph has had, kept together on purpose: a
+    // scraper that only knows the current one silently returns `null` when the
+    // copy changes, and `null` satisfies a `not.toMatch` — so the assertion
+    // that FIPS never names WebAuthn would have gone on passing while matching
+    // nothing at all. `Refuses` is the wording since the switch started
+    // refusing rather than only flagging.
+    fipsBlurb:
+      all.find((t) =>
+        /^Refuses any run|^Flags any recipe|^Blocks adding|^Verified suites only/.test(t)
+      ) || null,
     banner: all.find((t) => /^FIPS mode:/.test(t)) || null,
   };
 }
@@ -208,7 +217,11 @@ describe.skipIf(!availability.ok)("the suite pill counts self-tests only", () =>
     expect(seen.pill).toBe("0 of 3 suites verified");
     expect(seen.tone).toBe("error");
     expect(seen.rows?.at(-1)).toBe("WebAuthn APIpresent");
-    expect(seen.fipsBlurb).toMatch(/^Flags any recipe that uses an unverified suite \(/);
+    // "Refuses", not "Flags": the switch used to have no effect on the run
+    // path, and this sentence used to say so. It names the suites and then the
+    // way out, and the run path throws the same shape.
+    expect(seen.fipsBlurb, "the tray paragraph was not found at all").not.toBeNull();
+    expect(seen.fipsBlurb).toMatch(/^Refuses any run that reaches an unverified suite \(/);
     // Named suites, and only suites. WebAuthn is not gated by FIPS and must
     // never appear in this list, however the self-test went.
     expect(seen.fipsBlurb).not.toMatch(/WebAuthn/);
