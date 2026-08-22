@@ -28,7 +28,26 @@ const NAV_LINKS: { id: string; label: string; href: string }[] = [
   { id: "stats", label: "Stats", href: "/stats" },
 ];
 
-export function Layout({ active, children }: { active: string; children: ReactNode }) {
+export function Layout({
+  active,
+  children,
+  ownsMain = false,
+}: {
+  active: string;
+  children: ReactNode;
+  /**
+   * The children already provide the page's `<main>`, so this component must
+   * not add a second one.
+   *
+   * `/toolkit` is the only caller that sets it, and the reason is structural
+   * rather than a quirk: the shell is a three-column workspace, and the region
+   * a person means by "the main content" is the notebook -- not the shelf and
+   * tray flanking it. `ToolkitShell` therefore points a labelled `<main>` at
+   * the notebook alone, and wrapping the whole workspace in another one would
+   * both nest the landmarks and claim the wrong thing.
+   */
+  ownsMain?: boolean;
+}) {
   return (
     <>
       <nav>
@@ -49,7 +68,18 @@ export function Layout({ active, children }: { active: string; children: ReactNo
         </div>
         <ProfileMenu />
       </nav>
-      {children}
+      {/* Every page built on this Layout had a `<nav>` and nothing else with a
+          role, so the whole document body was one undifferentiated region and
+          "skip to the content" had no content to skip to. `191f2ed` gave
+          `/toolkit` its `<main>`; these six share one component, so they share
+          one fix.
+
+          A plain block box on purpose. `body` here is `max-width` plus `margin:
+          0 auto` with no flex or grid and no `body > *` selector anywhere in
+          `site.css`, so this element inherits the layout it wraps and changes
+          none of it -- checked before adding it, because a landmark that
+          reflows the page it labels would trade one defect for a worse one. */}
+      {ownsMain ? children : <main>{children}</main>}
     </>
   );
 }

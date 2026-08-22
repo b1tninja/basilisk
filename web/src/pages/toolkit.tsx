@@ -25,7 +25,9 @@ function ToolkitPage() {
   }, []);
 
   return (
-    <Layout active="toolkit">
+    // `ToolkitShell` points a labelled `<main>` at the notebook pane; a
+    // second one here would nest the landmarks and name the wrong region.
+    <Layout active="toolkit" ownsMain>
       {selfTestError ? (
         <p className="text-error page-notice">
           {selfTestError}

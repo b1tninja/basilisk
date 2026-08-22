@@ -186,6 +186,15 @@ function CatalogApp() {
           </nav>
         </header>
 
+        {/* The catalog is the seventh page in the landmark sweep and the only
+            one not built on `Layout`, so it gets its own. The nav lives inside
+            `<header>` above, which leaves every Section below it in no region
+            at all.
+
+            The children are deliberately not re-indented: shifting two
+            thousand lines to add one wrapper produces a diff nobody can read
+            past, and JSX does not care. */}
+        <main>
         <Section id="glyph" title="Glyph">
           <div className="flex flex-wrap items-end gap-6">
             {["genkey", "openpgp", "tee", "export", "gear"].map((id) => (
@@ -2330,6 +2339,7 @@ function CatalogApp() {
           </p>
           <DkgStates />
         </Section>
+        </main>
       </div>
     </TooltipProvider>
   );

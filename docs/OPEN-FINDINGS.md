@@ -151,22 +151,23 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **Solo shelf rows truncate their op names at 160px** — `d…`, `h…`, `p…`. The
-  same defect `3ef6526` fixed for pair rows, in a different component.
 - **The footer kit bar overflows at 160px**: `.ops-panel` is scrollWidth 173 /
   clientWidth 160, and the element outside is the "HMAC" kit button.
   Pre-existing, present before any kit is opened.
-- **`.pane-splitter` in `site.css`** — the legacy toolkit's splitter — has the
-  identical keyboard gap `07d4eea` fixed on the ops splitter: `role="separator"`
-  with no `tabIndex` and no key handler.
-- **The other seven pages have not been audited** for landmarks or headings.
-  `/toolkit` had `h1: 0`, `h2: 0` and no `<main>` before `191f2ed`; the rest
-  most likely still do.
-- **`publishedAs` renders `@<last8>`** — a truncated fingerprint shown to a
-  person. Pre-existing, matches the design gallery, and the whole value sits
-  beside it in `directoryUrl`; but it brushes the standing rule that a partial
-  fingerprint is *"the exact same problem as the short id, just different
-  bytes."*
+- **`.pane-splitter` is styled in three stylesheets and rendered by nothing.**
+  `site.css`, `toolkit.css` and `.ds-styles.css` all carry rules for it; a sweep
+  of every `.tsx`, `.ts`, `.js`, `.html` and template in the repo finds no
+  element that wears the class. This entry previously described a keyboard gap
+  on it, which was wrong in the way that matters — there is no control to reach,
+  so there is nothing to fix and the styles are dead. Deleting them is a small
+  cleanup, not an accessibility fix.
+- **The eight pages are audited for landmarks now; headings are still open.**
+  `<main>` is fixed and pinned by `site-landmarks.e2e.js`. Headings are not:
+  the six `Layout` pages have **no `h2` at all**, so each one's internal
+  structure is carried by styling alone and its outline is a single line. That
+  is a content question per page, not one shared fix. (`/key` also renders no
+  heading until its key loads, so its error and loading states are headingless
+  — the smallest concrete piece of this.)
 - **`hideSearch` on `OpsShelf` is set by no caller** and now guards whether the
   shelf's landmark gets its accessible name.
 
@@ -197,6 +198,15 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 ---
 
 ## How to use this file
+
+**Re-verify before acting on an entry.** This file's rule is that items are
+deleted when fixed, and it was broken almost immediately: three of §5's six
+entries described work that had already landed, and survived two later edits of
+this same file because updating it and reading it were separate passes. One of
+the three was not merely stale but wrong — it described a keyboard defect on an
+element that does not exist. Each was disproved in under a minute by grepping
+for the thing it claimed. Do that first; a fix aimed at an already-fixed item
+spends the trust this file runs on.
 
 Take the top of §1 first. Everything there is a control that does not control,
 which is worse than a missing feature: somebody is relying on it. §2 is next,
