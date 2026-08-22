@@ -93,8 +93,13 @@ describe("an op that doesn't fit still explains itself", () => {
     // `blip39.encode - encode`, and `gpg.encrypt - encode` on a row that does
     // not encode. What must survive is the *reason* - the name still says why
     // the handle cannot be used, which is the claim this test was written for.
-    expect(TILE).toMatch(/unavailable: \$\{needs\.forward\}/);
-    expect(TILE).toMatch(/unavailable: \$\{needs\.reverse\}/);
+    // `.text`, because `needs` carries `{ text, type }` now so the caption can
+    // draw the type's mark beside the words. The claim is unchanged and the
+    // half that matters is the half that moved: the name still ends in the
+    // reason, and it ends in the *words* rather than in an object that would
+    // have stringified to `[object Object]` on every refused handle.
+    expect(TILE).toMatch(/unavailable: \$\{needs\.forward\.text\}/);
+    expect(TILE).toMatch(/unavailable: \$\{needs\.reverse\.text\}/);
   });
 
   it("wires the accelerator its own badge advertises", () => {
@@ -113,8 +118,14 @@ describe("an op that doesn't fit still explains itself", () => {
   it("states one reason once when both directions want the same input", () => {
     // "needs bytes" printed under each handle doubled the row height and the
     // noise for no extra fact.
+    // Compared on `.text` rather than by identity. `needs` became `{ text,
+    // type }` so the caption could draw the type's mark, and two directions
+    // wanting the same type now produce two distinct objects — an identity
+    // check would have split every row that used to share one caption and
+    // silently restored the doubled height this test was written against,
+    // while still passing as a source regex.
     expect(TILE).toMatch(
-      /const sharedNeed =\s*\r?\n?\s*needs\?\.forward && needs\.forward === needs\.reverse \? needs\.forward : null;/
+      /const sharedNeed =\s*\r?\n?\s*needs\?\.forward && needs\.forward\.text === needs\.reverse\?\.text \? needs\.forward : null;/
     );
     expect(TILE).toMatch(/const splitNeeds = sharedNeed \? undefined : needs;/);
   });

@@ -2,13 +2,17 @@ import {
   Activity,
   AlignLeft,
   Binary,
+  Box,
   Boxes,
   Cable,
   FileDown,
+  IdCard,
   Network,
   Radio,
+  ScrollText,
   Shield,
   Signature,
+  ToggleLeft,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -74,6 +78,44 @@ export const KIND_GLYPHS: Record<string, LucideIcon | string> = {
   "ssh-private": "key-secret",
   "public-key": "key-public",
   "secret-key": "key-secret",
+  /*
+   * The seventh key, and the one the split above could not absorb.
+   *
+   * `openpgp-key` is a *type* rather than a role — no entry in
+   * `ARTIFACT_ROLES` wears it — and it is the type `gpg.genkey`, `hkp.get`,
+   * `agent.unlock`, `agent.pub` and `agent.save` declare. Left unmapped it
+   * drew nothing at all, so the shelf printed `needs openpgp-key` in words
+   * beside rows whose types have had a mark since §35.
+   *
+   * It could not reuse `key-public` or `key-secret`, which is what `ssh-public`
+   * and `ssh-private` already draw: an OpenPGP key would then be a *third*
+   * concept sharing a pictogram with two others, which is the defect this map
+   * was rewritten against one commit above. `key-openpgp` differs by a whole
+   * arm rather than by a detail — the shank drops to a second shank with its
+   * own bit — because subkeys are what the type's own doc names as the thing
+   * an OpenPGP key carries and a CryptoKey has no room for. Not the armour
+   * bar `gpg-genkey` wears: that doc says this type is the packet structure
+   * "not the armored text around it", so armour would be a mark for the one
+   * thing it is not.
+   *
+   * Measured the way the bow split was, rasterised at 12px: per-pixel L1 of
+   * 28.3 against `ssh` and 35.7 against `key-secret`, where `key-public`
+   * against `key-secret` — the pair this file already ships as unmistakable
+   * at this size — is 6.2.
+   *
+   * The bow is filled, and that is the same asymmetry `key` is decided on: an
+   * OpenPGP key is public or private and this type cannot know which, so the
+   * neighbour it is likeliest to be mistaken for should be the secret one.
+   * Over-warning costs a reading; under-warning hands out a private key.
+   *
+   * Deliberately absent from `KEY_GLYPH_TIERS` below, which is the artifact
+   * badge's sensitivity axis: this glyph never renders on a badge, because an
+   * OpenPGP key whose half is known arrives as the `openpgp-public` or
+   * `openpgp-private` *kind* and draws `key-public`/`key-secret` there. There
+   * is no tint beside it to agree or disagree with, and a tier here would
+   * assert one where none is painted.
+   */
+  "openpgp-key": "key-openpgp",
   share: Users,
   shares: Users,
   recipients: Users,
@@ -89,6 +131,58 @@ export const KIND_GLYPHS: Record<string, LucideIcon | string> = {
   candidate: Radio,
   session: Cable,
   channel: Cable,
+  /*
+   * The four remaining pipeline types, all lucide, all chosen at 12px.
+   *
+   * `bool` is a switch and not a tick. A tick or a cross names *one* of the
+   * two values, and the five steps that produce a bool are all verifications
+   * — `verify`, `gpg.verify`, `ssh.verify`, `otp.verify`, `run.verify` — whose
+   * whole point, in the type's own words, is that "a failed verification is
+   * `false`, not an error". A mark that draws the passing case would be a
+   * claim about a value that has not been computed yet. A toggle draws the
+   * two-valuedness and asserts neither.
+   *
+   * `sdp` is a written description. The type is "text on the wire, but typed
+   * distinctly so an offer cannot be fed where an answer belongs", so the mark
+   * says *document*, not *direction* and not *agreement*: a handshake asserts
+   * the two ends met, which is exactly what an unanswered offer has not done,
+   * and a paired arrow claims the horizontal band `ports` owns.
+   *
+   * `item` is one of `bundle`. Drawing it as the singular of `Boxes` is the
+   * relation itself, and at 12px it is a mass difference rather than a
+   * spot-the-cube one: 38.9 of ink against 53.8, L1 48.3 apart.
+   *
+   * `certificate` is a DTLS certificate, and the type's doc says what it does
+   * in four words — it "identifies one end". An identity card says that and
+   * nothing more; a rosette or a shield-with-tick would say the certificate
+   * was *trusted*, and a self-signed one asserts nothing of the sort.
+   *
+   * Each was measured against every lucide icon this map already draws,
+   * rasterised at 12px: the closest pair is `certificate` against `text` at
+   * L1 23.9, and the smallest margin any of the four has is 3.8× the 6.2 that
+   * separates `key-public` from `key-secret`.
+   */
+  bool: ToggleLeft,
+  sdp: ScrollText,
+  item: Box,
+  certificate: IdCard,
+  /*
+   * `any` is deliberately not here, and it is not an omission.
+   *
+   * It is the only name in the step vocabulary that is not a type: the type
+   * registry does not list it (`listTypes()` returns 23 entries and `any` is
+   * none of them), and the nine steps that declare it — `text`, `out`,
+   * `inspect`, `tee`, `peek`, `select`, `publish`, `clipboard.write`,
+   * `file.save` — are the sinks and the pass-throughs, the ones that place no
+   * constraint at all. A pictogram for "anything" is a picture of nothing: it
+   * would have to be recognisable, so it would have to look like *something*,
+   * and whatever that something was would be a claim these steps do not make.
+   *
+   * It costs nothing on screen either, because a step whose input is `any`
+   * accepts the caret whatever the caret is holding, so it never prints a
+   * `needs …` caption for a glyph to sit beside. Unmapped is the honest
+   * rendering and the one that never appears.
+   */
 };
 
 /**

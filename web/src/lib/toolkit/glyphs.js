@@ -68,6 +68,7 @@ export const GLYPH_PATHS = {
   "jose-decode": "<path d=\"M2.5 5h5v4h-5zM8.5 5h4v4h-4zM13.5 5h4v4h-4z\"/> <circle cx=\"8.8\" cy=\"14.2\" r=\"2.7\"/> <path d=\"M10.8 16.2l2.2 2.2\"/>",
   "jose-jwe": "<path d=\"M2.5 8h4v5h-4z\"/> <path d=\"M7.8 8h4.4v5H7.8z\" fill=\"currentColor\"/> <path d=\"M13.5 8h4v5h-4z\"/> <path d=\"M6.9 10.5h.5M12.6 10.5h.5\"/>",
   "kdf": "<path d=\"M3.5 3h13L12 9H8L3.5 3z\"/><path d=\"M8 9h4v2.2\"/><path d=\"M6 11.2h8L12.5 17h-5L6 11.2z\"/>",
+  "key-openpgp": "<circle cx=\"5.4\" cy=\"6.4\" r=\"2.8\" fill=\"currentColor\"/> <path d=\"M8.2 6.4h9\"/> <path d=\"M14.6 6.4v2.4\"/> <path d=\"M8.2 6.4v8.2\"/> <path d=\"M8.2 14.6h9\"/> <path d=\"M14.6 14.6v2.4\"/>",
   "key-pair": "<circle cx=\"4.9\" cy=\"10\" r=\"2.3\" fill=\"currentColor\"/> <circle cx=\"9.9\" cy=\"10\" r=\"2.7\"/> <path d=\"M12.6 10h4.6\"/> <path d=\"M14.7 10v2.6\"/> <path d=\"M17.2 10v2\"/>",
   "key-public": "<circle cx=\"6.8\" cy=\"10\" r=\"3.2\"/> <path d=\"M10 10h7.2\"/> <path d=\"M13.8 10v2.8\"/> <path d=\"M16.4 10v2.2\"/>",
   "key-secret": "<circle cx=\"6.8\" cy=\"10\" r=\"3.2\" fill=\"currentColor\"/> <path d=\"M10 10h7.2\"/> <path d=\"M13.8 10v2.8\"/> <path d=\"M16.4 10v2.2\"/>",

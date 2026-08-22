@@ -24,6 +24,7 @@ import {
 import { CIPHER_DISPATCH_TARGETS } from "../../lib/toolkit/step-names.js";
 import { listTypes, type TypeMeta } from "../../lib/toolkit/type-registry.js";
 import type { RecipeParams } from "../../lib/toolkit/recipe.js";
+import { toolboxToSuite } from "../../lib/toolkit/suite-gate.js";
 import type { SuiteStatusMap } from "../../lib/toolkit/suite-gate.js";
 import { TypeCard } from "./TypeCard";
 import { cn } from "@/lib/cn";
@@ -31,7 +32,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { useRefusal } from "@/components/ui/refusal";
 import { CastDot, Glyph, glyphIdFor } from "./Glyph";
-import { OpsTile } from "./OpsTile";
+import { NeedCaption, OpsTile, type OpsNeed } from "./OpsTile";
 import { STEP_MIME, stepDragPayload } from "./mime";
 import type { ToolCardOp } from "./ToolCard";
 
@@ -123,11 +124,106 @@ const searchAccel =
  */
 const OPS_DIM_TEXT = "text-[var(--muted-foreground)]";
 
-/** Plain-language reason a dimmed op doesn't fit the current caret tip. */
-function needsReason(step: { input?: string } | null | undefined): string {
+/**
+ * Plain-language reason a dimmed op doesn't fit the current caret tip, and
+ * the type those words name.
+ *
+ * The type rides along so the caption can draw its mark — see `OpsNeed`. It
+ * is `step.input` and nothing else, so the pictogram and the words come from
+ * one source and a row can never print one type and draw another.
+ *
+ * **`any` is not a type, and this is where that stopped being said out loud.**
+ * Nine rows on the default page — `text`, `out`, `publish`, `select`,
+ * `inspect`, `tee`, `peek`, `clipboard.write`, `file.save` — declare
+ * `input: "any"`, and on an empty notebook every one of them printed `needs
+ * any`. That names a constraint none of them has: `any` is the *absence* of
+ * one, it is not in the type registry's own list of twenty-three, and the
+ * only reason those rows are refused is that the caret is holding nothing
+ * for them to take. So they say that instead, and they carry no glyph,
+ * because a pictogram for "anything" would have to look like something.
+ *
+ * The other `any` case is `tee` inside a `foreach` body, which is refused by
+ * a nesting rule rather than by the caret's type — `tipFitFor` drops it, and
+ * this function is not told. It gets the caret-shaped sentence too, which is
+ * why that branch says only that the row does not fit here: it is the one
+ * claim true in both, and it promises no remedy the reader cannot perform.
+ *
+ * @param tip What the caret is holding — the same value the fit filter is built from.
+ */
+function needsFor(
+  step: { input?: string } | null | undefined,
+  tip?: OpsShelfTip
+): OpsNeed {
   const input = step?.input;
-  if (!input || input === "none") return "needs input";
-  return `needs ${input}`;
+  if (!input || input === "none") return { text: "needs input" };
+  if (input === "any") {
+    const empty = !tip?.base || tip.base === "none";
+    return { text: empty ? "needs a value" : "does not fit here" };
+  }
+  return { text: `needs ${input}`, type: input };
+}
+
+/**
+ * Which CAST suite qualifies a toolbox's ops — the suite, never the module.
+ *
+ * The owner asked to see a module validated before using its tools, and the
+ * honest answer is that modules are not what CAST validates. Three suites
+ * cover fourteen toolboxes: `ssh` maps to **webcrypto**, because SSH's maths
+ * is SubtleCrypto and @noble and that is what the self-test exercises, while
+ * `age`, `jose`, `otp`, `file`, `io`, `encoding` and the rest map to nothing
+ * at all. A header that printed the module would have said "SSH" and left a
+ * reader to assume an SSH self-test exists.
+ *
+ * **The null case is the whole point and is printed, not hidden.** `CastDot`
+ * renders nothing for a toolbox with no suite, which is right for a *status*
+ * light — there is no status — but it means the absence of a CAST claim and
+ * the absence of a rendered dot look identical, and "no self-test covers
+ * these ops" is exactly the fact a reader weighing a toolbox needs. So this
+ * says it in words.
+ *
+ * Static, and deliberately not wired to `suiteStatus`: which suite qualifies
+ * an op is a fact about the registry and true before the page boots, while
+ * whether that suite is currently green is live state the dot beside this
+ * already carries. Two channels, one fact each.
+ */
+function suiteChipText(toolbox: string): string {
+  const suite = toolboxToSuite(toolbox);
+  return suite ? `CAST ${suite}` : "no CAST suite";
+}
+
+/**
+ * The chip itself.
+ *
+ * A `span` of plain text, so it lands in the header button's accessible name
+ * as content rather than being announced through a `role="img"` label that
+ * would replace the words a sighted reader has. `CAST openpgp` under a header
+ * reading "OpenPGP" repeats a word, and that is the honest cost of a uniform
+ * rule: two of the fourteen toolboxes share their name with the suite that
+ * qualifies them, and dropping the chip on those two is what would make
+ * `SSH — CAST webcrypto` look like a special case instead of the fact.
+ *
+ * Literal class strings, no inline style: `style-src 'self'` refuses a style
+ * attribute in production, and Tailwind's scanner reads source text.
+ */
+function SuiteChip({ toolbox }: { toolbox: string }) {
+  const suite = toolboxToSuite(toolbox);
+  return (
+    <span
+      data-suite-chip={suite || "none"}
+      /* Lower case, not the header label's `uppercase`: `openpgp`,
+         `webcrypto` and `sss` are the ids `suite-gate.js` returns, and this
+         panel's rule is that a token it prints is the token you can type —
+         `WEBCRYPTO` is not one. */
+      className={cn(
+        "shrink-0 rounded-[3px] px-1 py-px font-mono text-[8.5px] font-semibold",
+        suite
+          ? "bg-[color-mix(in_srgb,var(--brand)_12%,transparent)] text-[var(--muted-foreground)]"
+          : "border border-dashed border-[color-mix(in_srgb,var(--muted-foreground)_35%,transparent)] text-[var(--muted-foreground)]"
+      )}
+    >
+      {suiteChipText(toolbox)}
+    </span>
+  );
 }
 
 /** Reverse-direction input for a pair row — conjugate's own input, or the twin's decode io (§20c). */
@@ -156,7 +252,7 @@ function OpsRow({
 }: {
   op: { toolbox?: string };
   name: string;
-  hint?: ReactNode;
+  hint?: OpsNeed;
   dim?: boolean;
   /**
    * A function of the hint's id, because on a row that doesn't fit the caret
@@ -170,8 +266,38 @@ function OpsRow({
   const hintId = useId();
   return (
     <div
+      /*
+       * The solo row wraps, for the reason 3ef6526 made the pair row wrap.
+       *
+       * That commit measured the conjugate rows and left these alone, and
+       * they were already losing text: at the panel's 160px minimum, eleven
+       * of them — `clipboard.write` wants 95px of a 77px column,
+       * `recipients.merge` 101 — printed a shortened op name with *no caret
+       * active at all*, because `min-w-0 truncate` will spend characters
+       * before it will spend a line. A row reading `recipients.mer…` names a
+       * step you cannot type, which is the thing this repo does not do to a
+       * fingerprint and should not do to an op.
+       *
+       * Adding the type's mark to the caption made it worse rather than
+       * caused it, so the fix is the one already in the file: the caption and
+       * the `+` are one box that moves to a second line together, and the
+       * name is `shrink-0` so it can never be the thing that gives way.
+       *
+       * It is bought with height and the price is measured. On the default
+       * page — a caret is active, so the captions are live — the committed
+       * shelf clipped **8** of these names at 220px and **36** at 160, with
+       * `agent.save` rendering into zero pixels and `foreach` into six. None
+       * clips now; 13 rows take a second line at 220 and 39 at 160, and the
+       * whole tree is 8% taller at 220 and 26% at 160. Thirty-six names for a
+       * quarter of the scroll at the width someone chose deliberately.
+       *
+       * `gap-x-1.5` rather than the `gap-2` every other row here uses: two
+       * pixels either side of the name is what four of those rows at 220 were
+       * short by, and a 6px channel between a glyph and the word it labels is
+       * the same channel `NeedCaption` uses inside itself.
+       */
       className={cn(
-        "flex items-center gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]",
+        "flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]",
         className
       )}
     >
@@ -184,22 +310,25 @@ function OpsRow({
       />
       <code
         className={cn(
-          "min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium",
+          "grow shrink-0 font-mono text-[11.5px] font-medium",
           dim ? OPS_DIM_TEXT : "text-[var(--foreground)]"
         )}
       >
         {name}
       </code>
-      {hint ? (
-        <span
-          id={hintId}
-          data-disabled-reason
-          className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]"
-        >
-          {hint}
-        </span>
-      ) : null}
-      {action(hint ? hintId : undefined)}
+      {/* Shrinkable, unlike the name: line breaking asks for this box's
+          unwrapped width, so it moves down whole, and once it is down there
+          it may still need to give way to the `+` beside it. */}
+      <span className="flex min-w-0 items-center gap-1.5">
+        {hint ? (
+          <NeedCaption
+            id={hintId}
+            need={hint}
+            className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]"
+          />
+        ) : null}
+        {action(hint ? hintId : undefined)}
+      </span>
     </div>
   );
 }
@@ -332,8 +461,13 @@ function SectionHeader({
       aria-expanded={open}
       /* Not dimmed at zero fit any more. This is a live button and the only
          way back into a collapsed toolbox; `opacity-40` took its label to
-         1.82:1. The count already reads "0 fit", which is the fact. */
-      className="flex w-full items-center gap-1.5 px-1 py-[5px] text-left"
+         1.82:1. The count already reads "0 fit", which is the fact.
+
+         `flex-wrap`, because the suite chip is 50–66px of a 143px line at the
+         panel's 160px minimum and "Input / output" is 88 of it. The chip drops
+         to a second line there rather than pushing the count off the edge —
+         the same answer the pair row gives, and it costs no breakpoint. */
+      className="flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 py-[5px] text-left"
     >
       <span className="text-[8px] text-[var(--muted-foreground)]" aria-hidden>
         {open ? "▾" : "▸"}
@@ -343,8 +477,15 @@ function SectionHeader({
       </span>
       {/* CAST belongs here rather than on each op: the self-test qualifies a
           suite, so one light per toolbox states the fact once instead of
-          repeating it down twenty identical rows. */}
+          repeating it down twenty identical rows.
+
+          The dot and the chip beside it are the two halves of one question.
+          The dot says whether the suite is green *this session*; the chip says
+          which suite that is, and — where there is none — that nothing
+          self-tests these ops, which is the half the dot cannot say because
+          it renders nothing at all in that case. */}
       <CastDot op={{ toolbox }} status={castStatus} />
+      <SuiteChip toolbox={toolbox} />
       <span className="font-mono text-[10px] text-[var(--muted-foreground)]">
         {fitCount == null ? count : `${fitCount} fit`}
       </span>
@@ -743,6 +884,7 @@ export function OpsShelf({
                   title={col.label}
                   toolbox={col.toolbox}
                   modes={members}
+                  tip={tip}
                   tipFit={tipFit}
                   expanded={kitOpen[col.id] !== false}
                   onToggleExpand={() =>
@@ -829,7 +971,7 @@ export function OpsShelf({
                                     op={row.step}
                                     name={row.step.name}
                                     dim={unfit}
-                                    hint={unfit ? needsReason(row.step) : undefined}
+                                    hint={unfit ? needsFor(row.step, tip) : undefined}
                                     /* The control stays put when the op
                                        doesn't fit, disabled and saying why.
                                        Removing it made rows jump sideways as
@@ -839,7 +981,7 @@ export function OpsShelf({
                                       <AddButton
                                         disabledReason={
                                           unfit
-                                            ? `${row.step!.name} ${needsReason(row.step!)} — the caret is holding something else. Move the caret, or pick a row that fits.`
+                                            ? `${row.step!.name} ${needsFor(row.step!, tip).text} — the caret is holding something else. Move the caret, or pick a row that fits.`
                                             : undefined
                                         }
                                         reasonId={why}
@@ -847,7 +989,7 @@ export function OpsShelf({
                                         name={row.step!.name}
                                         description={
                                           unfit
-                                            ? `${row.step!.name} ${needsReason(row.step!)}`
+                                            ? `${row.step!.name} ${needsFor(row.step!, tip).text}`
                                             : row.step!.doc
                                         }
                                         onClick={() => onAppend(row.step!.name)}
@@ -879,11 +1021,12 @@ export function OpsShelf({
                                       ? {
                                           forward: fitFwd
                                             ? undefined
-                                            : needsReason(row.forward),
+                                            : needsFor(row.forward, tip),
                                           reverse: fitRev
                                             ? undefined
-                                            : needsReason(
-                                                pairReverseInput(row.forward, row.reverse)
+                                            : needsFor(
+                                                pairReverseInput(row.forward, row.reverse),
+                                                tip
                                               ),
                                         }
                                       : undefined
@@ -973,6 +1116,7 @@ function ModeShelfKit({
   title,
   toolbox,
   modes,
+  tip,
   tipFit,
   expanded,
   onToggleExpand,
@@ -983,6 +1127,8 @@ function ModeShelfKit({
   /** Toolbox id — dot colour enumerated per id in toolkit.css. */
   toolbox: string;
   modes: { id: string; name: string; label: string; title?: string }[];
+  /** What the caret is holding — decides how an `any`-input refusal reads. */
+  tip?: OpsShelfTip;
   tipFit?: Set<string> | null;
   expanded: boolean;
   onToggleExpand: () => void;
@@ -994,16 +1140,25 @@ function ModeShelfKit({
         type="button"
         onClick={onToggleExpand}
         aria-expanded={expanded}
-        className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-[3px] text-left hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]"
+        /* Wraps for the same reason the section header does — the chip is
+           the last thing on a line that already carries a collection's whole
+           label. */
+        className="flex w-full flex-wrap items-center gap-x-1.5 gap-y-0.5 rounded-md px-1.5 py-[3px] text-left hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]"
       >
         <span
           className="toolbox-dot h-[5px] w-[5px] shrink-0 rounded-full"
           data-toolbox-dot={toolbox}
           aria-hidden
         />
-        <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">
+        <span className="min-w-0 grow truncate font-mono text-[11.5px] font-medium text-[var(--foreground)]">
           {title}
         </span>
+        {/* The kits are reached from the footer bar and never show a section
+            header, so without this the `Base` kit — every `encoding` op in the
+            registry, and the one place a reader is most likely to assume a
+            self-test — would be the one surface that says nothing about CAST
+            at all. */}
+        <SuiteChip toolbox={toolbox} />
         <span className="shrink-0 text-[9px] text-[var(--muted-foreground)]" aria-hidden>
           {expanded ? "▾" : "▸"}
         </span>
@@ -1023,8 +1178,8 @@ function ModeShelfKit({
                 needs={
                   tipFit && !fit
                     ? {
-                        forward: needsReason(step),
-                        reverse: needsReason(pairReverseInput(step, null)),
+                        forward: needsFor(step, tip),
+                        reverse: needsFor(pairReverseInput(step, null), tip),
                       }
                     : undefined
                 }
@@ -1058,15 +1213,18 @@ function FormatKit({
   const showPicks = !!direction;
   return (
     <div data-format-kit>
-      <div className="flex items-center gap-1.5 px-1.5 py-[3px]">
+      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-1.5 py-[3px]">
         <span
           className="toolbox-dot h-[5px] w-[5px] shrink-0 rounded-full"
           data-toolbox-dot={toolbox}
           aria-hidden
         />
-        <span className="flex-1 font-mono text-[11.5px] font-semibold text-[var(--foreground)]">
+        <span className="grow font-mono text-[11.5px] font-semibold text-[var(--foreground)]">
           Key formats
         </span>
+        {/* Every pick under this header is a `webcrypto` op, so the kit makes
+            one CAST claim and says it once. */}
+        <SuiteChip toolbox={toolbox} />
         <div className="flex shrink-0 gap-1">
           <button
             type="button"
@@ -1114,13 +1272,29 @@ function FormatKit({
                   !tip;
             /* The solo rows print this to the right of the name; these did
                not, so the only thing saying why the + was dead was a `title`.
-               Same words, same place, now on both kinds of row. */
-            const needs = direction === "export" ? "needs a key" : "needs bytes";
+               Same words, same place, now on both kinds of row.
+               The type rides along so these captions wear the same mark the
+               tree's do — `export` wants a `key`, `import` wants `bytes`, and
+               both are names `KIND_GLYPHS` draws. */
+            const needs: OpsNeed =
+              direction === "export"
+                ? { text: "needs a key", type: "key" }
+                : { text: "needs bytes", type: "bytes" };
             const whyId = `key-format-why-${direction}-${fmt}`;
             return (
               <div
                 key={fmt}
-                className="flex items-center gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]"
+                /* Wraps, like the tree's rows. Measured on the committed
+                   bundle before any of this: at the panel's 160px minimum all
+                   five of these names — `PKCS#8`, `SPKI`, `JWK`, `raw`,
+                   `scalar` — were rendering into a column of *zero* width
+                   while the caption and the `+` beside them kept theirs, so
+                   the kit showed five rows of glyph, "needs a key" and a
+                   plus, with the format gone. Putting the type's mark in the
+                   caption made the row overflow outright, which is how it was
+                   found. Same fix as `OpsRow`: name first and unshrinkable,
+                   the caption and the button one box that moves down. */
+                className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]"
               >
                 {/* The kit's rows all share one toolbox, so a toolbox-colour
                     bullet here was a constant — the direction glyph is what
@@ -1133,26 +1307,25 @@ function FormatKit({
                 />
                 <code
                   className={cn(
-                    "min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium",
+                    "grow shrink-0 font-mono text-[11.5px] font-medium",
                     fit ? "text-[var(--foreground)]" : OPS_DIM_TEXT
                   )}
                 >
                   {meta.label}
                 </code>
+                <span className="flex min-w-0 items-center gap-1.5">
                 {fit ? null : (
-                  <span
+                  <NeedCaption
                     id={whyId}
-                    data-disabled-reason
+                    need={needs}
                     className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]"
-                  >
-                    {needs}
-                  </span>
+                  />
                 )}
                 <AddButton
                   disabledReason={
                     fit
                       ? undefined
-                      : `${direction} ${meta.label} ${needs}, and the caret is holding something else. Move the caret to a step that produces one.`
+                      : `${direction} ${meta.label} ${needs.text}, and the caret is holding something else. Move the caret to a step that produces one.`
                   }
                   reasonId={fit ? undefined : whyId}
                   name={`${direction} ${meta.label}`}
@@ -1163,6 +1336,7 @@ function FormatKit({
                   }
                   onClick={() => onPick(fmt)}
                 />
+                </span>
               </div>
             );
           })}

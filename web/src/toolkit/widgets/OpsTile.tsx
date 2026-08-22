@@ -13,10 +13,66 @@ import {
 } from "@/components/ui/tooltip";
 import { useRefusal } from "@/components/ui/refusal";
 import { Glyph, glyphIdFor } from "./Glyph";
+import { KindGlyph } from "./kind-glyphs";
 import { ToolCard, type ToolCardOp } from "./ToolCard";
 import { STEP_MIME, stepDragPayload } from "./mime";
 
 export type OpsTileOp = ToolCardOp;
+
+/**
+ * Why a row does not fit the caret — the words, and the type they name.
+ *
+ * This was a bare string, and the string was all the row had: it printed
+ * `needs bytes` in 9.5px mono while `bytes` has had a pictogram in
+ * `KIND_GLYPHS` since §35 and the artifact tiles have been drawing it ever
+ * since. So the same type wore a mark on one surface and read as three words
+ * on another, and a reader who learned the vocabulary from the output rows
+ * never met it again in the shelf that names it.
+ *
+ * `type` is carried beside `text` rather than parsed back out of it. The
+ * caption is prose and the glyph is a lookup, and recovering one from the
+ * other would make the pictogram a function of the wording — a rename of the
+ * copy would silently drop the art, which is the shape of drift this repo
+ * keeps finding. Both come from `step.input` at the one call site that knows
+ * it.
+ *
+ * `type` is optional because not every refusal names a type: a step that
+ * accepts anything is refused for a reason its signature does not carry, and
+ * there is no pictogram for "anything" — see `KIND_GLYPHS`.
+ */
+export type OpsNeed = {
+  /** What the row prints, in words — `needs bytes`. */
+  text: string;
+  /** The pipeline type those words name, where they name one. */
+  type?: string;
+};
+
+/**
+ * The caption a refused row prints, with its type's mark beside it.
+ *
+ * The glyph is `aria-hidden` — `KindGlyph` hides both vocabularies it can
+ * draw — so the caption announces exactly the words it did before. Art is
+ * decoration here; the sentence is the accessible content, and the
+ * `data-disabled-reason` element remains what `aria-describedby` points at.
+ */
+export function NeedCaption({
+  id,
+  need,
+  className,
+}: {
+  id?: string;
+  need: OpsNeed;
+  className?: string;
+}) {
+  return (
+    <span id={id} data-disabled-reason className={cn("inline-flex items-center gap-1", className)}>
+      {need.type ? (
+        <KindGlyph kind={need.type} size={12} className="shrink-0 opacity-70" />
+      ) : null}
+      <span className="whitespace-nowrap">{need.text}</span>
+    </span>
+  );
+}
 
 type Props = {
   /** The pair's forward (encode/primary) op — also the row's display name and docs. */
@@ -51,7 +107,7 @@ type Props = {
    * direction that doesn't fit; renders an 8.5px caption under that arrow
    * and dims just that handle instead of the whole row.
    */
-  needs?: { forward?: string; reverse?: string };
+  needs?: { forward?: OpsNeed; reverse?: OpsNeed };
   /** Whole-row dim — neither direction fits the caret. */
   dim?: boolean;
   showTooltip?: boolean;
@@ -209,8 +265,14 @@ export function OpsTile({
   const forwardLive = hasForward && !needs?.forward;
   const reverseLive = hasReverse && !needs?.reverse;
 
+  /* Compared on the words, not on the object. `needs` carries a `{ text,
+     type }` pair now so the caption can draw the type's mark beside it, and
+     two directions that want the same type produce two *distinct* objects —
+     an identity check would have split every row that used to share one
+     caption, doubling the height this comment exists to have removed. The
+     text is what the reader sees repeated, so the text is what decides. */
   const sharedNeed =
-    needs?.forward && needs.forward === needs.reverse ? needs.forward : null;
+    needs?.forward && needs.forward.text === needs.reverse?.text ? needs.forward : null;
   const splitNeeds = sharedNeed ? undefined : needs;
   const hasCaptions = !!(splitNeeds?.forward || splitNeeds?.reverse);
 
@@ -229,13 +291,13 @@ export function OpsTile({
    */
   const forwardRefusal = useRefusal(
     hasForward && needs?.forward
-      ? `${forwardName} encodes ${needs.forward.replace(/^needs\s+/, "")}, and the caret is holding something else.`
+      ? `${forwardName} encodes ${needs.forward.text.replace(/^needs\s+/, "")}, and the caret is holding something else.`
       : undefined,
     { reasonId: sharedNeed ? sharedNeedId : forwardNeedId }
   );
   const reverseRefusal = useRefusal(
     hasReverse && needs?.reverse
-      ? `${reverseDisplayName} decodes ${needs.reverse.replace(/^needs\s+/, "")}, and the caret is holding something else.`
+      ? `${reverseDisplayName} decodes ${needs.reverse.text.replace(/^needs\s+/, "")}, and the caret is holding something else.`
       : undefined,
     { reasonId: sharedNeed ? sharedNeedId : reverseNeedId }
   );
@@ -303,13 +365,11 @@ export function OpsTile({
         {parts.stem}
       </code>
       {sharedNeed ? (
-        <span
+        <NeedCaption
           id={sharedNeedId}
-          data-disabled-reason
+          need={sharedNeed}
           className="shrink-0 font-mono text-[9.5px] text-[var(--muted-foreground)]"
-        >
-          {sharedNeed}
-        </span>
+        />
       ) : null}
       {/* The pair, as one box the row can move. See the row's own comment:
           `flex-wrap` here is what lets the two handles stack rather than
@@ -368,11 +428,11 @@ export function OpsTile({
           aria-label={
             hasForward
               ? needs?.forward
-                ? `${forwardDisplayName}, unavailable: ${needs.forward}`
+                ? `${forwardDisplayName}, unavailable: ${needs.forward.text}`
                 : forwardDisplayName
               : undefined
           }
-          title={hasForward ? needs?.forward || "Encode" : undefined}
+          title={hasForward ? needs?.forward?.text || "Encode" : undefined}
           onClick={
             hasForward
               ? forwardRefusal.guard(() => onAppend(forwardName, { decode: false }))
@@ -395,13 +455,11 @@ export function OpsTile({
           {hasForward ? <span className="whitespace-nowrap">{parts.forward}</span> : null}
         </button>
         {splitNeeds?.forward ? (
-          <span
+          <NeedCaption
             id={forwardNeedId}
-            data-disabled-reason
+            need={splitNeeds.forward}
             className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]"
-          >
-            {splitNeeds.forward}
-          </span>
+          />
         ) : null}
       </span>
       <span className="flex shrink-0 flex-col items-center gap-[2px]">
@@ -420,11 +478,11 @@ export function OpsTile({
           aria-label={
             hasReverse
               ? needs?.reverse
-                ? `${reverseDisplayName}, unavailable: ${needs.reverse}`
+                ? `${reverseDisplayName}, unavailable: ${needs.reverse.text}`
                 : reverseDisplayName
               : undefined
           }
-          title={hasReverse ? needs?.reverse || "Decode" : undefined}
+          title={hasReverse ? needs?.reverse?.text || "Decode" : undefined}
           onClick={
             hasReverse
               ? reverseRefusal.guard(() => onAppend(reverseName, { decode: reverseDecode }))
@@ -447,13 +505,11 @@ export function OpsTile({
           {hasReverse ? <span className="whitespace-nowrap">{parts.reverse}</span> : null}
         </button>
         {splitNeeds?.reverse ? (
-          <span
+          <NeedCaption
             id={reverseNeedId}
-            data-disabled-reason
+            need={splitNeeds.reverse}
             className="whitespace-nowrap text-[8.5px] text-[var(--muted-foreground)]"
-          >
-            {splitNeeds.reverse}
-          </span>
+          />
         ) : null}
       </span>
       </span>

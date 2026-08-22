@@ -787,6 +787,16 @@
    ]
   },
   {
+   "id": "key-openpgp",
+   "group": "kind",
+   "label": "OpenPGP key",
+   "metaphor": "A key whose shank branches into a second key",
+   "description": "The `openpgp-key` type - what `gpg.genkey`, `hkp.get` and the agent hand back. It has to be a key and it has to not be `key-public`/`key-secret`, which is what an SSH key already draws, so the difference is a whole arm rather than a detail: a filled bow at the top left, a shank running right with its bit, and a spine dropping to a second shank with a bit of its own. Subkeys are what the type's own doc names as the thing an OpenPGP key has and a CryptoKey has no room for, so that is what the drawing says - not ASCII armour, which the doc explicitly says this type is not (`the packet structure of RFC 9580, not the armored text around it`). Rasterised at 12px it stands 28.3 from `ssh` and 35.7 from `key-secret` in per-pixel L1, against the 6.2 that separates `key-public` from `key-secret` - the pair this repo already ships as unmistakable at that size. The bow is filled, on the same asymmetry `key` is: an OpenPGP key is public or private and the type cannot know which, so the glyph it is likeliest to be mistaken for should be the secret one. Not in KEY_GLYPH_TIERS, because no artifact role wears it - an OpenPGP key whose half is known arrives as `openpgp-public` or `openpgp-private` and draws `key-public`/`key-secret` there.",
+   "refs": [
+    "RFC 9580 - OpenPGP"
+   ]
+  },
+  {
    "id": "webrtc",
    "group": "toolbox",
    "label": "WebRTC",
