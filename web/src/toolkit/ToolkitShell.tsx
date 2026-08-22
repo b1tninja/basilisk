@@ -176,7 +176,12 @@ import {
 import { getTrust, listTrusted, setTrust, type TrustLevel } from "../lib/trust.js";
 import { getSuiteStatus, runCryptoSelfTests } from "../lib/crypto-self-test.js";
 import { getFipsMode, setFipsMode, FIPS_MODE_DISCLAIMER } from "../lib/fips-mode.js";
-import { unverifiedSuitesAmong, suitesUsedByAst } from "../lib/toolkit/suite-gate.js";
+import {
+  stepNamesInSuites,
+  unverifiedSuitesAmong,
+  suitesUsedByAst,
+} from "../lib/toolkit/suite-gate.js";
+import { fipsRefusalText } from "../lib/toolkit/engine.js";
 import {
   listWorkspaces,
   saveWorkspace,
@@ -2407,15 +2412,22 @@ export function ToolkitShell() {
    * happen is worse than a missing warning, because a reader believes it and
    * stops. The absent API is now reported where it is true, in the Params
    * tab, as an absent API and not as a FIPS block.
+   *
+   * The sentence is built by `fipsRefusalText`, the same function the run path
+   * throws — so this banner is a preview of the refusal, word for word, rather
+   * than a second description of it that can drift. It used to be the *entire*
+   * effect of the switch; now it is the warning before the refusal.
    */
   const fipsBlockedMessage = useMemo(() => {
     if (!fipsMode) return null;
-    const usedGated = suitesUsedByAst(nb.compiled.ast);
-    const blockedGated = unverifiedSuitesAmong(suiteStatus, usedGated);
-    if (blockedGated.length) {
-      return `FIPS mode: recipe uses unverified ${blockedGated.join(", ")} ops`;
-    }
-    return null;
+    const ast = nb.compiled.ast;
+    const blockedGated = unverifiedSuitesAmong(suiteStatus, suitesUsedByAst(ast));
+    if (!blockedGated.length) return null;
+    const steps = (ast?.chains || []).flatMap((c: RecipeChain) => c.steps || []);
+    return fipsRefusalText(
+      blockedGated,
+      stepNamesInSuites(steps.length ? steps : ast?.steps || [], blockedGated)
+    );
   }, [fipsMode, nb.compiled.ast, suiteStatus]);
 
   // Drives both the Keys tray tab's unlock countdown and each cell's "ran Xs ago" line.
@@ -5347,25 +5359,31 @@ export function ToolkitShell() {
                       </button>
                     </label>
                     {/* What this switch does on this page, rather than what
-                        the gate behind it is capable of. The refusal in
-                        `assertRecipeAllowedUnderFips` is real, but it only
-                        ever runs for a caller that passes `fipsMode` into
-                        `runRecipe` — `executeToolkitRun`, reached by the
-                        crypto-worker's `toolkit-run` message, and nobody
-                        sends that one. The notebook runs through
-                        `createKernel`, which never sets the flag, so with the
-                        switch on, the banner below is the entire effect: the
-                        recipe is flagged before the run and not refused. The
-                        sentence said "blocks adding or running ops" and there
-                        is no code that blocks either. Making that true is a
-                        change in kernel.js and useNotebook.ts, which this
-                        pass did not own; the copy was in reach, so the copy
-                        is what stopped claiming it. */}
+                        the gate behind it is capable of — and the two are the
+                        same thing now, which they were not.
+
+                        `assertRecipeAllowedUnderFips` fires for a caller that
+                        passes `fipsMode` into `runRecipe`. For a long time the
+                        only such caller was `executeToolkitRun`, reached by
+                        the crypto-worker's `toolkit-run` message, which
+                        nothing in the app posts; the notebook runs through
+                        `createKernel`, which never set the flag. So the switch
+                        flagged and never refused, and this paragraph said so.
+
+                        `useNotebook.ts` now sets `fipsMode`/`suiteStatus` in
+                        `buildBindings` and asks the same gate about the whole
+                        run before the cell loop starts, so a run that reaches
+                        an unverified suite is refused with nothing executed.
+                        The word here is "refuses" again because there is code
+                        that refuses. Adding an op to a cell is still not
+                        blocked — you can write the recipe, you cannot run it —
+                        and the sentence does not claim otherwise. */}
                     <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
                       {unverifiedSuiteNames.length
-                        ? `Flags any recipe that uses an unverified suite (${unverifiedSuiteNames
+                        ? `Refuses any run that reaches an unverified suite (${unverifiedSuiteNames
                             .map((s) => SUITE_BADGE_LABEL[s])
-                            .join(", ")}, above) before you run it.`
+                            .join(", ")}, above) before the first step executes. ` +
+                          `You can still write the recipe; turn this off to run it.`
                         : FIPS_MODE_DISCLAIMER}
                     </p>
 

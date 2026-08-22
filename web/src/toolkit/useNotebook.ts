@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createKernel } from "../lib/toolkit/kernel.js";
+import { fipsRefusalForCells } from "../lib/toolkit/engine.js";
+import { getFipsMode } from "../lib/fips-mode.js";
+import { getSuiteStatus } from "../lib/crypto-self-test.js";
 import {
   handoffContext,
   reviewOffer,
@@ -1845,6 +1848,23 @@ export function useNotebook() {
     // and 2. `run.manifest` commits to the cells the person is looking at, so
     // it needs the list they are looking at.
     bindings.receipt = { recipeSource: source, label: title, chains };
+    // FIPS mode, on the run path the notebook actually uses.
+    //
+    // `runRecipe`'s suite gate has always been real and has always been
+    // unreachable from here: it fires for `bindings.fipsMode`, and the only
+    // caller that set it was the crypto-worker's `toolkit-run` arm, which
+    // nothing posts. These two lines are the whole of the wiring — every
+    // kernel run (the notebook loop, a one-cell run, a ceremony stage) builds
+    // its bindings here, so all of them reach the gate now.
+    //
+    // Read live rather than held in state: `getFipsMode` is the switch's own
+    // store and `getSuiteStatus` is the self-test's own result, so a run can
+    // never be judged against a snapshot taken before the person flipped the
+    // switch or before the POST settled. With the switch off `fipsMode` is
+    // `false`, `runRecipe` skips the block entirely, and this path is byte for
+    // byte the run it was before.
+    bindings.fipsMode = getFipsMode();
+    bindings.suiteStatus = getSuiteStatus();
     const recs = boundRecipientsRef.current.filter((r) => r?.fingerprint);
     if (recs.length) {
       bindings.recipientKeysArmored = recs.map((r) => r.armoredKey);
@@ -1982,6 +2002,36 @@ export function useNotebook() {
        */
       const run = createRun({ cause, scope });
       const runnable = cellsInScope(run.scope, chains);
+      /**
+       * FIPS mode, asked about the whole run before any of it happens.
+       *
+       * The engine gate below sees one cell at a time — `runCell` hands it a
+       * one-chain AST — so on its own a notebook whose *third* cell reaches an
+       * unverified suite would run the first two and then refuse. That is
+       * flagging after the fact, which is the thing this switch was found not
+       * to be doing. Asked here, over the cells this run is actually scoped
+       * to, the answer arrives before `setBusy` and before the loop: nothing
+       * has executed, nothing is stale, no slot has been written.
+       *
+       * The per-cell gate stays, and is not redundant: `runCeremonyStage`
+       * calls `runCell` without coming through here, and a backstop inside the
+       * engine is what makes the refusal a property of running rather than of
+       * pressing this particular button.
+       *
+       * Scoped, never the whole notebook: refusing a one-cell run because some
+       * *other* cell is unverified would block work this switch has no quarrel
+       * with. `runnable` is the same list the loop below walks.
+       */
+      const fipsRefusal = await fipsRefusalForCells(
+        runnable.map((i) => chains[i]),
+        getFipsMode,
+        getSuiteStatus
+      );
+      if (fipsRefusal) {
+        refuse(fipsRefusal);
+        setRunStatus("Blocked");
+        return;
+      }
       setBusy(true);
       setRunError("");
       // `setRunStatus`, never `narrate`: this and `Running cell n…` below are

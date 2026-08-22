@@ -266,6 +266,108 @@ function pipelineValueIsSensitive(value) {
   return false;
 }
 
+/**
+ * The suite status a FIPS run assumes when the caller supplies none.
+ *
+ * Nothing verified, so a caller that turns FIPS on and forgets to say what the
+ * self-test found is refused rather than admitted. A fresh object each call:
+ * one shared literal is a thing a consumer can write into.
+ * @returns {import("./suite-gate.js").SuiteStatusMap}
+ */
+export function unverifiedSuiteStatus() {
+  return { openpgp: "unverified", webcrypto: "unverified", sss: "unverified" };
+}
+
+/**
+ * The words a FIPS refusal uses.
+ *
+ * `suite-gate.js` decides *whether* to refuse and names what it refused. What
+ * it does not say is the person's next move, and in this codebase a message
+ * that leaves you nowhere is itself the defect — so the remedy is added here,
+ * where the run paths can share one sentence. Both consumers build their text
+ * from this function, so the message a cell throws and the message the run bar
+ * prints cannot drift apart.
+ *
+ * The suite name is load-bearing: "not allowed under FIPS" tells you a switch
+ * is on, which you already knew. Naming `webcrypto` and the steps that reach
+ * it is what turns the refusal into something you can act on.
+ *
+ * @param {string[]} suites  the unverified suites the recipe reaches
+ * @param {string[]} ops     the steps in this recipe that reach them
+ * @returns {string}
+ */
+export function fipsRefusalText(suites, ops) {
+  const suiteList = suites.join(", ");
+  const noun = suites.length > 1 ? "suites" : "suite";
+  const opList = ops.length ? ops.join(", ") : "(unknown)";
+  // Tense chosen to be true in both places it appears: thrown by the run path
+  // after a refusal (nothing ran) and drawn in the Params tab before one
+  // (nothing will). "…was refused" would be a lie in the banner and "…will be
+  // refused" a lie in the error, and two sentences for one fact is how a
+  // warning and the refusal it warns about come to disagree.
+  return (
+    `FIPS mode: this recipe uses the unverified ${suiteList} ${noun} ` +
+    `(steps: ${opList}), so it will not run — no step executes. ` +
+    `To run it, either turn FIPS mode off in the session tray's Params tab, ` +
+    `or replace ${opList} with steps from a verified suite.`
+  );
+}
+
+/**
+ * Ask `suite-gate.js` whether this recipe may run with FIPS mode on, and turn
+ * a refusal into the sentence a person can act on.
+ *
+ * The gate is the authority on the verdict — this never second-guesses it, it
+ * only re-reads the same helpers to name what the gate objected to. `""` means
+ * the recipe may run.
+ *
+ * @param {import("./recipe.js").RecipeAst|null|undefined} ast
+ * @param {import("./suite-gate.js").SuiteStatusMap} status
+ * @returns {Promise<string>}
+ */
+export async function fipsRefusalFor(ast, status) {
+  const gate = await import("./suite-gate.js");
+  try {
+    gate.assertRecipeAllowedUnderFips(ast, status, true);
+    return "";
+  } catch (_) {
+    const bad = gate.unverifiedSuitesAmong(status, gate.suitesUsedByAst(ast));
+    const steps = (ast?.chains || []).flatMap((c) => c.steps || []);
+    const ops = gate.stepNamesInSuites(steps.length ? steps : ast?.steps || [], bad);
+    return fipsRefusalText(bad, ops);
+  }
+}
+
+/**
+ * The refusal a *scoped notebook run* gets before any of it happens, or `""`.
+ *
+ * `runRecipe`'s own gate sees one cell at a time, because that is all `runCell`
+ * hands it — so on its own, a notebook whose third cell reaches an unverified
+ * suite would run the first two and then refuse, which is flagging after the
+ * fact. This is the same question asked once about the whole scope, and the
+ * notebook asks it before it starts.
+ *
+ * The switch and the self-test are passed in as readers rather than imported
+ * here: `engine.js` is the run path and must not acquire an opinion about
+ * where a preference is stored, and a caller that hands in `() => false` is
+ * exactly the "switch off" case, which must be indistinguishable from the run
+ * this was before the gate existed.
+ *
+ * @param {import("./recipe.js").RecipeChain[]} cells  the cells this run covers
+ * @param {() => boolean} isFipsOn
+ * @param {() => import("./suite-gate.js").SuiteStatusMap} readSuiteStatus
+ * @returns {Promise<string>}  `""` when the run may proceed
+ */
+export async function fipsRefusalForCells(cells, isFipsOn, readSuiteStatus) {
+  if (!isFipsOn()) return "";
+  const scoped = (cells || []).filter(Boolean);
+  if (!scoped.length) return "";
+  return fipsRefusalFor(
+    { chains: scoped, steps: scoped[0]?.steps || [], source: "" },
+    readSuiteStatus()
+  );
+}
+
 export async function runRecipe(ast, bindings = {}, opts = {}) {
   const chains = recipeChains(ast);
   const chainStart = Math.max(0, opts.chainStart ?? 0);
@@ -293,19 +395,31 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
           count: slice.length,
         });
 
+  // The suite gate, on every run path rather than one nobody reaches.
+  //
+  // This block is unchanged in *what* it decides — `suite-gate.js` still is
+  // the authority — and changed in who arrives at it. It used to fire only for
+  // `executeToolkitRun`, the crypto-worker's `toolkit-run` arm, which nothing
+  // in the app ever posted; the notebook runs through `createKernel`, which
+  // never set the flag. `useNotebook.ts`'s `buildBindings` now does, so a
+  // notebook cell, a one-cell run and a ceremony stage all pass through here.
+  //
+  // It sits above every step, so the refusal is a refusal and not a report on
+  // a run that already happened. The whole-notebook version of the same
+  // question is asked in `useNotebook.ts` before the cell loop starts, because
+  // this one can only see the cell it was handed.
+  //
+  // With `fipsMode` unset — every caller that does not opt in — nothing here
+  // runs and the recipe executes exactly as it always has.
   if (bindings.fipsMode) {
-    const { assertRecipeAllowedUnderFips } = await import("./suite-gate.js");
-    const status = bindings.suiteStatus || {
-      openpgp: "unverified",
-      webcrypto: "unverified",
-      sss: "unverified",
-    };
+    const status = bindings.suiteStatus || unverifiedSuiteStatus();
     // Validate the full AST when provided; otherwise the slice alone.
     const forFips =
       ast && typeof ast === "object" && !Array.isArray(ast) && ast.chains
         ? ast
         : { chains: slice, steps: slice[0]?.steps || [], source: "" };
-    assertRecipeAllowedUnderFips(forFips, status, true);
+    const refusal = await fipsRefusalFor(forFips, status);
+    if (refusal) throw new Error(refusal);
   }
 
   /** @type {ToolkitArtifact[]} */

@@ -15,31 +15,25 @@ its evidence.
 
 ## 1. Enforcement that is not enforcing
 
-### 1.1 FIPS mode has no effect on the notebook
+### 1.1 FIPS mode gates running, and still does not gate adding
 
-`assertRecipeAllowedUnderFips` (`web/src/lib/toolkit/engine.js:296`) runs only
-for a caller that sets `bindings.fipsMode`. The only such caller is
-`executeToolkitRun`, reached by the crypto-worker's `toolkit-run` message —
-**which nothing in the app posts**. The notebook runs through `createKernel`
-(`web/src/toolkit/useNotebook.ts` → `web/src/lib/toolkit/kernel.js:500,713`),
-and neither file mentions FIPS. There is no add-time gate either:
-`grep -rn getFipsMode web/src` finds `fips-mode.js` and one read in
-`ToolkitShell.tsx`, nothing more.
+The run half is closed: the notebook builds `bindings.fipsMode` and
+`bindings.suiteStatus` on every kernel run, and `startRun` refuses before the
+cell loop rather than after cell 2. `docs/CRYPTOGRAPHY.md:186` still says the
+switch "hard-blocks **adding**/running ops", and there is no add-time gate
+anywhere — you can write the recipe, you just cannot run it. The tray copy says
+so now; the doc still overclaims.
 
-This was independently recorded elsewhere in the repo before anyone connected
-it to FIPS: `web/src/lib/pgp/intended-recipient.js:18` notes that *"Nothing
-posts `encrypt` or `toolkit-run` either; `generate` is the only reachable
-arm."* A different agent found the same dead worker path from the other
-direction and wrote it down beside a different consequence.
+Two things the closure did **not** close:
 
-**So with the switch on, the banner is the entire effect.** The copy was
-corrected in `4f19e1d` to say what is true — it *flags* a recipe before you run
-it — but the switch still promises a posture the engine never applies.
-
-Closing it is a real decision, not a wiring chore: it would start **refusing
-runs that succeed today**, and the refusal has to name which suite is
-unverified and what a person can do about it. Deciding that is the work; the
-plumbing is `kernel.js` and `useNotebook.ts`.
+- **The dead worker path is untouched.** The notebook was wired to the gate,
+  not the app to the worker. Nothing still posts `toolkit-run` or `encrypt`;
+  `generate` remains the only reachable arm, exactly as
+  `web/src/lib/pgp/intended-recipient.js:18` recorded.
+- **`conjugate-smoke.js` (lines 85, 174, 196) calls `runAll`/`runRecipe` with
+  no `fipsMode`, so it is ungated.** It is a self-check harness rather than a
+  person's run, which is why it was left — but it is a second path into the
+  engine that the switch does not reach.
 
 ### 1.2 The second manifest producer still has the asymmetry
 
