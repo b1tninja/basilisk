@@ -1242,7 +1242,15 @@ export function serializeRecipe(astOrSteps, opts = {}) {
  * The blank line between two cells. `serializeRecipe`'s own pretty separator,
  * named so that a canonical notebook and a serialized one cannot drift on it.
  */
-const CELL_SEPARATOR = "\n\n";
+/**
+ * The blank line between two cells.
+ *
+ * Exported because `engine.js` builds the same canonical notebook text with
+ * a per-cell tolerance this module deliberately does not have, and two
+ * spellings of "how cells are joined" is how a notebook digest and a cell
+ * digest start disagreeing again.
+ */
+export const CELL_SEPARATOR = "\n\n";
 
 /**
  * Every cell of a notebook, canonically spelled, **one entry per chain**.

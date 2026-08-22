@@ -44,18 +44,22 @@ cells joined. `engine.js`'s `currentRunManifest` (around line 4154) is the other
 `serializeRecipe({ chains: [chain] })`. It already contains the loop
 `canonicalCellSources` now expresses and could adopt both exports directly.
 
-### 1.3 `currentRunManifest` is the last producer numbering its own way
+### 1.3 `manifestHonouredBy` verifies a run against its manifest, and nothing calls it
 
-The notebook side is closed: the plan and the manifest both count blank cells
-now, because `handoffContext` takes the notebook's own cell array and
-`chainsNumberedLikeNotebook` restores the gaps the source text cannot spell.
+Found while closing §1.2's second producer, by checking who would notice if the
+two run documents disagreed. The answer is nobody: `manifestHonouredBy` compares
+a manifest's `recipeDigest`, registry and cell rows against the receipt of the
+run that was supposed to honour it, and **it appears zero times in the built
+bundle** — no `.tsx`, no hook, no op. Its only callers are its own tests.
 
-`engine.js`'s `currentRunManifest` (around line 4268) already reads `ctx.chains`
-and already gives an empty chain a row, so it is right about blanks — but it is
-still the second `buildRunManifest` producer, and it takes `recipeSource` raw
-from `ctx.recipeSource` while digesting cells through `serializeRecipe`. That is
-§1.2's asymmetry, unclosed, in the one place `canonicalCellSources` and
-`canonicalNotebookSource` could be adopted directly.
+That is the shape this file exists for. It is not an unused helper but an
+unrun *check*: "did the run do what the manifest promised" is a question the
+notebook never asks, while `manifest.check` and `run.attest` — which the app
+does reach — verify a document's internal consistency and signature rather than
+its relationship to what actually happened.
+
+Closing it is a product decision, not wiring: something has to decide when the
+comparison runs and what a mismatch does to a person mid-run.
 
 ---|---|---|---|---|
 | `… \| out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `aa45ec49b500` |

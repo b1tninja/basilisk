@@ -98,7 +98,7 @@ import {
 import { buildInspectSnapshot, inspectFromSnapshot } from "./inspect.js";
 import { getStep } from "./registry.js";
 import { placementGate } from "./placement.js";
-import { recipeChains } from "./recipe.js";
+import { CELL_SEPARATOR, recipeChains } from "./recipe.js";
 import {
   LEGACY_CRYPTO_TAGS,
   rsaesPkcs1Decrypt,
@@ -4187,6 +4187,55 @@ async function execStepBody(step, value, bindings, artifacts) {
  * @param {ToolkitArtifact[]} artifacts  artifacts of the current engine call
  * @param {Record<string, *>} params
  */
+/**
+ * The notebook's text as both run documents state it, and its cells.
+ *
+ * `currentRunReceipt` and `currentRunManifest` each declare a `recipeSource`
+ * and digest it, and `manifestHonouredBy` compares the two digests — so the
+ * one thing they must never do is spell the notebook differently. They used to
+ * agree by both taking `ctx.recipeSource` raw, which kept them equal to each
+ * other and unequal to their own cells: every cell in both documents is
+ * `serializeRecipe({ chains: [chain] })`, so a doubled space between two steps
+ * changed the notebook digest and no cell digest. That is the contradiction
+ * `handoff-shell` was rewritten to remove, in the other producer.
+ *
+ * One function, so the two ops cannot drift apart while being fixed.
+ *
+ * Tolerant per cell, which is why `canonicalCellSources` is not called here
+ * directly: a cell that will not serialize is recorded as `""` rather than
+ * throwing, because a run document is a record of what happened and must not
+ * fail to exist because one cell was unprintable. `canonicalCellSources` stays
+ * strict for `handoffContext`, where the same digest is a gate rather than a
+ * record and silently digesting an unreadable cell as empty would be worse
+ * than refusing.
+ *
+ * A notebook that yields no chains keeps the raw text — the honest answer when
+ * nothing was read, and the same fallback `handoffContext` makes.
+ *
+ * @param {*} ctx  `bindings.receipt`
+ * @returns {{ chains: import("./recipe.js").RecipeChain[], cellTexts: string[],
+ *   source: string }}
+ */
+function notebookAsRun(ctx, serializeRecipe, parseRecipeSource) {
+  const raw = String(ctx?.recipeSource || ctx?.cellRecipe || "");
+  const notebook = ctx?.chains;
+  const chains = notebook?.length
+    ? recipeChains(notebook)
+    : recipeChains(parseRecipeSource(raw).ast);
+  const cellTexts = chains.map((chain) => {
+    try {
+      return serializeRecipe({ chains: [chain] });
+    } catch (_) {
+      return "";
+    }
+  });
+  return {
+    chains,
+    cellTexts,
+    source: chains.length ? cellTexts.join(CELL_SEPARATOR) : raw,
+  };
+}
+
 async function currentRunReceipt(bindings, artifacts, params) {
   const { buildRunReceipt, digestArtifact, digestInputs, opsRegistryVersion } =
     await import("./receipt.js");
@@ -4204,10 +4253,15 @@ async function currentRunReceipt(bindings, artifacts, params) {
   });
   const label =
     String(params?.label || "").trim() || String(ctx.label || "").trim() || undefined;
+  // The same spelling the manifest states, because `manifestHonouredBy`
+  // compares the two digests and every cell in both documents is already
+  // canonical. See `notebookAsRun`.
+  const { serializeRecipe } = await import("./recipe.js");
+  const { parseRecipeSource } = await import("./recipe-parse.js");
   return buildRunReceipt({
     label,
     registry: opsRegistryVersion(),
-    recipeSource: String(ctx.recipeSource || ctx.cellRecipe || ""),
+    recipeSource: notebookAsRun(ctx, serializeRecipe, parseRecipeSource).source,
     cells,
   });
 }
@@ -4271,37 +4325,19 @@ async function currentRunManifest(bindings, params) {
   const { publishedSlots, serializeRecipe } = await import("./recipe.js");
   const { parseRecipeSource } = await import("./recipe-parse.js");
   const ctx = /** @type {*} */ (bindings).receipt || {};
-  const recipeSource = String(ctx.recipeSource || ctx.cellRecipe || "");
 
-  /** @type {{ index: number, peer: string, publish: boolean, recipe: string }[]} */
-  const cells = [];
-  const notebook = /** @type {*} */ (ctx).chains;
-  const chains = notebook?.length
-    ? recipeChains(notebook)
-    : recipeChains(parseRecipeSource(recipeSource).ast);
-  for (let i = 0; i < chains.length; i++) {
-    const chain = chains[i];
-    let recipe = "";
-    try {
-      recipe = serializeRecipe({ chains: [chain] });
-    } catch (_) {
-      // A cell that will not serialize is recorded as empty rather than
-      // dropped: a manifest that silently omitted a cell would be a commitment
-      // to a shorter notebook than the one about to run.
-      recipe = "";
-    }
-    // Every chain gets a row, and its index is its position. An empty cell is
-    // a no-op cell — `recipe: ""`, digesting to the digest of nothing — rather
-    // than a gap, because the alternative is what this used to do: skip it, and
-    // then push `index: i` from the loop counter anyway, so that `cells[1]`
-    // called itself cell 2 and the document contradicted itself.
-    cells.push({
-      index: i,
-      peer: String(chain.peer || ""),
-      publish: publishedSlots(chain).length > 0,
-      recipe,
-    });
-  }
+  // Every chain gets a row, and its index is its position. An empty cell is a
+  // no-op cell — `recipe: ""`, digesting to the digest of nothing — rather than
+  // a gap, because the alternative is what this used to do: skip it, and then
+  // push `index: i` from the loop counter anyway, so that `cells[1]` called
+  // itself cell 2 and the document contradicted itself.
+  const notebook = notebookAsRun(ctx, serializeRecipe, parseRecipeSource);
+  const cells = notebook.chains.map((chain, i) => ({
+    index: i,
+    peer: String(chain.peer || ""),
+    publish: publishedSlots(chain).length > 0,
+    recipe: notebook.cellTexts[i],
+  }));
 
   const title =
     String(params?.title || "").trim() || String(ctx.label || "").trim() || undefined;
@@ -4314,7 +4350,10 @@ async function currentRunManifest(bindings, params) {
   return buildRunManifest({
     title,
     registry: opsRegistryVersion(),
-    recipeSource,
+    // The cells' own text joined, not the raw source. `recipeDigest` is
+    // `digestText(recipeSource)`, so a manifest whose stated notebook does not
+    // hash the way its stated cells do is one document contradicting itself.
+    recipeSource: notebook.source,
     cells,
     ...(pool ? { entropy: { mode: "pool", digest: pool.digest } } : {}),
   });

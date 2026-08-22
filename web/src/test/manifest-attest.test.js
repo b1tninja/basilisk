@@ -42,6 +42,7 @@ import {
 import { digestText, opsRegistryVersion } from "../lib/toolkit/receipt.js";
 import { compileRecipe, serializeRecipe } from "../lib/toolkit/recipe.js";
 import { runRecipe } from "../lib/toolkit/engine.js";
+import { CELL_SEPARATOR } from "../lib/toolkit/recipe.js";
 
 const FPR_A = "4F2AC1B39D8E7C6A5B4938271605F4E3D2C1B0A9";
 const FPR_B = "91C7E6D5C4B3A29180716253443526170819AABB";
@@ -324,7 +325,16 @@ run.manifest "Thursday ceremony" | out $manifest`;
     expect(manifest.kind).toBe("basilisk.run-manifest");
     expect(manifest.title).toBe("Thursday ceremony");
     expect(manifest.toolchain.ops).toBe(opsRegistryVersion());
-    expect(manifest.recipeDigest).toBe(await digestText(src));
+    // The notebook digest is over the notebook's *cells*, joined — not over the
+    // source text as typed. This asserted `digestText(src)` and passed only
+    // because nothing in the fixture was spelled two ways; `in $a | out $b`
+    // serializes as `$a | out $b`, so the document's own cells never did say
+    // what its `recipeSource` said. `run.manifest` and `run.receipt` state the
+    // notebook identically now, which is what `manifestHonouredBy` compares.
+    expect(manifest.recipeSource).toBe(
+      manifest.cells.map((c) => c.recipe).join(CELL_SEPARATOR)
+    );
+    expect(manifest.recipeDigest).toBe(await digestText(manifest.recipeSource));
     // The cells are read from the recipe in the spelling `appendRunLog`
     // records, so a manifest and a receipt of the same notebook compare equal.
     expect(manifest.cells.map((c) => c.index)).toEqual([0, 1, 2]);
