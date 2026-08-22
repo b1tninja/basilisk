@@ -33,7 +33,11 @@ import {
   manifestAttestedBy,
 } from "../lib/toolkit/attest.js";
 import { summarizeHandoff, resultToJson } from "../lib/toolkit/handoff.js";
-import { labelForFingerprint, planRun } from "../lib/toolkit/plan.js";
+import {
+  chainsNumberedLikeNotebook,
+  labelForFingerprint,
+  planRun,
+} from "../lib/toolkit/plan.js";
 import { roomRoster } from "../lib/notebook/roster.js";
 import { departedPeers, unassignDeparted } from "../lib/toolkit/peer-relabel.js";
 import {
@@ -2075,7 +2079,34 @@ export function useNotebook() {
       let placement: any;
       if (me && Object.keys(roster).length) {
         try {
-          const plan = planRun(compileRecipe(source), { me, roster });
+          // Planned over the notebook's own cells, not over a re-parse of
+          // its text. `source` is `serializeRecipe(chains)` and serialising
+          // drops blank cells, so a notebook with a blank in the middle plans
+          // one cell short -- while the loop below walks `chains` and hands
+          // `admit` the index the person is looking at. Every cell after the
+          // blank would then be read off the wrong row of `plan.cells`, which
+          // for a placed run means performing a cell that belongs to a peer.
+          // `placementGate` names that exact failure in its own shape
+          // argument; this is the same miscount arriving through the source
+          // string instead.
+          const compiledForRun = compileRecipe(source);
+          const plan = planRun(
+            {
+              ...compiledForRun,
+              ast: {
+                ...(compiledForRun.ast || {}),
+                // `steps` and `source` are not optional on a `RecipeAst`,
+                // and spreading an ast that may be null makes them so.
+                steps: compiledForRun.ast?.steps || [],
+                source: compiledForRun.ast?.source || source,
+                chains: chainsNumberedLikeNotebook(
+                  compiledForRun.ast?.chains || [],
+                  chains
+                ),
+              },
+            },
+            { me, roster }
+          );
           if (plan.ok && plan.play === "placed") {
             // The plan and the declines it produces are fields of one run —
             // the plan is what says whether a declined cell is owed an offer,
@@ -3419,7 +3450,7 @@ export function useNotebook() {
     let mine: ManifestAttestation;
     try {
       const { roster, me } = handoffWho();
-      const ctx = await handoffContext({ source, me, roster, title });
+      const ctx = await handoffContext({ source, me, roster, title, notebook: chains });
       mine = await buildAttestation({ manifest: ctx.manifest });
       signed = await signSessionDocument(attestationToJson(mine));
     } catch (err) {
@@ -3475,7 +3506,7 @@ export function useNotebook() {
     void (async () => {
       try {
         const { roster, me } = handoffWho();
-        const ctx = await handoffContext({ source, me, roster, title });
+        const ctx = await handoffContext({ source, me, roster, title, notebook: chains });
         const entries: { by?: string; attestation: ManifestAttestation }[] = [];
         for (const row of quorumState.peers || []) {
           const by = labelForFingerprint(roster, String(row.fingerprint || ""));
@@ -3519,7 +3550,7 @@ export function useNotebook() {
       const skipped = runRef.current?.record.declined.find((sk) => sk.cell === cell);
       if (!skipped) return { ok: false, why: "That cell was not left to anybody." };
       const { roster, me } = handoffWho();
-      const ctx = await handoffContext({ source, me, roster, title });
+      const ctx = await handoffContext({ source, me, roster, title, notebook: chains });
       const slots = kernelRef.current.slots;
       const built = await offerForSkipped(ctx, skipped, (l: string) =>
         slots.has(l) ? slots.resolve(l) : null
@@ -3683,7 +3714,7 @@ export function useNotebook() {
   const sendCellResult = useCallback(
     async (cell: number, toPeer: string) => {
       const { roster, me } = handoffWho();
-      const ctx = await handoffContext({ source, me, roster, title });
+      const ctx = await handoffContext({ source, me, roster, title, notebook: chains });
       const slots = kernelRef.current.slots;
       const built = await resultForCell(ctx, cell, (l: string) =>
         slots.has(l) ? slots.resolve(l) : null
@@ -3769,7 +3800,7 @@ export function useNotebook() {
       if (!doc) return { ok: false, why: "That handoff is no longer pending." };
 
       const { roster, me } = handoffWho();
-      const ctx = await handoffContext({ source, me, roster, title });
+      const ctx = await handoffContext({ source, me, roster, title, notebook: chains });
       const slots = kernelRef.current.slots;
       /**
        * Which peer the returning document answers to, resolved through the

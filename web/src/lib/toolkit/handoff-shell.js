@@ -31,7 +31,7 @@ import {
   migrateRecipe,
   publishedSlots,
 } from "./recipe.js";
-import { planRun, planChains } from "./plan.js";
+import { chainsNumberedLikeNotebook, planRun, planChains } from "./plan.js";
 import { buildRunManifest } from "./manifest.js";
 import {
   buildOfferFor,
@@ -94,14 +94,44 @@ import {
  * migrated source verbatim — the honest answer, since nothing was read — rather
  * than being recorded as a manifest for an empty notebook.
  *
+ * ## `notebook`, for the cells the text cannot spell
+ *
+ * The rule above — never a re-serialisation, because serialising drops blank
+ * cells — protects this function from *doing* the lossy thing. It does not
+ * protect it from being *handed* the result: `useNotebook` derives `source` as
+ * `serializeRecipe(chains)`, so the blanks are already gone by the time this
+ * sees a string, and every cell below one is named one lower than the notebook
+ * shows it. Recipe text has no spelling for an empty cell, so no amount of care
+ * with the string can recover them.
+ *
+ * `notebook` is the caller's own cell array, blanks included, and the parsed
+ * chains are renumbered against it. Optional because the four callers that have
+ * only a string are still right about everything except a blank cell, and
+ * `currentRunManifest` set this precedent with `ctx.chains`.
+ *
  * @param {{ source: string, me: string, roster: Record<string, string>,
- *   title?: string }} spec
+ *   title?: string,
+ *   notebook?: import("./recipe.js").RecipeChain[]|null }} spec
  * @returns {Promise<HandoffContext>}
  */
-export async function handoffContext({ source, me, roster, title = "notebook" }) {
-  const compiled = compileRecipe(source);
+export async function handoffContext({
+  source,
+  me,
+  roster,
+  title = "notebook",
+  notebook = null,
+}) {
+  const parsed = compileRecipe(source);
+  const chains = chainsNumberedLikeNotebook(planChains(parsed), notebook);
+  // One chain list, used for the plan and the manifest both. Building the plan
+  // from `parsed` and the manifest from `chains` is exactly the split this is
+  // here to close — `offer.cell` is checked against the manifest's positions
+  // and produced from the plan's.
+  const compiled = {
+    ...parsed,
+    ast: { ...(parsed.ast || {}), chains },
+  };
   const plan = planRun(compiled, { me, roster });
-  const chains = planChains(compiled);
   const recipes = canonicalCellSources(chains);
   const manifest = await buildRunManifest({
     title,

@@ -44,21 +44,18 @@ cells joined. `engine.js`'s `currentRunManifest` (around line 4154) is the other
 `serializeRecipe({ chains: [chain] })`. It already contains the loop
 `canonicalCellSources` now expresses and could adopt both exports directly.
 
-### 1.3 The editor's blank cells are dropped before a manifest ever sees them
+### 1.3 `currentRunManifest` is the last producer numbering its own way
 
-Separate from the above and older. `handoffContext` takes only `source`, and
-`useNotebook` derives it as `serializeRecipe(chains)` — which filters blank
-cells out. But `useNotebook.addCell` pushes `{ steps: [] }`, so a blank cell in
-the middle of a notebook is a real cell, and `ToolkitShell` numbers cells by
-`nb.chains.map((chain, i) => …)`. So for a notebook with a mid-notebook blank,
-the manifest and the offer already number cells differently from the editor and
-the run log — the exact hazard §1.2's canonicalisation was careful not to
-introduce, arriving one layer earlier.
+The notebook side is closed: the plan and the manifest both count blank cells
+now, because `handoffContext` takes the notebook's own cell array and
+`chainsNumberedLikeNotebook` restores the gaps the source text cannot spell.
 
-`engine.js` solved this for its own manifest by having the shell pass
-`receipt.chains` (`engine.js:4117-4132`). `handoffContext` has no equivalent;
-closing it means an optional `chains` on its spec and passing `chains` at the
-five `useNotebook.ts` call sites.
+`engine.js`'s `currentRunManifest` (around line 4268) already reads `ctx.chains`
+and already gives an empty chain a row, so it is right about blanks — but it is
+still the second `buildRunManifest` producer, and it takes `recipeSource` raw
+from `ctx.recipeSource` while digesting cells through `serializeRecipe`. That is
+§1.2's asymmetry, unclosed, in the one place `canonicalCellSources` and
+`canonicalNotebookSource` could be adopted directly.
 
 ---|---|---|---|---|
 | `… \| out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `aa45ec49b500` |

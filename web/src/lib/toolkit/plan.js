@@ -418,6 +418,52 @@ export function planChains(compiled) {
 }
 
 /**
+ * Put the notebook's blank cells back into a chain list parsed from its text.
+ *
+ * Recipe text has no spelling for an empty cell — `parseRecipe` pushes a chain
+ * only when it has steps, and `serializeRecipe` drops the empty ones — so a
+ * notebook that round-trips through its own source loses them and every cell
+ * below the first blank moves up one. The editor does exactly that round trip:
+ * it holds `chains` and derives `source` from them.
+ *
+ * That is not a numbering nicety. `placementGate.admit(index)` reads
+ * `plan.cells[index]` with the index the notebook is showing, so a plan one
+ * short places every cell after the blank on the wrong peer — which is the
+ * failure `placementGate`'s own shape argument names, arriving through the
+ * source string instead of through a miscount.
+ *
+ * The blanks are spliced in rather than the editor's chains being used whole,
+ * and the reason is `start`/`end`. Those offsets point into the text they were
+ * parsed from, and `dealByCell` attributes compile errors by them; the editor's
+ * chains carry offsets into whatever text *they* came from, which is not the
+ * `source` the rest of the plan is about. Measured across all seventy presets:
+ * substituting wholesale changes thirty of them, and every difference is an
+ * offset. So the parsed chains are kept exactly as they are and only the gaps
+ * between them are restored.
+ *
+ * Bails out rather than guessing when the two disagree about how many filled
+ * cells there are. That means the source and the chain array are not describing
+ * one notebook, and a splice would invent an alignment; the parse is what every
+ * other part of the plan is derived from, so the parse wins.
+ *
+ * @param {import("./recipe.js").RecipeChain[]} parsed  chains from the source
+ * @param {import("./recipe.js").RecipeChain[]|null|undefined} notebook
+ *   the notebook's own cell array, blanks included
+ * @returns {import("./recipe.js").RecipeChain[]}
+ */
+export function chainsNumberedLikeNotebook(parsed, notebook) {
+  if (!Array.isArray(notebook) || !Array.isArray(parsed)) return parsed;
+  const filled = notebook.filter((c) => (c?.steps || []).length).length;
+  if (filled !== parsed.length) return parsed;
+  const out = [];
+  let n = 0;
+  for (const cell of notebook) {
+    out.push((cell?.steps || []).length ? parsed[n++] : { ...cell, steps: [] });
+  }
+  return out;
+}
+
+/**
  * What is in every labeled slot this notebook writes.
  *
  * `walkPipelineTypes`' own map, filled by the walk itself as it passes each
