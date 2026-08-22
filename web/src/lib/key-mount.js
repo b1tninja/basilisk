@@ -72,7 +72,7 @@ function usageTags(keyPacket) {
 function renderDeprecationNotice(warnings) {
   if (!warnings.length) return "";
   return `<div class="card deprecation-notice" role="status">
-    <p class="card-title">Deprecated algorithms (RFC 9580 §9.1)</p>
+    <h2 class="card-title">Deprecated algorithms (RFC 9580 §9.1)</h2>
     <ul class="deprecation-list m-0">
       ${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}
     </ul>
@@ -93,7 +93,7 @@ function renderPreferencesCard(prefs) {
   const hasAny = rows.some(([, list]) => list.length);
   if (!hasAny && !prefs.noModify) {
     return `<div class="card">
-      <p class="card-title">Algorithm preferences</p>
+      <h2 class="card-title">Algorithm preferences</h2>
       <p class="muted m-0">No preference subpackets on the primary self-signature (RFC 9580 §5.2.3.14–17).</p>
     </div>`;
   }
@@ -109,7 +109,7 @@ function renderPreferencesCard(prefs) {
     ? `<p class="status-row mt-md mb-0" role="status">Key server preference: <strong>no-modify</strong> — third-party certifications should not be merged onto this key (RFC 9580 §5.2.3.25).</p>`
     : "";
   return `<div class="card">
-    <p class="card-title">Algorithm preferences</p>
+    <h2 class="card-title">Algorithm preferences</h2>
     <p class="muted fs-sm mt-0">From the primary self-signature (RFC 9580 §5.2.3.14–17).</p>
     <dl class="key-meta-grid">${prefRows}</dl>
     ${noModify}
@@ -122,7 +122,7 @@ function renderPreferencesCard(prefs) {
 function renderNotationsCard(notations) {
   if (!notations?.length) return "";
   return `<div class="card">
-    <p class="card-title">Notations</p>
+    <h2 class="card-title">Notations</h2>
     <p class="muted fs-sm mt-0">Notation Data on the primary self-signature (RFC 9580 §5.2.3.24).</p>
     <ul class="notation-list m-0">${notations
       .map(
@@ -216,7 +216,7 @@ function renderArmored(armored, fingerprint) {
   return `
     <div class="card">
       <div class="card-title-row">
-        <p class="card-title m-0">Public key</p>
+        <h2 class="card-title m-0">Public key</h2>
         <div class="btn-row">
           <button type="button" class="btn btn-ghost" id="copy-armored">Copy</button>
           <a class="btn btn-ghost" id="download-armored"
@@ -238,7 +238,7 @@ async function maybeClaimNotice(record) {
       providers
     );
     return `<div class="card claim-notice">
-      <p class="card-title">Claim this key</p>
+      <h2 class="card-title">Claim this key</h2>
       <p class="muted mb-lg">Sign in with an email that matches a UID on this key to claim ownership.</p>
       ${buttons || ""}
     </div>`;
@@ -252,7 +252,7 @@ async function maybeClaimNotice(record) {
     </div>`;
   }
   return `<div class="card claim-notice">
-    <p class="card-title">Claim this key</p>
+    <h2 class="card-title">Claim this key</h2>
     <p class="muted mb-lg">Your email matches a UID on this key. Submit a claim to verify ownership.</p>
     <button type="button" class="btn" id="claim-btn" data-fpr="${escapeHtml(record.fingerprint)}">Claim key</button>
     <p id="claim-status" class="hidden"></p>
@@ -373,7 +373,7 @@ async function loadKey() {
     const notationsHtml = renderNotationsCard(prefs.notations || []);
     const bindingWarnHtml = bindingWarnings.length
       ? `<div class="card deprecation-notice" role="status">
-          <p class="card-title">v6 subkey binding</p>
+          <h2 class="card-title">v6 subkey binding</h2>
           <ul class="deprecation-list m-0">${bindingWarnings
             .map((w) => `<li>${escapeHtml(w)}</li>`)
             .join("")}</ul>
@@ -392,7 +392,7 @@ async function loadKey() {
 
     const revokedBanner = record.revoked
       ? `<div class="card revoked-notice">
-          <p class="card-title">This key is revoked</p>
+          <h2 class="card-title">This key is revoked</h2>
           <p class="muted m-0">Do not use it for encryption or trust decisions. Fetch the revocation with GnuPG if you need the certificate update.</p>
         </div>`
       : "";
@@ -415,7 +415,7 @@ async function loadKey() {
     const lastModified = record.updated_at ? formatDate(record.updated_at) : "—";
     const tofuHtml = `<div class="card">
         <div class="card-title-row">
-          <p class="card-title m-0">Key continuity (server TOFU)</p>
+          <h2 class="card-title m-0">Key continuity (server TOFU)</h2>
           <a class="text-link fs-sm" href="/api/v1/key/${encodeURIComponent(fpRaw)}/history" target="_blank" rel="noopener">History JSON</a>
         </div>
         <dl class="key-meta-grid">
@@ -473,7 +473,7 @@ async function loadKey() {
       verifyQrHtml = `
       <div class="card verify-card">
         <div class="card-title-row">
-          <p class="card-title m-0">Out-of-band verify</p>
+          <h2 class="card-title m-0">Out-of-band verify</h2>
           <a class="text-link" href="/verify?fpr=${encodeURIComponent(fpRaw)}">Open verifier</a>
         </div>
         <label class="field-label field-label-inline mb-md">
@@ -498,7 +498,7 @@ async function loadKey() {
     const certifications = Array.isArray(record.certifications) ? record.certifications : [];
     const signedByHtml = certifications.length
       ? `<div class="card">
-          <p class="card-title">Signed by</p>
+          <h2 class="card-title">Signed by</h2>
           <ul class="uid-list">${certifications
             .map((c) => {
               const sf = String(c.signer_fingerprint || "").toUpperCase();
@@ -515,11 +515,21 @@ async function loadKey() {
         </div>`
       : "";
 
+    // No `<h1>` in here any more. This block used to open with
+    // `<h1>OpenPGP key</h1>`, and because this string is only ever assigned on
+    // the success path, the loading state and every failure -- missing `?fpr=`,
+    // key not found, server unreachable -- rendered a document with no heading
+    // in it at all. The page's name does not depend on the fetch, so
+    // `pages/key.tsx` states it in the shell where all three states inherit it;
+    // re-emitting it here would give the page two `<h1>`s on success.
+    //
+    // Everything below this header is `h2`: the cards each print their own
+    // title already, so this is the markup catching up with what the page has
+    // always looked like, not new copy.
     content.innerHTML = `
       <div class="page-header">
         <div class="page-header-row">
           <div>
-            <h1>OpenPGP key</h1>
             <p class="muted fpr">${escapeHtml(fpDisplay)}</p>
             ${labelDisplayHtml}
             ${labelEditHtml}
@@ -545,7 +555,7 @@ async function loadKey() {
       ${bindingWarnHtml}
 
       <div class="card">
-        <p class="card-title">Key information</p>
+        <h2 class="card-title">Key information</h2>
         <dl class="key-meta-grid">
           ${metaRow(
             "Fingerprint",
@@ -583,7 +593,7 @@ async function loadKey() {
 
       <div class="card">
         <div class="card-title-row">
-          <p class="card-title m-0">User IDs</p>
+          <h2 class="card-title m-0">User IDs</h2>
           <p class="muted m-0 fs-xs">Verified emails are solid links; names are dashed (unverified) — always confirm email and fingerprint</p>
         </div>
         ${renderUids(record)}
@@ -592,7 +602,7 @@ async function loadKey() {
       ${signedByHtml}
 
       <div class="card">
-        <p class="card-title">Subkeys</p>
+        <h2 class="card-title">Subkeys</h2>
         ${subkeysHtml}
       </div>
 

@@ -292,9 +292,15 @@ function IndexPage() {
       {message ? <p className="muted text-center">{message}</p> : null}
       {results ? (
         <div>
-          <p className="results-label results-label-wide">
+          {/* The count *is* the section's name here -- it is the only label the
+              page prints over the list, and a heading that repeated the word
+              "Results" above it would be a second name for one thing. `h2`
+              rather than `p` so the list a search actually produced is reachable
+              from the heading list; `.results-label` already fixes size, weight,
+              case and colour, so nothing about it moves. */}
+          <h2 className="results-label results-label-wide">
             {results.length} result{results.length === 1 ? "" : "s"}
-          </p>
+          </h2>
           <div className="result-list">
             {results.map((item) => (
               <ResultCard key={item.fingerprint} item={item} />
@@ -311,7 +317,20 @@ function IndexPage() {
 
       <div className="mt-2xl" ref={helpRef} />
 
-      <section className="project-info" aria-label="About Basilisk">
+      {/* The one heading on this page with no visible text behind it.
+
+          This section already claimed the name "About Basilisk" through
+          `aria-label`, but a landmark name is not an outline entry: the section
+          sat under the `h1` with nothing between them, so the three cards inside
+          it had no parent to hang from and `h1 -> h3` would have skipped a
+          level. The design prints no title here on purpose -- the logo bar is
+          the title -- so the name it already had becomes a real `h2` and the
+          section points at it instead of repeating it. `sr-only`, and only
+          because there is genuinely nothing visible to promote. */}
+      <section className="project-info" aria-labelledby="about-basilisk">
+        <h2 className="sr-only" id="about-basilisk">
+          About Basilisk
+        </h2>
         <div className="about-bar">
           <img className="brand-mark brand-mark-light" src="/logo.png" alt="" width={64} height={64} />
           <img className="brand-mark brand-mark-dark" src="/logo-dark.png" alt="" width={64} height={64} />
@@ -360,7 +379,7 @@ function IndexPage() {
                 <path d="M10 1l2.39 4.84 5.34.78-3.87 3.77.91 5.32L10 13.27l-4.77 2.44.91-5.32L2.27 6.62l5.34-.78z" />
               </svg>
             </div>
-            <p className="feature-title">Verified keys</p>
+            <h3 className="feature-title">Verified keys</h3>
             <p className="feature-body">
               Every key is linked to an email address you own. Claimants verify via a one-time
               token — no unowned keys in the index.
@@ -380,7 +399,7 @@ function IndexPage() {
                 <path d="M7 8V6a3 3 0 016 0v2" />
               </svg>
             </div>
-            <p className="feature-title">In-browser crypto</p>
+            <h3 className="feature-title">In-browser crypto</h3>
             <p className="feature-body">
               Encrypt and decrypt in the <a className="text-link" href="/toolkit#encrypt">Toolkit</a>{" "}
               notebook, and verify signatures in your browser with OpenPGP.js. Private keys and
@@ -401,7 +420,7 @@ function IndexPage() {
                 <path d="M10 2c0 0-4 4-4 8s4 8 4 8M10 2c0 0 4 4 4 8s-4 8-4 8M2 10h16" />
               </svg>
             </div>
-            <p className="feature-title">Standard protocols</p>
+            <h3 className="feature-title">Standard protocols</h3>
             <p className="feature-body">
               Compatible with GnuPG via HKP (<code>--recv-keys</code>, <code>--send-keys</code>)
               and WKD for automatic key discovery by email domain.

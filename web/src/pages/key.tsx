@@ -19,6 +19,19 @@ function KeyPage() {
   return (
     <Layout active="key">
       <div ref={ref}>
+        {/* The page's name, rendered by the page rather than by the fetch.
+            `key-mount` used to write this `<h1>` as the first line of the
+            success markup, which meant the two states where a reader most needs
+            to be told where they are had no heading at all: "Loading key
+            details…" was a headingless document, and so was every failure --
+            missing `?fpr=`, key not found, server down. A screen reader's
+            heading list was empty and the tab title was the only thing naming
+            the page. What this page *is* does not depend on whether the fetch
+            succeeded, so it is stated once here and holds in all three states.
+
+            `mb-0` keeps the gap to the fingerprint line what it was when the
+            two were siblings inside the header row and their margins collapsed. */}
+        <h1 className="mb-0">OpenPGP key</h1>
         <p id="error" className="text-error hidden" />
         <p id="loading" className="muted">
           Loading key details…

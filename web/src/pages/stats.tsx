@@ -55,16 +55,16 @@ function StatsPage() {
       {stats && (
         <div>
           <div className="card">
-            <p className="card-title">Keys</p>
+            <h2 className="card-title">Keys</h2>
             <StatGrid items={KEY_STATS} stats={stats} />
           </div>
           <div className="card">
-            <p className="card-title">Runtime counters</p>
+            <h2 className="card-title">Runtime counters</h2>
             <p className="muted stack-subhead">Per-instance counters since last process start.</p>
             <StatGrid items={RUNTIME_STATS} stats={stats} />
           </div>
           <div className="card">
-            <p className="card-title">HKP endpoints</p>
+            <h2 className="card-title">HKP endpoints</h2>
             <ul className="help-list">
               <li><code>GET /pks/lookup?op=get&amp;search=…</code> — fetch key</li>
               <li><code>GET /pks/lookup?op=index&amp;search=…</code> — index (approved)</li>

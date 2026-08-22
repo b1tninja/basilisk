@@ -167,13 +167,18 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   deleting the dead stylesheet rules for those same classes. Whether they are
   repointed at the current shell or removed is a decision about whether anyone
   still wants that capture set; either way they cannot work as written.
-- **The eight pages are audited for landmarks now; headings are still open.**
-  `<main>` is fixed and pinned by `site-landmarks.e2e.js`. Headings are not:
-  the six `Layout` pages have **no `h2` at all**, so each one's internal
-  structure is carried by styling alone and its outline is a single line. That
-  is a content question per page, not one shared fix. (`/key` also renders no
-  heading until its key loads, so its error and loading states are headingless
-  — the smallest concrete piece of this.)
+- **`renderSnippetCard` leaves one titled card headingless on two pages.**
+  `web/src/lib/snippets.js:32` emits `<p class="card-title">${title}</p>`, so
+  `/`'s "Command-line usage" and `/key`'s "Install with GnuPG / HKP" are the
+  only titled sections on those pages outside the outline. The class already
+  owns font-size, weight and margin, so it is a tag swap — left because the
+  file was outside the heading pass's ownership.
+- **`/published` has no `h2` in the state most visitors land in.**
+  `published-mount.js` emits "Published under your address" and "Key labels",
+  but only in the signed-in-with-at-least-one-key branch — which is why a
+  signed-out sweep measures zero and why this looked like a headingless page.
+  The signed-out and zero-key states need `keys.js:112` "Submit a public key"
+  and published-mount's two prompts promoted to match.
 
 ---
 

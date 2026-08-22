@@ -70,7 +70,7 @@ function PreferencesPage() {
       </div>
 
       <section className="card prefs-card">
-        <p className="card-title">Encrypt UI</p>
+        <h2 className="card-title">Encrypt UI</h2>
         <label className="radio-row">
           <input
             type="checkbox"
@@ -83,7 +83,7 @@ function PreferencesPage() {
       </section>
 
       <section className="card prefs-card mt-lg">
-        <p className="card-title">Upstream keyserver</p>
+        <h2 className="card-title">Upstream keyserver</h2>
         {cfg?.enabled ? (
           <>
             <p className="muted fs-md m-0-b-md">
@@ -129,7 +129,7 @@ function PreferencesPage() {
       </section>
 
       <section className="card prefs-card mt-lg">
-        <p className="card-title">Local public-key cache</p>
+        <h2 className="card-title">Local public-key cache</h2>
         <p className="muted fs-md m-0-b-md">
           {cachedCount ?? 0} public key{cachedCount === 1 ? "" : "s"} cached in IndexedDB on this
           device (encrypt recipients you have looked up).

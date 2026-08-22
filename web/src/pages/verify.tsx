@@ -107,7 +107,7 @@ function VerifyPage() {
     if (clean.length !== 40 && clean.length !== 64) {
       setResultClass("verify-result fail");
       setResultHtml(
-        `<p class="card-title m-0-b-xs">FAIL</p><p class="m-0">Invalid fingerprint (need 40 or 64 hex characters).</p>`
+        `<h2 class="card-title m-0-b-xs">FAIL</h2><p class="m-0">Invalid fingerprint (need 40 or 64 hex characters).</p>`
       );
       return;
     }
@@ -118,7 +118,7 @@ function VerifyPage() {
     } catch (err) {
       setResultClass("verify-result fail");
       setResultHtml(`
-        <p class="card-title m-0-b-xs">FAIL</p>
+        <h2 class="card-title m-0-b-xs">FAIL</h2>
         <p class="m-0">${escapeHtml(err instanceof Error ? err.message : "Key not found on this server.")}</p>
         <p class="muted fpr mt-md">${escapeHtml(formatFingerprint(clean))}</p>`);
       return;
@@ -152,7 +152,7 @@ function VerifyPage() {
 
     setResultClass(`verify-result ${pass ? "pass" : "fail"}`);
     setResultHtml(`
-      <p class="card-title m-0-b-xs">${pass ? "PASS" : "FAIL"}</p>
+      <h2 class="card-title m-0-b-xs">${pass ? "PASS" : "FAIL"}</h2>
       <p class="m-0-b-sm">${escapeHtml(
         cmp && !cmp.ok
           ? cmp.reason
@@ -285,7 +285,7 @@ function VerifyPage() {
       {error ? <p className="text-error">{error}</p> : null}
 
       <div className="card">
-        <p className="card-title">Expected fingerprint</p>
+        <h2 className="card-title">Expected fingerprint</h2>
         <label className="field-label" htmlFor="expected-fpr">
           Fingerprint (or paste openpgp4fpr:…)
         </label>
@@ -312,7 +312,7 @@ function VerifyPage() {
       </div>
 
       <div className="card">
-        <p className="card-title">Scan or enter</p>
+        <h2 className="card-title">Scan or enter</h2>
         <div className="btn-row mb-md">
           <button type="button" className="btn" onClick={() => void startCamera()}>
             Start camera
