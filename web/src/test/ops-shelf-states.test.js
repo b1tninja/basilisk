@@ -89,8 +89,12 @@ describe("an op that doesn't fit still explains itself", () => {
   it("names the blocked state to a screen reader", () => {
     // `cursor-not-allowed` is invisible to assistive tech, and `disabled`
     // alone says nothing about why.
-    expect(TILE).toMatch(/encode, unavailable: \$\{needs\.forward\}/);
-    expect(TILE).toMatch(/decode, unavailable: \$\{needs\.reverse\}/);
+    // The direction word left the name when the button gained one: it read
+    // `blip39.encode - encode`, and `gpg.encrypt - encode` on a row that does
+    // not encode. What must survive is the *reason* - the name still says why
+    // the handle cannot be used, which is the claim this test was written for.
+    expect(TILE).toMatch(/unavailable: \$\{needs\.forward\}/);
+    expect(TILE).toMatch(/unavailable: \$\{needs\.reverse\}/);
   });
 
   it("wires the accelerator its own badge advertises", () => {

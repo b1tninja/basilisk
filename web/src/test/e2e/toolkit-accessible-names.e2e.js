@@ -249,16 +249,21 @@ describe.skipIf(!availability.ok)("the toolkit shell says what it is", () => {
     expect(asName, `docs being used as the accessible name: ${asName.join(", ")}`).toEqual([]);
   });
 
-  it("leaves the pair rows naming their own direction", () => {
-    // The control. These handles were already right — `base64.encode — encode`
-    // — and a change to `AddButton` must not reach them. If this fails
-    // alongside the assertions above, the sweep is measuring the wrong thing.
+  it("leaves the pair rows naming their own op", () => {
+    // The control, and its job is unchanged: a change to `AddButton` must not
+    // reach these handles. What it asserts moved because the handles did —
+    // they announced `base64.encode — encode`, where the trailing word was the
+    // only way a *wordless* chevron could say its direction. The button carries
+    // that word now, so the suffix said it twice (`blip39.encode — encode`) and,
+    // on rows whose ops are not codecs, said something untrue
+    // (`gpg.encrypt — encode`). The claim that survives is the one that
+    // mattered: a handle names its own op, and the name is not a paragraph.
     const handles = rows.filter((r) => !r.add && r.handle);
     const wrong = handles
-      .filter((r) => !/ — (encode|decode)(,|$)/.test(r.name))
+      .filter((r) => !r.name || r.name.length > 60 || !r.name.startsWith(r.op))
       .map((r) => `${r.op}: ${JSON.stringify(r.name.slice(0, 90))}`);
     expect(handles.length).toBeGreaterThan(10);
-    expect(wrong, `direction handles not naming their direction:\n  ${wrong.join("\n  ")}`).toEqual([]);
+    expect(wrong, `direction handles not naming their op:\n  ${wrong.join("\n  ")}`).toEqual([]);
   });
 
   it("agrees with the browser's own name computation", async () => {

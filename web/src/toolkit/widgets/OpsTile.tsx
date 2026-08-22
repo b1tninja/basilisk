@@ -244,8 +244,8 @@ export function OpsTile({
     <div
       /*
        * Two controls and one name between them is a group, and it had none —
-       * a reader walking the shelf heard `gpg.encrypt — encode` and then
-       * `gpg.decrypt — decode` with nothing saying they were one row, let
+       * a reader walking the shelf heard `gpg.encrypt` and then
+       * `gpg.decrypt` with nothing saying they were one row, let
        * alone what the row was. The caption is that name. `role="group"`
        * rather than a heading because the row is furniture around two
        * buttons, and a group is announced on entry and left alone otherwise.
@@ -350,11 +350,26 @@ export function OpsTile({
              `blip39`, which left the row unable to spell its own forward op
              out of the family it prints and the word on the button. Both
              halves are the same step either way — only the spelling moved. */
+          /* The name is the op and nothing else.
+           *
+           * It used to end ` — encode`, which was the only way a *wordless*
+           * chevron could say which direction it was. The button carries the
+           * word now, so that suffix stopped informing and started lying: it
+           * read `blip39.encode — encode`, saying it twice, and
+           * `gpg.encrypt — encode`, saying "encode" about an op that
+           * encrypts. `encode`/`decode` is this row's slot vocabulary, not
+           * the op's verb, and a name is the wrong place for a slot.
+           *
+           * WCAG 2.5.3 still holds without it, and by construction rather
+           * than by luck: the visible word is the op's last dotted segment,
+           * so `gpg.encrypt` contains `encrypt` and `blip39.encode` contains
+           * `encode`. The direction stays announced as the description,
+           * through `title`. */
           aria-label={
             hasForward
               ? needs?.forward
-                ? `${forwardDisplayName} — encode, unavailable: ${needs.forward}`
-                : `${forwardDisplayName} — encode`
+                ? `${forwardDisplayName}, unavailable: ${needs.forward}`
+                : forwardDisplayName
               : undefined
           }
           title={hasForward ? needs?.forward || "Encode" : undefined}
@@ -405,8 +420,8 @@ export function OpsTile({
           aria-label={
             hasReverse
               ? needs?.reverse
-                ? `${reverseDisplayName} — decode, unavailable: ${needs.reverse}`
-                : `${reverseDisplayName} — decode`
+                ? `${reverseDisplayName}, unavailable: ${needs.reverse}`
+                : reverseDisplayName
               : undefined
           }
           title={hasReverse ? needs?.reverse || "Decode" : undefined}

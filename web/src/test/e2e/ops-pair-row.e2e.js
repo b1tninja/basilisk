@@ -139,7 +139,11 @@ function pairRows() {
        * falls out of every lookup here at once and the sentinel catches it,
        * rather than each assertion quietly reading `undefined`.
        */
-      op: handles[0].name.split(" \— ")[0],
+      /* The name is the op, plus `, unavailable: …` when the caret does not
+       * fit it. It used to carry ` — encode` as well, which is why this once
+       * split on the dash; the button prints the direction now, so the name
+       * stopped repeating it. Strip only the reason. */
+      op: handles[0].name.split(", unavailable:")[0],
       /** The family printed in the row's mono column — "" where there is none. */
       family: (code.textContent || "").trim(),
       role: row.getAttribute("role"),
@@ -294,7 +298,7 @@ describe.skipIf(!availability.ok)("a conjugate row in the ops shelf is two ops",
     const wrong = [];
     for (const r of rows) {
       for (const h of r.handles) {
-        const op = h.name.split(" \— ")[0];
+        const op = h.name.split(", unavailable:")[0];
         const spelled = r.family ? `${r.family}.${h.text}` : h.text;
         if (spelled !== op) wrong.push(`${op}: the row spells ${JSON.stringify(spelled)}`);
       }
@@ -339,8 +343,8 @@ describe.skipIf(!availability.ok)("a conjugate row in the ops shelf is two ops",
     expect(await group.count(), "no group is named by the OpenPGP row's caption").toBe(1);
     // …and it is the row with both ops on it, not some other element that
     // happens to carry the words.
-    expect(await group.getByRole("button", { name: "gpg.encrypt — encode" }).count()).toBe(1);
-    expect(await group.getByRole("button", { name: "gpg.decrypt — decode" }).count()).toBe(1);
+    expect(await group.getByRole("button", { name: "gpg.encrypt", exact: true }).count()).toBe(1);
+    expect(await group.getByRole("button", { name: "gpg.decrypt", exact: true }).count()).toBe(1);
   });
 
   it("draws the pair's own art where the registry gives it two glyphs", () => {
@@ -389,7 +393,12 @@ describe.skipIf(!availability.ok)("a conjugate row in the ops shelf is two ops",
     const wrong = [];
     for (const r of rows) {
       for (const h of r.handles) {
-        if (!/ — (encode|decode)(,|$)/.test(h.name)) wrong.push(`${r.op}: ${JSON.stringify(h.name)}`);
+        // The direction used to live in the name because the handle was a
+        // wordless chevron. It is the button's own word now, so the claim moved
+        // with it: the handle *says* its direction rather than announcing it
+        // twice. `blip39.encode — encode` is what this used to permit.
+        if (!/^(encode|decode|[a-z0-9.-]+)$/.test(h.text) || !h.text)
+          wrong.push(`${r.op}: ${JSON.stringify(h.text)}`);
         // Turned over, not dropped. This read `h.text.length > 0`, because
         // the handles were glyph-only and the risk was art being taken for
         // a name. They carry a word now, on purpose, so the claim becomes
@@ -401,7 +410,7 @@ describe.skipIf(!availability.ok)("a conjugate row in the ops shelf is two ops",
         // through one, and every handle on a conjugate row has one. A row
         // that genuinely draws an empty spacer has no accessible name either,
         // and the check above it reports that first.
-        if (!h.name.startsWith(`${r.family ? `${r.family}.` : ""}${h.text} `)) {
+        if (!h.name.startsWith(`${r.family ? `${r.family}.` : ""}${h.text}`)) {
           wrong.push(
             `${r.op}: handle says ${JSON.stringify(h.text)}, announces ${JSON.stringify(h.name)}`
           );
@@ -412,8 +421,8 @@ describe.skipIf(!availability.ok)("a conjugate row in the ops shelf is two ops",
     // Every name opens with an op name, so the family name on the group never
     // became the only thing said.
     const gpg = rowFor("gpg.encrypt");
-    expect(gpg.handles[0].name.startsWith("gpg.encrypt ")).toBe(true);
-    expect(gpg.handles[1].name.startsWith("gpg.decrypt ")).toBe(true);
+    expect(gpg.handles[0].name.startsWith("gpg.encrypt")).toBe(true);
+    expect(gpg.handles[1].name.startsWith("gpg.decrypt")).toBe(true);
     // …and the visible word is inside the name it labels (WCAG 2.5.3), which
     // is what lets someone say "encrypt" to a voice control and hit the button
     // they are looking at.
@@ -472,7 +481,7 @@ describe.skipIf(!availability.ok)("a conjugate row in the ops shelf is two ops",
       // Found by the handle's name, not the mono column: that column prints
       // `gpg` now, and three rows share it.
       const btn = [...document.querySelectorAll(".ops-category button")].find(
-        (b) => b.getAttribute("aria-label") === "gpg.encrypt — encode"
+        (b) => b.getAttribute("aria-label") === "gpg.encrypt"
       );
       return btn?.closest("[role=group]") || null;
     });
