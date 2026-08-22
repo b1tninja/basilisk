@@ -511,23 +511,7 @@ body.layout-app {
   min-height: 0;
   min-width: 0;
 }
-.pane-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.5rem 0.9rem;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.pane-title {
-  margin: 0;
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
+
 .recipe-heading {
   display: block;
   margin: 0 0 0.65rem;
@@ -558,17 +542,6 @@ body.layout-app {
  * state whatsoever. */
 .recipe-title-input:hover {
   border-bottom-color: var(--border);
-}
-.pane-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-.pane-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0.85rem 0.9rem 1.5rem;
 }
 
 /* Session tray — compact pull-out into agent / keychain / trust */
@@ -829,24 +802,6 @@ body.layout-app {
 .recipient-resolve-hit-body {
   display: grid;
   gap: 0.1rem;
-}
-
-/* Docs slide-over */
-.reference-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(480px, 100vw);
-  z-index: 400;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  box-shadow: var(--shadow);
-}
-.reference-drawer .pane-head {
-  background: var(--surface-raised);
 }
 
 /* ===== Nav ===== */
@@ -3165,40 +3120,6 @@ input[type=file] { display: none; }
   overflow: hidden;
 }
 
-.chef-workspace {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  /* JS writes --ops-w inline when the ops pane is resized */
-  --ops-col: var(--ops-w, 260px);
-  grid-template-columns: var(--ops-col) auto minmax(0, 1fr);
-}
-.chef-workspace.notebook-workspace {
-  grid-template-columns: var(--ops-col) auto minmax(0, 1fr);
-}
-.chef-ops {
-  background: color-mix(in srgb, var(--surface-raised) 88%, var(--surface));
-  border-right: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-}
-.chef-ops .pane-title {
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.chef-ops #ops-hint {
-  opacity: 0.85;
-}
-.chef-notebook .pane-head {
-  display: none; /* title lives in sticky notebook header */
-}
-.chef-notebook .pane-body.notebook-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-  padding-top: 0.35rem;
-}
 .notebook-header {
   position: sticky;
   top: 0;
@@ -4353,103 +4274,19 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   align-self: flex-end;
 }
 
-/* Drag handles between panes (the 1px divider line lives here) */
-.pane-splitter {
-  position: relative;
-  width: 7px;
-  cursor: col-resize;
-  flex-shrink: 0;
-  touch-action: none;
-  user-select: none;
-}
-.pane-splitter::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 1px;
-  background: var(--border);
-}
-.pane-splitter:hover::before,
-.pane-splitter.dragging::before {
-  left: 2px;
-  width: 3px;
-  background: var(--brand);
-}
-
-/* Collapsed pane rail (click to expand) */
-.pane-rail {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  padding: 0.75rem 0;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  font: inherit;
-  height: 100%;
-  width: 100%;
-}
-.pane-rail:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--brand) 8%, transparent);
-}
-.pane-rail span {
-  writing-mode: vertical-rl;
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-.pane-collapse {
-  line-height: 1;
-}
-
-@media (min-width: 1001px) {
-  .chef-workspace.ops-collapsed {
-    --ops-col: 2.3rem;
-  }
-  .chef-workspace.ops-collapsed .chef-ops .pane-head,
-  .chef-workspace.ops-collapsed .chef-ops .pane-body {
-    display: none;
-  }
-  .chef-workspace.ops-collapsed .chef-ops .pane-rail {
-    display: flex;
-  }
-  .chef-workspace.ops-collapsed .pane-splitter[data-resize="ops"] {
-    cursor: default;
-  }
-}
-
 @media (max-width: 1000px) {
   /* Fall back to a normally scrolling stacked page on narrow viewports */
   body.layout-app {
     height: auto;
     overflow: auto;
   }
-  .chef-workspace {
-    display: flex;
-    flex-direction: column;
-  }
-  .pane-splitter,
-  .pane-rail,
-  .pane-collapse {
-    display: none !important;
-  }
+
   /* Collapse state is a desktop concept — always show panes when stacked */
   .chef-ops,
   .chef-recipe {
     border-bottom: 1px solid var(--border);
   }
-  .pane-body {
-    overflow-y: visible;
-  }
-  .chef-ops .pane-body {
-    max-height: 45vh;
-    overflow-y: auto;
-  }
+
 }
 
 .ops-drawer {
@@ -4653,11 +4490,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   margin-left: auto;
   gap: 0.25rem;
 }
-.chef-ops .pane-head {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
+
 .ops-icon-grid .ops-pair {
   display: grid;
   grid-template-columns: 1fr;
@@ -4952,10 +4785,7 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   box-shadow: none;
   filter: none;
 }
-.chef-ops {
-  /* Narrower pane suits icon tiles */
-  --ops-prefer: 200px;
-}
+
 .ops-category-toggle {
   display: flex;
   flex-direction: row;
@@ -6591,7 +6421,6 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
 .quorum-audience-search {
   position: relative;
 }
-
 
 /*
  * Boot diagnostics banner (lib/boot-diagnostics.js).

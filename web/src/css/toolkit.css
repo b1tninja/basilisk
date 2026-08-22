@@ -585,11 +585,13 @@ body.layout-app:has(#app > .toolkit-shell) {
  * memo — it stayed a fixed three-column strip inside a body that had already
  * become an ordinary scrolling page.
  *
- * The splitter goes away with the columns. It drags a *vertical* divider, and
- * once the panes are stacked above and below each other there is nothing for
- * it to mean; the same block in site.css hides `.pane-splitter` for that
- * reason. Nothing is lost by hiding it — width is no longer adjustable
- * because width is no longer shared.
+ * The splitter went away with the columns, and then with the legacy shell
+ * entirely: `.pane-splitter` and the rest of that vocabulary were deleted
+ * from site.css once a build-output scan showed no code path emits any of
+ * those class names. The rule it used to describe — a *vertical* divider has
+ * nothing to mean once the panes stack above and below each other — is still
+ * why nothing replaced it. Width is not adjustable here because width is not
+ * shared.
  *
  * The `max-height` is the other half of the fix and not a nicety. Both side
  * panes scroll internally through a `ScrollArea` that is `min-h-0 flex-1`,

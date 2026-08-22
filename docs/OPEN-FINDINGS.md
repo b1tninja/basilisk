@@ -151,13 +151,13 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **`.pane-splitter` is styled in three stylesheets and rendered by nothing.**
-  `site.css`, `toolkit.css` and `.ds-styles.css` all carry rules for it; a sweep
-  of every `.tsx`, `.ts`, `.js`, `.html` and template in the repo finds no
-  element that wears the class. This entry previously described a keyboard gap
-  on it, which was wrong in the way that matters — there is no control to reach,
-  so there is nothing to fix and the styles are dead. Deleting them is a small
-  cleanup, not an accessibility fix.
+- **Five `scripts/snapshot-*.mjs` capture screenshots of markup that no longer
+  exists.** `snapshot-toolkit-ux`, `-ux-overwhelm`, `-ux-resume`, `-conjugates`
+  and `-ops-drill` all `waitForSelector` / `locator` on `.chef-workspace` and
+  `.chef-ops` — class names the build emits zero times. They were found while
+  deleting the dead stylesheet rules for those same classes. Whether they are
+  repointed at the current shell or removed is a decision about whether anyone
+  still wants that capture set; either way they cannot work as written.
 - **The eight pages are audited for landmarks now; headings are still open.**
   `<main>` is fixed and pinned by `site-landmarks.e2e.js`. Headings are not:
   the six `Layout` pages have **no `h2` at all**, so each one's internal
