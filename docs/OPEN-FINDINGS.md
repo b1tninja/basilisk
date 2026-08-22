@@ -47,12 +47,27 @@ plumbing is `kernel.js` and `useNotebook.ts`.
 **verbatim**, with no canonicalisation. It is correct today only because its one
 caller hands it `serializeRecipe(chains)`, which is already canonical.
 
-Measured on a pair that shipped long before this was noticed: `split 2/3` and
-`sss.split 2/3` are the same step written two ways, and they produce **different
-`recipeDigest` and therefore different `manifestDigest`** — so every offer
-between two peers who typed different spellings refuses, while their *per-cell*
-`cells[].recipeDigest` agree. The notebook-level digest's canonicality is a
-property of a call site rather than of the manifest builder.
+**The manifest states identity at two levels and they disagree with each
+other.** Reproduced on the `handoff-shell` fixture with a *doubled space* — no
+alias, no reordering, nothing a person would call a different notebook:
+
+| | cell 1 | cell 2 | cell 3 | notebook |
+|---|---|---|---|---|
+| `… \| out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `aa45ec49b500` |
+| `… \|  out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `2d34d7fdbcf8` |
+
+Every cell digest matches, because cells go through `serializeRecipe`. The
+notebook digest does not, because it is the raw text. So the fine-grained
+evidence says these two peers are running the same notebook and the coarse one
+refuses the offer.
+
+`sameNotebook` argues for exact text, and its argument is sound for what it
+answers: serialising *instead of* the source drops blank cells and shifts every
+index after one, so the offer would name cell 4 while the peer's plan calls it
+3. That justifies not substituting a re-serialisation. It does not justify the
+notebook digest disagreeing with its own cell digests — a canonical form that
+preserves cell count and order satisfies both, and nothing has been written
+that weighs one against the other.
 
 `c24992a` avoided adding to this by resolving its alias at parse, and proved the
 hazard by mutation: resolve after the digest and two peers holding one agreement
