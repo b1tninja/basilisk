@@ -190,6 +190,7 @@ import { deleteKey, isPasskeyPrfAvailable, listKeys } from "../lib/vault.js";
 import { getDeviceLabel, setDeviceLabel } from "../lib/prefs.js";
 import { exposureTrace } from "../lib/toolkit/slot-graph.js";
 import { copyText, formatFingerprint } from "../lib/utils.js";
+import { NO_LINK_YET } from "./widgets/InviteCard";
 import type { ArmedBranch, ChipPath, ChipStemView } from "./widgets/RecipeChipFlow";
 import type { CellStatus, RecipeChain, RecipeStep } from "./notebook-types";
 
@@ -1644,6 +1645,37 @@ export function ToolkitShell() {
   }, [sessionAudience]);
 
   /**
+   * Put the invite **link** on the clipboard, and refuse rather than substitute.
+   *
+   * Four controls say "Copy invite" and three of them used to copy
+   * `quorumState.invite`, which is a status line — `quorum <room> · 3 keys ·
+   * <host>` — with no fingerprint in it. This app's own reader settles what
+   * that is worth: session-flow's audience reader finds **zero** fingerprints
+   * in it and reports the paste as `nothing`, while the link's `#j=` yields
+   * the audience and the `join` role. (Named in prose only: the shell must
+   * never read a paste itself — `session-flow.test.js` pins that, because two
+   * readings are two answers to who a paste added.) So the paste box was never
+   * missing; it was
+   * being handed the one artifact it is right to reject.
+   *
+   * A fifth read `inviteUrl || quorumState.invite`, which is worse than either
+   * branch alone: it degrades to the unusable string exactly when the link is
+   * absent, so the failure arrives as a paste that finds nothing rather than
+   * as a refusal that says why.
+   *
+   * With no link there is nothing to copy — an audience of fewer than two
+   * derives no room — and the reason is the sentence `InviteCard` already
+   * shows, borrowed rather than reworded so the two cannot drift.
+   */
+  const copyInvite = useCallback(() => {
+    if (!inviteUrl) {
+      nb.refuse(NO_LINK_YET);
+      return;
+    }
+    void copyText(inviteUrl);
+  }, [inviteUrl, nb]);
+
+  /**
    * Keep the address bar on whatever is worth sending — a live room's invite,
    * otherwise the notebook — so that copying the URL is always a way to share.
    *
@@ -2700,7 +2732,7 @@ export function ToolkitShell() {
           progress={nb.runProgress}
           waitingCell={nb.runningCell ?? undefined}
           sessionInvite={nb.quorumState.invite}
-          onCopyInvite={() => void navigator.clipboard.writeText(nb.quorumState.invite)}
+          onCopyInvite={copyInvite}
           onCancelSession={() => nb.cancelQuorum()}
           // The one row that is never collapsed, carrying the one fact that was
           // two deliberate acts away: a private key is decrypted in this
@@ -3230,9 +3262,7 @@ export function ToolkitShell() {
                             invite={nb.quorumState.invite}
                             connected={nb.quorumState.connected}
                             peers={nb.quorumState.peers}
-                            onCopyInvite={() =>
-                              void navigator.clipboard.writeText(nb.quorumState.invite)
-                            }
+                            onCopyInvite={copyInvite}
                             onCancel={() => nb.cancelQuorum()}
                             onRestartIce={() => void restartLiveIce()}
                           />
@@ -4387,9 +4417,7 @@ export function ToolkitShell() {
                       peers: rosterRows,
                     }}
                     links={nb.peerLinks}
-                    onCopyInvite={() =>
-                      void navigator.clipboard.writeText(nb.quorumState.invite)
-                    }
+                    onCopyInvite={copyInvite}
                     onClose={() => nb.cancelQuorum()}
                     onRestartIce={() => void restartLiveIce()}
                     onCloseLink={(id) => void closeLink(id)}
@@ -5303,9 +5331,7 @@ export function ToolkitShell() {
             setShareOpen(false);
             nb.setSheet("session");
           }}
-          onCopyInvite={() =>
-            void copyText(inviteUrl || nb.quorumState.invite)
-          }
+          onCopyInvite={copyInvite}
         />
 
         {/* The shared session, start to finish. Reached from the Share sheet's
@@ -5332,7 +5358,7 @@ export function ToolkitShell() {
                     peers: rosterRows,
                   },
                   inviteUrl,
-                  onCopyInvite: () => void copyText(inviteUrl || ""),
+                  onCopyInvite: copyInvite,
                   attestation: nb.attestation,
                   // Refused on the live count, never on the last press's
                   // outcome: a reason derived from what happened once is a
@@ -5446,7 +5472,7 @@ export function ToolkitShell() {
             },
             issues: sessionIssues,
             inviteUrl,
-            onCopyInvite: () => void copyText(inviteUrl || ""),
+            onCopyInvite: copyInvite,
             opens: START_OPENS,
             onStart: () => {
               void nb.startSession({

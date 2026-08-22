@@ -10,7 +10,12 @@ import { INVITE_CARRIES, INVITE_OMITS } from "../../lib/toolkit/session-flow.js"
  * It names the audience rule rather than the link, because the link is derived:
  * a room is its audience, so "there is no link" is never the state to fix.
  */
-const NO_LINK_YET =
+/**
+ * Why there is no link yet, shared with the shell's Copy-invite handler.
+ * Exported so the card's disabled reason and the refusal a press raises are
+ * one sentence rather than two that can drift apart.
+ */
+export const NO_LINK_YET =
   "Name at least two people, including yourself, and there is a link to send.";
 
 export type InviteCardProps = {
