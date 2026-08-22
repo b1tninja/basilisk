@@ -276,8 +276,17 @@ describe("what a conjugate row prints", () => {
   ];
 
   it("finds the rows it is measuring", () => {
-    // An empty sweep passes every assertion below it.
-    expect(pairRows.length).toBe(22);
+    // An empty sweep passes every assertion below it, so this is a sentinel
+    // rather than a census. It was `toBe(22)` and had to be edited the first
+    // time a pair was declared (`clipboard.read`/`clipboard.write`) — an exact
+    // count on a growing set is a line people learn to bump without reading,
+    // which is the failure `opsRegistryVersion`'s pin was rewritten to avoid.
+    // A floor still catches the thing that matters: the sweep going empty, or
+    // collapsing to a handful, because `listDrawerRows` stopped pairing.
+    expect(pairRows.length).toBeGreaterThanOrEqual(20);
+    // And the pair this sentinel exists for is named, so "not empty" cannot be
+    // satisfied by twenty rows that are all something else.
+    expect(pairRows.map((r) => r.forward.name)).toContain("gpg.encrypt");
   });
 
   it("splits a dotted pair into the family and the two directions", () => {

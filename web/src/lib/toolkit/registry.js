@@ -4044,6 +4044,15 @@ export const STEPS = [
     name: "clipboard.read",
     kind: "source",
     toolbox: "io",
+    // One port, two directions, drawn as one row. `file.read`/`file.save` is
+    // the precedent and the same shape -- a source paired with a sink, which
+    // `gpg.encrypt`/`gpg.decrypt` already proved the shelf can render: pressing
+    // one appends a step that consumes the pipe, pressing the other starts a
+    // cell. The caption is the family rather than an "X / Y" phrase, again as
+    // `file.read` has it, because the row prints what the two names share and
+    // the buttons print the rest.
+    conjugate: "clipboard.write",
+    pairCaption: "Clipboard",
     shelf: "ports",
     doc: "Read the system clipboard into the pipeline as text. Asks every run — never remembered, because clipboard contents change silently between runs. The out-of-band signaling source: `clipboard.read | quorum.join`.",
     input: "none",
@@ -4055,6 +4064,7 @@ export const STEPS = [
     name: "clipboard.write",
     kind: "sink",
     toolbox: "io",
+    conjugateOf: "clipboard.read",
     shelf: "ports",
     doc: "Copy the current value to the system clipboard and pass it through — text verbatim, bytes as base64, structured values as JSON. Toast-weight confirm, no dialog: you just ran the recipe that produced the value. Example: `… | out $invite | clipboard.write`.",
     input: "bytes",
