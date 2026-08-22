@@ -663,7 +663,7 @@ function CatalogApp() {
               title={topbarTitle}
               onRename={setTopbarTitle}
               subtitle="3 cells"
-              suiteStatus={{ label: "4 suites ready", tone: "ok" }}
+              suiteStatus={{ label: "3 suites verified", tone: "ok" }}
               suiteDetail={[
                 { name: "WebCrypto", tone: "ok", note: "verified" },
                 { name: "OpenPGP", tone: "ok", note: "verified" },
@@ -683,7 +683,7 @@ function CatalogApp() {
               title="Onboard Dana & Sam"
               onRename={() => {}}
               subtitle="3 cells"
-              suiteStatus={{ label: "3 suites ready · 1 issue", tone: "warn" }}
+              suiteStatus={{ label: "0 of 3 suites verified", tone: "warn" }}
               suiteDetail={[
                 { name: "OpenPGP", tone: "ok", note: "verified" },
                 { name: "WebCrypto", tone: "ok", note: "verified" },

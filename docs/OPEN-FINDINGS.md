@@ -129,18 +129,6 @@ changes what a query finds.
   a false statement. Closing it means moving `kcSent` after the write (a
   double-send guard) or moving the trigger into the session's kc handler.
 
-### 2.3 `playbook.verify`'s documentation names the wrong standard
-
-Its registry doc says it works "on `jose.verify`'s reasoning", which reads as a
-JOSE delegation. The code (`web/src/lib/toolkit/engine.js:3795`) calls
-`verifiedCleartextOpenPgp` — an **OpenPGP cleartext signature**, RFC 9580 §7.
-The prose describes a different standard from the one it implements.
-
-Found while completing the spec references in `5bf8e04`, which deliberately did
-not add a citation: the op sits in the leave-alone set, and citing RFC 9580 §7
-would have made the doc and the reference disagree in a second place rather than
-fixing the first. Fix the sentence, then the citation follows.
-
 ---
 
 ## 4a. One decision nobody has made
@@ -163,9 +151,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **`web/src/pages/toolkit-widgets.tsx`** hardcodes `"4 suites ready"` and
-  `"3 suites ready · 1 issue"` as gallery specimens. Stale as of `4f19e1d`,
-  which made the shell say `3 suites verified`.
 - **Solo shelf rows truncate their op names at 160px** — `d…`, `h…`, `p…`. The
   same defect `3ef6526` fixed for pair rows, in a different component.
 - **The footer kit bar overflows at 160px**: `.ops-panel` is scrollWidth 173 /

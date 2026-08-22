@@ -61,6 +61,10 @@ const STEP_DOCS = {
   passphrase: { url: "https://en.wikipedia.org/wiki/Diceware", label: "Diceware" },
 
   // ── OpenPGP — one spec covers the whole toolbox ──
+  // The verifier reads an OpenPGP *cleartext* signature — the framework in
+  // §7, not the packet stream `gpg.encrypt` produces — so it cites the
+  // section rather than the RFC, the way the base64 family already does.
+  "playbook.verify": { url: `${RFC}/rfc9580#section-7`, label: "RFC 9580 §7 · Cleartext signature" },
   "gpg.encrypt": { url: `${RFC}/rfc9580`, label: "RFC 9580 · OpenPGP" },
   "gpg.decrypt": { url: `${RFC}/rfc9580`, label: "RFC 9580 · OpenPGP" },
   "gpg.symencrypt": { url: `${RFC}/rfc9580`, label: "RFC 9580 · OpenPGP" },

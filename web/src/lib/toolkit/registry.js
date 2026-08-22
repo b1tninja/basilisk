@@ -3995,7 +3995,7 @@ export const STEPS = [
     toolbox: "io",
     shelf: "receipt",
     conjugateOf: "playbook",
-    doc: "Check a signed playbook against a key and emit the recipe it vouches for. Fail-loud with no soft mode, on `jose.verify`'s reasoning — an unverified procedure is attacker-chosen, and there is nothing to branch on. The document is parsed out of the bytes the signature covered, never out of the armor separately. Paste the result into a notebook and read it before running it. Example: `input | playbook.verify key=$author | out $recipe`.",
+    doc: "Check a signed playbook against a key and emit the recipe it vouches for. Reads an OpenPGP cleartext signature (RFC 9580 §7). Fail-loud with no soft mode, for the reason `jose.verify` is — an unverified procedure is attacker-chosen, and there is nothing to branch on. The document is parsed out of the bytes the signature covered, never out of the armor separately. Paste the result into a notebook and read it before running it. Example: `input | playbook.verify key=$author | out $recipe`.",
     input: "text",
     output: "text",
     entropy: "none",
