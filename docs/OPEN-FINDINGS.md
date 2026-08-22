@@ -172,13 +172,20 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **Five `scripts/snapshot-*.mjs` capture screenshots of markup that no longer
-  exists.** `snapshot-toolkit-ux`, `-ux-overwhelm`, `-ux-resume`, `-conjugates`
-  and `-ops-drill` all `waitForSelector` / `locator` on `.chef-workspace` and
-  `.chef-ops` — class names the build emits zero times. They were found while
-  deleting the dead stylesheet rules for those same classes. Whether they are
-  repointed at the current shell or removed is a decision about whether anyone
-  still wants that capture set; either way they cannot work as written.
+- **Two more snapshot scripts photograph markup that no longer exists.**
+  `snapshot-recipe-preview.mjs` and `snapshot-inline-runtime.mjs` are as dead as
+  the five already dealt with — `.cell-recipe-ta`, `.cell-recipe-summary`,
+  `.notebook-cell`, `#preset-gallery`, `#preset-grid`, `.builder-card`,
+  `.cell-runtime-kicker`, `[data-runtime-slot]` and `.cell-inputs-fallback` are
+  all zero in the build and zero in `src/**/*.tsx`. (`snapshot-tool-card.mjs` is
+  fine: it targets the standalone `tool-card-preview.html` fixture, which emits
+  its own markup.)
+- **One capture was lost on purpose and should be a decision, not an accident.**
+  Deleting `snapshot-ux-resume.mjs` dropped the recipient-binder shot — whose
+  selectors (`.recipient-binder`, `.binder-search`, `.keyserver-control`,
+  `.cell-bind-messaging`) are still live. It was unreachable in that script
+  because the only route to it ran through the dead raw-textarea loader. If it
+  is wanted, it needs a new purpose-built script.
 - **`renderSnippetCard` leaves one titled card headingless on two pages.**
   `web/src/lib/snippets.js:32` emits `<p class="card-title">${title}</p>`, so
   `/`'s "Command-line usage" and `/key`'s "Install with GnuPG / HKP" are the
