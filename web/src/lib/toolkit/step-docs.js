@@ -69,6 +69,11 @@ const STEP_DOCS = {
   "gpg.verify": { url: `${RFC}/rfc9580#section-5.2`, label: "RFC 9580 §5.2 · Signatures" },
   "gpg.genkey": { url: `${RFC}/rfc9580#section-5.5`, label: "RFC 9580 §5.5 · Key material" },
   "gpg.inspect": { url: `${RFC}/rfc9580#section-5`, label: "RFC 9580 §5 · Packets" },
+  // `seal` is `gpg.encrypt mode=combined` addressed by the pair a `scatter`
+  // hands it — one delegation in `engine.js`, the same call, the same armored
+  // message on the way out — so it cites the same spec. Pointing a derived verb
+  // somewhere else would claim a difference in the bytes that does not exist.
+  seal: { url: `${RFC}/rfc9580`, label: "RFC 9580 · OpenPGP" },
 
   // ── HKP keyserver protocol ──
   "hkp.get": {
@@ -203,9 +208,62 @@ const STEP_DOCS = {
     label: "MDN · RTCDataChannel message event",
   },
   "quorum.close": { url: `${MDN}/RTCDataChannel/close`, label: "MDN · RTCDataChannel.close()" },
+  // `send` is `quorum.send` addressed by the pair, the way `seal` is
+  // `gpg.encrypt` addressed by it, so it inherits the delegate's reference.
+  // What that reference covers is the wire write and nothing above it: the
+  // pairwise session key the payload is encrypted under before the channel ever
+  // sees it is derived by this app over its own transcript and has no spec to
+  // point at. That is a limit of the citation, not a reason to withhold one —
+  // `quorum.send` has carried exactly the same one since it was written.
+  send: { url: `${MDN}/RTCDataChannel/send`, label: "MDN · RTCDataChannel.send()" },
+
+  // ── peer.* — the managed-link layer between `rtc.*` and `quorum.*`. Each op
+  // is cited for the browser call it actually makes, which is why the pairs
+  // with `rtc.*` and `quorum.*` are exact where the call is the same and
+  // deliberately not where it differs: `peer.close` names
+  // RTCPeerConnection.close() rather than the channel's, because closing a
+  // managed link tears the transport down and not merely the channel over it.
+  "peer.offer": {
+    url: `${MDN}/RTCPeerConnection/createOffer`,
+    label: "MDN · RTCPeerConnection.createOffer()",
+  },
+  "peer.answer": {
+    url: `${MDN}/RTCPeerConnection/createAnswer`,
+    label: "MDN · RTCPeerConnection.createAnswer()",
+  },
+  "peer.accept": {
+    url: `${MDN}/RTCPeerConnection/setRemoteDescription`,
+    label: "MDN · RTCPeerConnection.setRemoteDescription()",
+  },
+  // Signalling is over by the time this runs; what it blocks on is the state
+  // machine `rtc.state` reports, polled until it says connected.
+  "peer.wait": {
+    url: `${MDN}/RTCPeerConnection/connectionState`,
+    label: "MDN · RTCPeerConnection.connectionState",
+  },
+  "peer.send": { url: `${MDN}/RTCDataChannel/send`, label: "MDN · RTCDataChannel.send()" },
+  "peer.recv": {
+    url: `${MDN}/RTCDataChannel/message_event`,
+    label: "MDN · RTCDataChannel message event",
+  },
+  "peer.close": {
+    url: `${MDN}/RTCPeerConnection/close`,
+    label: "MDN · RTCPeerConnection.close()",
+  },
+
   "qr.scan": {
     url: `${MDN}/BarcodeDetector`,
     label: "MDN · BarcodeDetector",
+  },
+  // The reading op could cite a browser API; the writing one cannot, because
+  // the encoder is vendored (`lib/qr.js`, Nayuki) and names this standard in
+  // its own header. So this is the map's first ISO entry, and it takes the
+  // shape `der`'s ITU-T entry already set for a standards body that sells its
+  // text: the catalogue page for the current edition, labelled without one,
+  // since there is no free full text to link and no unversioned permalink.
+  qr: {
+    url: "https://www.iso.org/standard/83389.html",
+    label: "ISO/IEC 18004 · QR Code",
   },
   "dkg.run": {
     url: "https://en.wikipedia.org/wiki/Distributed_key_generation",

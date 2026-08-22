@@ -202,6 +202,18 @@
  * because a URL is documentation, not part of a step's contract. `ToolCard`
  * renders one per step (MDN for the exact call, RFC for the wire format);
  * compact/hover cards omit it, since a link in a pop-over is unreachable.
+ * Two rules decide what an entry may say. **Cite what the op runs**, which is
+ * why a verb that delegates carries its delegate's reference — `seal` runs
+ * `gpg.encrypt`, so both name RFC 9580 — and why `peer.close` names
+ * `RTCPeerConnection.close()` where `quorum.close` names the data channel's.
+ * And **a standards body that sells its text is cited by its catalogue page**,
+ * the shape `der` set with ITU-T X.690 and `qr` follows with ISO/IEC 18004;
+ * there is no free full text to link and pointing at a summary of a standard
+ * instead of the standard would be the weaker citation. Ops with no external
+ * spec — the language (`foreach`, `select`, `tee`), the vault (`agent.*`),
+ * Basilisk's own documents (`playbook`, `run.manifest`) — have **no entry**,
+ * and a test asserts they stay that way: an invented citation is a false claim
+ * about what the op implements, which is worse than the missing row.
  *
  * ## Surfaces
 

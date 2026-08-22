@@ -423,7 +423,9 @@ describe("step reference links", () => {
         // eprint.iacr.org is on the list for `stream.*`: the STREAM
         // construction is defined in a paper, not an RFC, and pointing at a
         // blog summary of it would be a worse citation than the paper.
-        /^https:\/\/(developer\.mozilla\.org|www\.rfc-editor\.org|www\.w3\.org|www\.itu\.int|en\.wikipedia\.org|github\.com|fidoalliance\.org|www\.ietf\.org|eprint\.iacr\.org)\//
+        // www.iso.org is on it for `qr`, on the same terms as www.itu.int:
+        // a standards body that sells its text, cited by its catalogue page.
+        /^https:\/\/(developer\.mozilla\.org|www\.rfc-editor\.org|www\.w3\.org|www\.itu\.int|www\.iso\.org|en\.wikipedia\.org|github\.com|fidoalliance\.org|www\.ietf\.org|eprint\.iacr\.org)\//
       );
       expect(ref.label, step.name).toBeTruthy();
     }
@@ -439,5 +441,80 @@ describe("step reference links", () => {
     expect(docsUrlFor("genkey").url).toBe(
       "https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/generateKey"
     );
+  });
+
+  // Counting links proves nothing — a map of 132 entries all pointing at the
+  // MDN front page would pass a count. These pin the op to the page, so a
+  // citation cannot be moved off the call it describes without saying so.
+  const MDN_API = "https://developer.mozilla.org/en-US/docs/Web/API";
+  it.each([
+    ["peer.offer", `${MDN_API}/RTCPeerConnection/createOffer`],
+    ["peer.answer", `${MDN_API}/RTCPeerConnection/createAnswer`],
+    ["peer.accept", `${MDN_API}/RTCPeerConnection/setRemoteDescription`],
+    ["peer.wait", `${MDN_API}/RTCPeerConnection/connectionState`],
+    ["peer.send", `${MDN_API}/RTCDataChannel/send`],
+    ["peer.recv", `${MDN_API}/RTCDataChannel/message_event`],
+    ["peer.close", `${MDN_API}/RTCPeerConnection/close`],
+  ])("links %s to %s", (name, url) => {
+    expect(docsUrlFor(name)?.url).toBe(url);
+  });
+
+  it("cites the transport for peer.close, not the channel over it", () => {
+    // `quorum.close` closes a channel; `peer.close` closes the connection the
+    // channel rode on. The two ops are one keystroke apart in the same
+    // inventory, so the divergence is pinned rather than left to look like a
+    // copy that drifted.
+    expect(docsUrlFor("peer.close").url).not.toBe(docsUrlFor("quorum.close").url);
+    expect(docsUrlFor("peer.close").label).toBe("MDN · RTCPeerConnection.close()");
+  });
+
+  it("gives a delegating verb the reference of what it delegates to", () => {
+    // `seal` runs `gpg.encrypt mode=combined`; `send` runs `quorum.send`. Both
+    // are one call in `engine.js`, so a differing citation would be describing
+    // bytes that are the same bytes.
+    expect(docsUrlFor("seal")).toEqual(docsUrlFor("gpg.encrypt"));
+    expect(docsUrlFor("send")).toEqual(docsUrlFor("quorum.send"));
+    expect(docsUrlFor("seal").label).toBe("RFC 9580 · OpenPGP");
+  });
+
+  it("cites the QR symbology for qr and the browser API for qr.scan", () => {
+    // Writing goes through the vendored encoder, which implements ISO/IEC
+    // 18004; reading goes through the browser. Different sources, so the same
+    // word in two op names must not collapse to one link.
+    expect(docsUrlFor("qr").url).toBe("https://www.iso.org/standard/83389.html");
+    expect(docsUrlFor("qr").label).toBe("ISO/IEC 18004 · QR Code");
+    expect(docsUrlFor("qr.scan").url).toBe(`${MDN_API}/BarcodeDetector`);
+  });
+
+  // The other half of the contract, and the one this repo keeps having to
+  // defend: these ops are Basilisk's own language and Basilisk's own vault, and
+  // there is no RFC for `foreach`. A reference here would be a false claim, so
+  // the emptiness is asserted rather than merely happening to hold.
+  it.each([
+    "foreach",
+    "scatter",
+    "lit",
+    "in",
+    "select",
+    "as",
+    "inspect",
+    "tee",
+    "peek",
+    "agent.sign",
+    "agent.decrypt",
+    "agent.unlock",
+    "agent.pub",
+    "agent.list",
+    "agent.save",
+    "input",
+    "out",
+    "publish",
+    "text",
+    "run.manifest",
+    "run.attest",
+    "playbook",
+  ])("leaves %s uncited — it has no external spec", (name) => {
+    expect(getStep(name), name).toBeTruthy();
+    expect(docsUrlFor(name), name).toBeNull();
   });
 });
