@@ -174,8 +174,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   is a content question per page, not one shared fix. (`/key` also renders no
   heading until its key loads, so its error and loading states are headingless
   — the smallest concrete piece of this.)
-- **`hideSearch` on `OpsShelf` is set by no caller** and now guards whether the
-  shelf's landmark gets its accessible name.
 
 ---
 

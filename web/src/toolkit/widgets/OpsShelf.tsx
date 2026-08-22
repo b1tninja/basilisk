@@ -62,8 +62,6 @@ type Props = {
   className?: string;
   /** Hide outer aside chrome (for embedding in legacy drawer host). */
   bare?: boolean;
-  /** Use an external search field (legacy #ops-filter). */
-  hideSearch?: boolean;
   /** Caret banner — where the next append/insert lands, named so it agrees with the pipeline gap. */
   caretBanner?: ReactNode;
   /** Suite self-test map (CAST). Lights the status dot on each toolbox header. */
@@ -503,7 +501,6 @@ export function OpsShelf({
   tip = null,
   className,
   bare = false,
-  hideSearch = false,
   caretBanner = null,
   castStatus = null,
   onInsertLiteral,
@@ -530,15 +527,21 @@ export function OpsShelf({
    */
   const [showAll, setShowAll] = useState(false);
   /**
-   * The heading the panel is named by, when it draws one.
+   * The heading the `<aside>` is named by.
    *
-   * `bare` embeds the shelf in a host that owns the chrome, and `hideSearch`
-   * takes the block the name lives in with it; in either case there is no
-   * heading to point at and the landmark goes unnamed rather than being given
-   * a second name nobody can see.
+   * There is no configuration in which the landmark exists without it. `bare`
+   * embeds the shelf in a host that owns the chrome and returns a plain `div`
+   * before the `<aside>` is ever reached, so every render that draws the
+   * landmark also draws this heading — the name is unconditional, and the
+   * `aria-labelledby` below always resolves.
+   *
+   * It used to be conditional on `!bare && !hideSearch`. `hideSearch` was set
+   * by no caller (the external `#ops-filter` field it deferred to does not
+   * exist), and `!bare` is already true everywhere the condition was read, so
+   * the guard could only ever say "yes" — a switch whose off position was
+   * unreachable, sitting in front of the shelf's accessible name.
    */
   const headingId = useId();
-  const namesItself = !bare && !hideSearch;
   useEffect(() => {
     setShowAll(false);
   }, [tipFitProp]);
@@ -551,7 +554,6 @@ export function OpsShelf({
    */
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (hideSearch) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "k" && e.key !== "K") return;
       if (!e.metaKey && !e.ctrlKey) return;
@@ -564,7 +566,7 @@ export function OpsShelf({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [hideSearch]);
+  }, []);
 
   const grouped = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -685,83 +687,81 @@ export function OpsShelf({
 
   const body = (
     <>
-      {!hideSearch ? (
-        <div className={cn("border-b border-[var(--border)] px-2.5 py-2", bare && "px-0")}>
-          {!bare ? (
-            /* The shelf already printed its own name here; it was a `<p>`, so
-               the page's outline had nothing in it and the `<aside>` around it
-               was an unnamed landmark. Same six pixels of type, now a heading
-               — the box is declared in toolkit.css because site.css sizes h2
-               for a document and its element rule is unlayered, which beats
-               any utility class regardless of specificity. */
-            <h2 id={headingId} className="ops-shelf-heading">
-              Toolkit
-            </h2>
-          ) : null}
-          <div
-            role="tablist"
-            aria-label="Browse operations or types"
-            className="mb-2 flex gap-1 rounded-[6px] bg-[var(--surface-raised)] p-[2px]"
-          >
-            {(["ops", "types"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                role="tab"
-                aria-selected={mode === m}
-                className={cn(
-                  "flex-1 rounded-[4px] px-2 py-[3px] text-[10.5px] font-semibold capitalize transition-colors",
-                  mode === m
-                    ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm"
-                    : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                )}
-                onClick={() => setMode(m)}
-              >
-                {m}
-              </button>
-            ))}
-          </div>
-          {activeKit ? (
+      <div className={cn("border-b border-[var(--border)] px-2.5 py-2", bare && "px-0")}>
+        {!bare ? (
+          /* The shelf already printed its own name here; it was a `<p>`, so
+             the page's outline had nothing in it and the `<aside>` around it
+             was an unnamed landmark. Same six pixels of type, now a heading
+             — the box is declared in toolkit.css because site.css sizes h2
+             for a document and its element rule is unlayered, which beats
+             any utility class regardless of specificity. */
+          <h2 id={headingId} className="ops-shelf-heading">
+            Toolkit
+          </h2>
+        ) : null}
+        <div
+          role="tablist"
+          aria-label="Browse operations or types"
+          className="mb-2 flex gap-1 rounded-[6px] bg-[var(--surface-raised)] p-[2px]"
+        >
+          {(["ops", "types"] as const).map((m) => (
             <button
+              key={m}
               type="button"
-              className="mb-2 flex w-fit items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--brand)_35%,transparent)] bg-[color-mix(in_srgb,var(--brand)_10%,transparent)] px-2 py-[3px] text-[10px] font-medium text-[var(--brand)]"
-              onClick={() => setKitFilter(null)}
-              aria-label={`Clear ${activeKit.label} filter`}
+              role="tab"
+              aria-selected={mode === m}
+              className={cn(
+                "flex-1 rounded-[4px] px-2 py-[3px] text-[10.5px] font-semibold capitalize transition-colors",
+                mode === m
+                  ? "bg-[var(--surface)] text-[var(--foreground)] shadow-sm"
+                  : "text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              )}
+              onClick={() => setMode(m)}
             >
-              {activeKit.label}
-              <span className="text-[9px]" aria-hidden>
-                ✕
-              </span>
+              {m}
             </button>
-          ) : null}
-          <div className="relative flex items-center">
-            <span
-              className="pointer-events-none absolute left-[9px] text-[11px] text-[var(--muted-foreground)]"
-              aria-hidden
-            >
-              ⌕
-            </span>
-            <Input
-              ref={searchRef}
-              className="h-[30px] rounded-[6px] pl-[26px] pr-[36px] text-[11.5px]"
-              placeholder={
-                mode === "types"
-                  ? `Search ${listTypes().length} types`
-                  : `Search ${activeKit ? kitCounts[activeKit.id] : ops.length} operations`
-              }
-              value={filter}
-              onChange={(e) => onFilter(e.target.value)}
-              aria-label={`Search toolkit (${searchAccel})`}
-            />
-            <span
-              className="pointer-events-none absolute right-[7px] rounded-[3px] bg-[var(--surface-raised)] px-[4px] py-[1px] font-mono text-[9px] font-semibold text-[var(--muted-foreground)]"
-              aria-hidden
-            >
-              {searchAccel}
-            </span>
-          </div>
+          ))}
         </div>
-      ) : null}
+        {activeKit ? (
+          <button
+            type="button"
+            className="mb-2 flex w-fit items-center gap-1.5 rounded-full border border-[color-mix(in_srgb,var(--brand)_35%,transparent)] bg-[color-mix(in_srgb,var(--brand)_10%,transparent)] px-2 py-[3px] text-[10px] font-medium text-[var(--brand)]"
+            onClick={() => setKitFilter(null)}
+            aria-label={`Clear ${activeKit.label} filter`}
+          >
+            {activeKit.label}
+            <span className="text-[9px]" aria-hidden>
+              ✕
+            </span>
+          </button>
+        ) : null}
+        <div className="relative flex items-center">
+          <span
+            className="pointer-events-none absolute left-[9px] text-[11px] text-[var(--muted-foreground)]"
+            aria-hidden
+          >
+            ⌕
+          </span>
+          <Input
+            ref={searchRef}
+            className="h-[30px] rounded-[6px] pl-[26px] pr-[36px] text-[11.5px]"
+            placeholder={
+              mode === "types"
+                ? `Search ${listTypes().length} types`
+                : `Search ${activeKit ? kitCounts[activeKit.id] : ops.length} operations`
+            }
+            value={filter}
+            onChange={(e) => onFilter(e.target.value)}
+            aria-label={`Search toolkit (${searchAccel})`}
+          />
+          <span
+            className="pointer-events-none absolute right-[7px] rounded-[3px] bg-[var(--surface-raised)] px-[4px] py-[1px] font-mono text-[9px] font-semibold text-[var(--muted-foreground)]"
+            aria-hidden
+          >
+            {searchAccel}
+          </span>
+        </div>
+      </div>
       {/*
         One band, not two. The caret banner and the show-all control each drew
         their own bottom border, caret-blue left rule and 6%-caret wash, so
@@ -1108,7 +1108,7 @@ export function OpsShelf({
 
   return (
     <aside
-      aria-labelledby={namesItself ? headingId : undefined}
+      aria-labelledby={headingId}
       className={cn(
         "flex min-h-0 w-[220px] shrink-0 flex-col border-r border-[var(--border)] bg-[color-mix(in_srgb,var(--surface-raised)_88%,var(--surface))]",
         className
