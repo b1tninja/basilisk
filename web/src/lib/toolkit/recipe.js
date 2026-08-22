@@ -22,6 +22,7 @@ import {
   SECRET_BEARING_OUTPUTS,
   getStep,
   listSteps,
+  moduleAliasSpellings,
 } from "./registry.js";
 import {
   INPUT_PANELS,
@@ -2893,6 +2894,23 @@ export function registryIssues(steps = listSteps()) {
         );
       }
     }
+  }
+  // A module alias whose spelling a real step already holds. The expansion
+  // yields rather than shadows — an alias is a second way to reach an op and
+  // never a way to take one over — and yielding in silence is what would make
+  // this worth catching: `docs/RECIPE.md` would go on promising a spelling the
+  // parser resolves somewhere else entirely.
+  //
+  // Outside the `steps` loop because it is a fact about the registry as a
+  // whole rather than about one spec — but asked of the same `steps`, so a
+  // caller can hand it a registry that *does* collide and see the check fire.
+  for (const { alias, canonical, shadowed } of moduleAliasSpellings(steps)) {
+    if (!shadowed) continue;
+    issues.push(
+      `module alias "${alias}" was not registered for ${canonical} — that ` +
+        `spelling is already taken, so the alias silently names something else. ` +
+        `Rename the colliding step or drop the module alias.`
+    );
   }
   return issues;
 }

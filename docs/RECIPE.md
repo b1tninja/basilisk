@@ -329,6 +329,12 @@ PEM armor serializes as bare `pem` / `der`; base alphabets as `encode <alphabet>
 
 **Vocabulary aliases** read live and converge on the namespaced canonical: `split` → `sss.split`, `words` → `blip39` (`words -d` / `words.decode` too), `send` → `quorum.send`. Parse-only — `serializeRecipe` always writes the namespaced name, so the short forms never become a second dialect. One asymmetry, on purpose: **bare `send` refuses**, naming the missing recipient, where bare `quorum.send` broadcasts to every verified peer — an absent recipient deciding "everyone" is an absence deciding a security property, and the short verb never inherits it.
 
+**Module aliases** are the same bargain applied to a *namespace* rather than a verb. `registry.js` declares `MODULE_ALIASES`, today one entry: **`openpgp.` reads as `gpg.`**, so `openpgp.encrypt`, `openpgp.decrypt`, `openpgp.sign`, `openpgp.verify`, `openpgp.symencrypt`, `openpgp.symdecrypt`, `openpgp.genkey` and `openpgp.inspect` all name the step they look like. One declaration covers the whole module, so a ninth `gpg.*` op reads both ways the day it lands.
+
+`gpg.*` is the canonical spelling. Every preset, generated ceremony, doc fence and `#r=` link already contains it and nothing anywhere contains `openpgp.<verb>`, so canonicalising the other way would rewrite the corpus and change the digest of every notebook holding an OpenPGP step. The cost of the choice, stated: **`openpgp.*` is a way of writing, never a way of reading** — `canonicalName` resolves it at parse, the AST carries `gpg.encrypt`, and every serialization, share link, workspace save and run manifest says `gpg.encrypt`. That is what keeps it safe: the notebook a run digests is `serializeRecipe(chains)`, so two peers who type the two spellings hand `handoffContext` the same string and derive the same manifest. An alias resolved any later than the AST would turn two texts that mean one thing into two agreements about one run.
+
+It maps **prefixes only**. `seal` sits in the OpenPGP toolbox with no namespace of its own, so `openpgp.seal` does not resolve — whether the unnamespaced verbs should acquire a namespace is a separate decision, and a module alias is not allowed to make it quietly. A verb the module does not hold refuses by naming which half was understood: ``Unknown step "openpgp.seal". `openpgp.` is a second spelling of `gpg.`, which has no `seal` — its steps are …``.
+
 Retired-token aliases resolve at parse time only via Upgrade recipe (`paste` → `input`, …). Slot load is **`in $label` / bare `$label`**; `from` and `to` were retired in favour of `decode` / `encode`, which removes the ambiguity that made `from base64` unparseable. Basilisk-legacy step tokens (`aesgcm`, `wa-prf`, `recover`, bare `hex` / `unhex`, `to` / `from`, bare `encrypt`/`decrypt` sugar, …) do **not** parse — use `migrateRecipe()` / **Upgrade recipe**.
 
 ### ParamSpec (registry)
@@ -1131,7 +1137,7 @@ the statement `planRun` was going to read anyway.
 
 Paste / blur canonicalize via `canonicalizeRecipe`:
 
-- lowercases step names and expands aliases
+- lowercases step names and expands aliases — verb aliases (`split`) and module aliases (`openpgp.` → `gpg.`) alike
 - rewrites bare slot idents to `$label`
 - migrator (Upgrade recipe): bare `hex` → `to hex`, `unhex` → `from hex`, slot `from $…` → `in $…`
 - joins chains with a blank line
@@ -1197,6 +1203,7 @@ instead — that is what `run.playbook`'s `purpose` is for.
 | `sss` / `recover` | `sss.split` / `sss.combine` |
 | `sss.split threshold=2 shares=3` | `sss.split 2/3` (named pair reads on parse, rewritten) |
 | `split` / `words` / `send` | live aliases for `sss.split` / `blip39` / `quorum.send` — read on parse, serialized namespaced. Bare `send` refuses (name the recipient); bare `quorum.send` broadcasts |
+| `openpgp.<verb>` | live **module** alias for `gpg.<verb>` — read on parse, serialized as `gpg.<verb>`. Prefixes only: `openpgp.seal` does not resolve |
 | `wa-*` | `webauthn.*` |
 | `gpg.vault` / `gpg.vault.pub` | `agent.unlock` / `agent.pub` |
 | `hex` / `unhex` | `to hex` / `from hex` |

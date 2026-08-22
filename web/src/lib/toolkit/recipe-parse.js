@@ -32,7 +32,7 @@
  * notebook it meant.
  */
 
-import { canonicalName, getStep } from "./registry.js";
+import { canonicalName, getStep, moduleAliasHint } from "./registry.js";
 import {
   legacyRemovalHint,
   resolveAlternateForm,
@@ -1262,6 +1262,11 @@ class Parser {
     const canon = canonicalName(lookup);
     if (!canon) {
       const legacy = legacyRemovalHint(name);
+      // A module alias that resolved while the verb after it did not. Second
+      // only to the legacy hint, because a legacy token has a rewrite to name
+      // and that is the more actionable fact; ahead of the JCE hint, which
+      // needs a `/` and so cannot be about a dotted module anyway.
+      const moduleHint = !legacy ? moduleAliasHint(name) : null;
       const jceHint =
         name.includes("/") && !legacy
           ? `Unknown JCE transform "${name}"; try aes-gcm (or AES/GCM/NoPadding)`
@@ -1269,6 +1274,7 @@ class Parser {
       this.errors.push({
         message:
           legacy ||
+          moduleHint ||
           jceHint ||
           `Unknown step "${name}". See the Reference panel for available steps.`,
         start: nameStart,

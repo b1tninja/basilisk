@@ -5424,6 +5424,47 @@ const BY_NAME = new Map();
 const ALIAS_TO_CANONICAL = new Map();
 
 /**
+ * ## A second spelling for a *module*, not for a verb
+ *
+ * `StepSpec.aliases` is per step: one entry buys one verb a second name. This
+ * is the other thing a reader asks for — a whole namespace under the name they
+ * already know it by. `openpgp` is this toolbox's own label, the standard's
+ * name and the name of the library underneath; `gpg` is the command line every
+ * one of these eight verbs mirrors. Both plainly name the same ops, and until
+ * this map only one of the two parsed at all.
+ *
+ * **`gpg.*` is canonical, and that is not a coin toss.** Every preset, every
+ * generated ceremony, every doc fence, every `#r=` link anybody is holding and
+ * every refusal string in this repo already spells these ops `gpg.*` — the
+ * sweep counted ~2,080 occurrences of these eight `gpg.<verb>` tokens and
+ * *zero* of `openpgp.<verb>`. Canonicalizing the other way would rewrite that
+ * corpus and change the digest of every notebook containing an OpenPGP step,
+ * in exchange for a spelling nobody has written yet. What it costs, spelled
+ * out: `openpgp.*` is never what a shared recipe says, so the fuller name is a
+ * reading convenience and not a reading. That is the same bargain `split` →
+ * `sss.split` already strikes, and it is struck the same way — the alias is
+ * resolved by `canonicalName` at parse, so the AST carries `gpg.encrypt` and
+ * `serializeRecipe` writes it, and the canonical text is always complete
+ * (LANGUAGE.md principle 5).
+ *
+ * Resolving at parse is what makes it safe rather than dangerous. The notebook
+ * a run digests is `serializeRecipe(chains)`, so two peers who type the two
+ * spellings hand `handoffContext` the *same* string and derive the same
+ * manifest; an alias resolved any later than the AST would put two texts that
+ * mean one thing into two agreements about one run.
+ *
+ * Declared prefix → prefix rather than as eight `aliases` entries so a ninth
+ * `gpg.*` op reads both ways the day it lands, with nobody remembering to add
+ * it. It maps **namespaces only**: `seal` is in the `openpgp` toolbox and
+ * carries no prefix, so `openpgp.seal` does not resolve. Whether the
+ * unnamespaced verbs should get a namespace is a decision nobody has made, and
+ * a module alias must not be what quietly makes it.
+ *
+ * @type {Record<string, string>}
+ */
+export const MODULE_ALIASES = Object.freeze({ openpgp: "gpg" });
+
+/**
  * Explicit per-verb glyph ids. Conjugates / decodeTwins share one asset;
  * direction is shown by encode/decode tile tint in the ops drawer.
  * @type {Record<string, string>}
@@ -5542,6 +5583,109 @@ for (const step of STEPS) {
     ALIAS_TO_CANONICAL.set(String(a).toLowerCase(), step.name);
     BY_NAME.set(String(a).toLowerCase(), step);
   }
+}
+
+/**
+ * Module aliases, expanded over the steps that carry the canonical prefix.
+ *
+ * A **second pass**, after every real name and per-step alias is registered,
+ * because the guard below has to be order-independent: an alias is a second way
+ * to reach an op and never a way to shadow one, and a first-pass version of
+ * this would have protected only the steps that happened to be declared
+ * earlier in `STEPS`. A collision that skips here is reported by
+ * `registryIssues`, since an alias the docs claim and the parser refuses is
+ * worse than no alias at all.
+ */
+for (const [aliasModule, canonModule] of Object.entries(MODULE_ALIASES)) {
+  const prefix = `${canonModule.toLowerCase()}.`;
+  for (const step of STEPS) {
+    const lowered = step.name.toLowerCase();
+    if (!lowered.startsWith(prefix)) continue;
+    const spelled = `${aliasModule.toLowerCase()}.${lowered.slice(prefix.length)}`;
+    if (BY_NAME.has(spelled)) continue;
+    ALIAS_TO_CANONICAL.set(spelled, step.name);
+    BY_NAME.set(spelled, step);
+  }
+}
+
+/**
+ * The spellings the module aliases add, as `alias → canonical` pairs, each
+ * saying whether some other name in the registry already claims it.
+ *
+ * `steps` is a parameter for `registryIssues`' reason, restated because it is
+ * the whole worth of the `shadowed` field: a collision check that can only be
+ * asked about the registry as it stands is a check nobody can show would fire,
+ * and this registry has no collision. Handed a list that does have one, it
+ * answers about that list.
+ *
+ * `shadowed` is computed from names and per-step aliases rather than by asking
+ * `ALIAS_TO_CANONICAL`, and the two agree by construction: the expansion pass
+ * above skips exactly when `BY_NAME` already holds the spelling, and what
+ * `BY_NAME` holds at that point is exactly the step names plus their `aliases`.
+ * One predicate rather than one for the real registry and another for a
+ * hypothetical, because two would be free to drift.
+ *
+ * @param {StepSpec[]} [steps]
+ * @returns {{ alias: string, canonical: string, shadowed: boolean }[]}
+ */
+export function moduleAliasSpellings(steps = STEPS) {
+  /** @type {Map<string, string>} */
+  const claimed = new Map();
+  for (const step of steps) {
+    claimed.set(step.name.toLowerCase(), step.name);
+    for (const a of step.aliases || []) claimed.set(String(a).toLowerCase(), step.name);
+  }
+  /** @type {{ alias: string, canonical: string, shadowed: boolean }[]} */
+  const out = [];
+  for (const [aliasModule, canonModule] of Object.entries(MODULE_ALIASES)) {
+    const prefix = `${canonModule.toLowerCase()}.`;
+    for (const step of steps) {
+      const lowered = step.name.toLowerCase();
+      if (!lowered.startsWith(prefix)) continue;
+      const alias = `${aliasModule.toLowerCase()}.${lowered.slice(prefix.length)}`;
+      const holder = claimed.get(alias);
+      out.push({
+        alias,
+        canonical: step.name,
+        shadowed: holder != null && holder !== step.name,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Why a dotted step name did not resolve, when the *module* part is the half
+ * worth saying something about.
+ *
+ * `openpgp.` resolves; `openpgp.seal` does not, and the bare "Unknown step"
+ * reads as though the namespace were the problem when the namespace is fine.
+ * This says which half was understood and lists what the module actually holds
+ * — the whole set, because it is eight names and a reader who mistyped one
+ * wants the real one, not an apology.
+ *
+ * Returns null for everything else, so the caller's generic message stands
+ * wherever this has nothing true to add.
+ *
+ * @param {string} name
+ * @returns {string|null}
+ */
+export function moduleAliasHint(name) {
+  const raw = String(name || "");
+  const dot = raw.indexOf(".");
+  if (dot <= 0) return null;
+  const aliasModule = raw.slice(0, dot).toLowerCase();
+  const canonModule = MODULE_ALIASES[aliasModule];
+  if (!canonModule) return null;
+  const verb = raw.slice(dot + 1);
+  const prefix = `${canonModule.toLowerCase()}.`;
+  const held = STEPS.filter((s) => s.name.toLowerCase().startsWith(prefix))
+    .map((s) => s.name)
+    .sort();
+  return (
+    `Unknown step "${raw}". \`${aliasModule}.\` is a second spelling of ` +
+    `\`${canonModule}.\`, which has no \`${verb}\` — its steps are ${held.join(", ")}.`
+  );
 }
 
 /**
