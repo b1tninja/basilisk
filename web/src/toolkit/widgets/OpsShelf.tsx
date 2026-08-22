@@ -865,6 +865,12 @@ export function OpsShelf({
                                   key={key}
                                   op={row.forward}
                                   reverseOp={row.reverse}
+                                  /* `listDrawerRows` has computed this for
+                                     every pair row since it was written and
+                                     nothing read it, so the row was named by
+                                     whichever of its two ops the registry
+                                     happened to list first. */
+                                  caption={row.caption}
                                   hasReverse={!!(row.decodeTwin || row.reverse)}
                                   fit={{ forward: fitFwd, reverse: fitRev }}
                                   needs={

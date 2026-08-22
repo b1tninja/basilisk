@@ -23,6 +23,19 @@ type Props = {
   op: OpsTileOp;
   /** Reverse-direction op, when distinct from `op` (e.g. a `conjugate`, not a `decodeTwin`). */
   reverseOp?: OpsTileOp;
+  /**
+   * What the two ops are together — `listDrawerRows`' `caption`, which is the
+   * step's `pairCaption` or a `forward / reverse` fallback.
+   *
+   * The row prints its forward op's name and nothing else, which is the right
+   * string for that column (see the `<code>` below) and a half-truth about the
+   * row: `gpg.encrypt` is one of the two ops on it. The caption is the other
+   * half, and until now it was computed for all 22 browse-tree pair rows and
+   * read by nobody. It lands in the two places a name belongs and neither
+   * costs a pixel of the row: the row's accessible name as a group, and the
+   * eyebrow on the card a pointer opens.
+   */
+  caption?: string;
   /** Row has a working forward (→) direction. Default true. */
   hasForward?: boolean;
   /** Row has a working reverse (←) direction. Default: true if `op.decodeTwin` or `reverseOp` given. */
@@ -68,6 +81,7 @@ function directionButtonClass(active: boolean, fit: boolean, kind: "encode" | "d
 export function OpsTile({
   op,
   reverseOp,
+  caption,
   hasForward = true,
   hasReverse = !!(op.decodeTwin || reverseOp),
   fit = { forward: false, reverse: false },
@@ -92,6 +106,36 @@ export function OpsTile({
     decode: reverseDecode,
     pairRole: "reverse",
   });
+
+  /**
+   * What a direction handle wears, and why it is not always the arrow.
+   *
+   * The chevrons say "forwards" and "backwards", which this row already says
+   * twice: encode is always the left handle and always drawn in `--caret`,
+   * decode always the right one in `--decode`. So the mark inside the square
+   * is the third copy of the one fact, and the only slot on the row that could
+   * carry anything else.
+   *
+   * `STEP_GLYPHS` decides what it carries, because it is the file that knows
+   * whether a pair is one thing run either way. Its own comment says
+   * conjugates share one asset — and 17 of the 22 browse-tree pairs do, from
+   * `wrap`/`unwrap` to `age.encrypt`/`age.decrypt` — but five are given two,
+   * and those five are the ones where the two directions are not each other's
+   * inverse. `gpg.encrypt` is a sink and `gpg.decrypt` is a source: pressing
+   * one appends a step that consumes the pipe, pressing the other appends one
+   * that *discards* what is upstream of it and starts the value afresh
+   * (`recipe.js` warns in exactly those words). A closed padlock and an opened
+   * one say that; two mirrored chevrons say the opposite, that the second
+   * handle runs the first one backwards.
+   *
+   * Where the registry gives the pair one asset, drawing it twice would say
+   * nothing and cost the arrows, so the arrows stay. The rule is legible on
+   * the row itself: two different marks mean two ops, two mirrored arrows mean
+   * two directions of one.
+   */
+  const forwardGlyph = glyphIdFor(op);
+  const reverseGlyph = reverseOp ? glyphIdFor(reverseOp) : forwardGlyph;
+  const perOpGlyphs = reverseGlyph !== forwardGlyph;
 
   /**
    * One reason, stated once.
@@ -150,6 +194,16 @@ export function OpsTile({
 
   const row = (
     <div
+      /*
+       * Two controls and one name between them is a group, and it had none —
+       * a reader walking the shelf heard `gpg.encrypt — encode` and then
+       * `gpg.decrypt — decode` with nothing saying they were one row, let
+       * alone what the row was. The caption is that name. `role="group"`
+       * rather than a heading because the row is furniture around two
+       * buttons, and a group is announced on entry and left alone otherwise.
+       */
+      role={caption ? "group" : undefined}
+      aria-label={caption || undefined}
       className={cn(
         "flex gap-2 rounded-md px-1.5 py-[3px] hover:bg-[color-mix(in_srgb,var(--brand)_5%,transparent)]",
         hasCaptions ? "items-start" : "items-center",
@@ -159,7 +213,7 @@ export function OpsTile({
       {/* Identity is the glyph. Verification is not per-op — it lives on the
           toolbox header, one light per suite. */}
       <Glyph
-        id={glyphIdFor(op)}
+        id={forwardGlyph}
         size={16}
         className={cn("shrink-0", dim ? "opacity-45" : "opacity-80", hasCaptions && "mt-[3px]")}
       />
@@ -224,7 +278,7 @@ export function OpsTile({
               : undefined
           }
         >
-          {hasForward ? <Glyph id="encode" size={16} /> : null}
+          {hasForward ? <Glyph id={perOpGlyphs ? forwardGlyph : "encode"} size={16} /> : null}
         </button>
         {splitNeeds?.forward ? (
           <span
@@ -275,7 +329,7 @@ export function OpsTile({
               : undefined
           }
         >
-          {hasReverse ? <Glyph id="decode" size={16} /> : null}
+          {hasReverse ? <Glyph id={perOpGlyphs ? reverseGlyph : "decode"} size={16} /> : null}
         </button>
         {splitNeeds?.reverse ? (
           <span
@@ -300,7 +354,17 @@ export function OpsTile({
         sideOffset={10}
         className="max-w-none border-0 bg-transparent p-0 text-left text-[var(--text)] shadow-none"
       >
-        <ToolCard op={op} className="w-[300px] max-w-[min(300px,calc(100vw-2rem))]" />
+        {/* The card behind a pair row documented the forward op and said so
+            in its title — hovering the OpenPGP row opened a card headed
+            `gpg.encrypt`, `Recipe gpg.encrypt`, `Outputs`, on a row whose
+            other half is a source called `gpg.decrypt`. It still documents the
+            forward op, because that is the op whose params are on it; it no
+            longer claims to be the row. */}
+        <ToolCard
+          op={op}
+          pair={caption ? { caption, reverse: reverseDisplayName } : undefined}
+          className="w-[300px] max-w-[min(300px,calc(100vw-2rem))]"
+        />
       </TooltipContent>
     </Tooltip>
   );

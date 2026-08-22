@@ -18,6 +18,16 @@ export type ToolCardOp = StepSpec;
 
 type Props = {
   op: ToolCardOp;
+  /**
+   * The conjugate row this card was opened from: what the two ops are called
+   * together, and the other direction's recipe token.
+   *
+   * Set only by `OpsTile`, and only for a row that genuinely has two ops.
+   * Everywhere else a card is a card about one op — a chip pop, the pinned
+   * docs panel, the widget gallery — and there is no pair to name, so the
+   * header is unchanged there rather than growing an empty line.
+   */
+  pair?: { caption: string; reverse: string };
   decode?: boolean;
   /** Compact hover / chip-pop layout. */
   compact?: boolean;
@@ -87,6 +97,7 @@ export function DocsFooter({ op, className }: { op: { name?: string } | string; 
 /** Standard tool card — docs, kind, I/O types, params. Redesigned with uniform widget system. */
 export function ToolCard({
   op,
+  pair,
   decode = false,
   compact = false,
   pinned = false,
@@ -142,10 +153,37 @@ export function ToolCard({
           className="mt-0.5 text-[var(--foreground)]"
         />
         <div className="flex-1 min-w-0">
+          {/* Family first, member second, token third — read top to bottom the
+              header now says what the row is, which of its two ops this card
+              is about, and what to type for each. The caption wraps rather
+              than truncating: `age (age-encryption.org/v1)` is 26 characters
+              and the widest of them is 35, and a clipped family name is the
+              kind of half-string this card was already printing. */}
+          {pair ? (
+            <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-foreground)]">
+              {pair.caption}
+            </p>
+          ) : null}
           <p className="text-sm font-bold text-[var(--foreground)] truncate">{nameLabel}</p>
           <p className="text-xs text-[var(--muted-foreground)] font-mono">
             Recipe <code>{recipeTok}</code>
           </p>
+          {/* The other direction is a real op with a real name, and the row
+              offers it under the same glyph column. Naming it here is the only
+              place a pointer can learn it — the reverse handle has no card of
+              its own, and the two are not spelled alike often enough to guess
+              (`sss.split` / `sss.combine`, `pem` / `der`).
+
+              Its own line and not a `·` continuation of the one above: at 300px
+              the pair overflowed, and something in the cascade breaks inside a
+              word rather than before it, so the card printed `reverse gp` /
+              `g.decrypt` — an op name split across two lines is not a name you
+              can type. */}
+          {pair ? (
+            <p className="text-xs text-[var(--muted-foreground)] font-mono">
+              Reverse <code>{pair.reverse}</code>
+            </p>
+          ) : null}
         </div>
         {onClose ? (
           <button

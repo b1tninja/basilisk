@@ -102,7 +102,13 @@ describe("identity moved to the glyph", () => {
     // and Prettier wrapped them. The substance is that the glyph id comes
     // from the op, not that the JSX fits on one line.
     expect(SHELF).toMatch(/<Glyph\s[\s\S]{0,80}id=\{glyphIdFor\(op\)\}/);
-    expect(TILE).toMatch(/<Glyph\s[\s\S]{0,80}id=\{glyphIdFor\(op\)\}/);
+    // The tile now resolves it once into `forwardGlyph`, because the two
+    // direction handles need the same answer. Both halves are pinned rather
+    // than the call site alone: the claim is that the id comes from the op,
+    // and a binding that is asserted only where it is *used* would survive
+    // `const forwardGlyph = "gear"`.
+    expect(TILE).toMatch(/const forwardGlyph = glyphIdFor\(op\);/);
+    expect(TILE).toMatch(/<Glyph\s[\s\S]{0,80}id=\{forwardGlyph\}/);
   });
 
   it("gives encrypt and decrypt distinct glyphs", () => {
@@ -111,11 +117,23 @@ describe("identity moved to the glyph", () => {
     const registry = read("../lib/toolkit/registry.js");
     expect(registry).toMatch(/"gpg\.encrypt": "gpg-encrypt"/);
     expect(registry).toMatch(/"gpg\.decrypt": "gpg-decrypt"/);
+    // …and the second of those two was declared here and drawn nowhere: a
+    // pair row renders the *forward* op's glyph and `listDrawerRows` drops the
+    // reverse op from the list entirely, so `gpg-decrypt` shipped in the
+    // bundle and reached no screen. The handle is where it is drawn now; see
+    // `ops-pair-row.e2e.js`, which asserts it against the painted geometry.
+    expect(TILE).toMatch(/const reverseGlyph = reverseOp \? glyphIdFor\(reverseOp\) : forwardGlyph;/);
   });
 
   it("draws direction handles with encode/decode glyphs", () => {
-    expect(TILE).toMatch(/<Glyph id="encode"/);
-    expect(TILE).toMatch(/<Glyph id="decode"/);
+    // Still the mark on a handle whose pair has one asset between it and its
+    // partner — 17 of the 22 browse-tree pairs, where a second copy of the
+    // shared glyph would say nothing and cost the only thing distinguishing
+    // the two squares. Asserted as the fallback arm of the conditional rather
+    // than as a bare `<Glyph id="encode"`, so it cannot be satisfied by the
+    // string appearing anywhere else in the file.
+    expect(TILE).toMatch(/id=\{perOpGlyphs \? forwardGlyph : "encode"\}/);
+    expect(TILE).toMatch(/id=\{perOpGlyphs \? reverseGlyph : "decode"\}/);
   });
 
   it("ships those three glyphs", () => {
