@@ -1239,6 +1239,70 @@ export function serializeRecipe(astOrSteps, opts = {}) {
 }
 
 /**
+ * The blank line between two cells. `serializeRecipe`'s own pretty separator,
+ * named so that a canonical notebook and a serialized one cannot drift on it.
+ */
+const CELL_SEPARATOR = "\n\n";
+
+/**
+ * Every cell of a notebook, canonically spelled, **one entry per chain**.
+ *
+ * This is `serializeRecipe` applied a chain at a time, and deliberately not a
+ * second normaliser: the spelling is `serializeRecipe({ chains: [chain] })`,
+ * which is the one form a manifest row, a receipt row, an attestation and a
+ * handoff offer already digest a cell with. A second answer to *how is a cell
+ * written* is the defect `manifest.js`'s header warns about, and this adds none.
+ *
+ * The one thing it does that `serializeRecipe` does not is **keep the empty
+ * cells**. `serializeRecipe` drops a chain that serializes to nothing, which is
+ * right for text a person will read back — an empty cell has no spelling — and
+ * wrong for anything that counts cells, because every cell after the first blank
+ * then shifts by one. Here a blank cell is `""` in its own position, so
+ * `result[i]` is always the cell the notebook, the plan and the run log all call
+ * `i`.
+ *
+ * @param {RecipeAst|RecipeStep[]|RecipeChain[]} astOrSteps
+ * @returns {string[]} one canonical cell text per chain, in notebook order
+ */
+export function canonicalCellSources(astOrSteps) {
+  return recipeChains(astOrSteps).map((chain) => serializeRecipe({ chains: [chain] }));
+}
+
+/**
+ * A whole notebook in canonical form, cell for cell.
+ *
+ * ## Why a notebook needs one at all
+ *
+ * `buildRunManifest` states a notebook's identity twice: once coarsely as
+ * `recipeDigest`, and once per cell as `cells[].recipeDigest`. The per-cell
+ * digests are taken over `serializeRecipe({ chains: [chain] })` — canonical, so
+ * two authors who spell the same pipeline with different spacing agree. The
+ * notebook digest was taken over the source text verbatim, so the same two
+ * authors *dis*agreed. Every cell digest said "one notebook" while the notebook
+ * digest said "two", and `handoff.js` refuses on the coarse one.
+ *
+ * This is the form that makes the two levels agree: the canonical cells, in
+ * notebook order, joined by the blank line that separates cells. Whatever the
+ * cell digests already ignore, this ignores; whatever they notice, this notices.
+ *
+ * ## What it does *not* do — and why `handoffContext` still takes `source`
+ *
+ * It is **not** a re-serialization in `handoffContext`'s sense. That rule exists
+ * because `serializeRecipe` drops blank cells, so re-serializing renumbers a
+ * notebook — an offer would name cell 4 while the peer's plan calls it 3.
+ * `canonicalCellSources` keeps a blank cell as a blank entry, so the chain list
+ * that goes in comes out one-for-one and no index moves. Cell count and cell
+ * order are preserved by construction; the only thing normalised is the spelling
+ * *inside* a cell, which is the thing the per-cell digests already normalise.
+ *
+ * @param {RecipeAst|RecipeStep[]|RecipeChain[]} astOrSteps
+ * @returns {string}
+ */
+export function canonicalNotebookSource(astOrSteps) {
+  return canonicalCellSources(astOrSteps).join(CELL_SEPARATOR);
+}
+
+/**
  * Refined type after a selector projection (`:private`, `:items`, …).
  * @param {import("./types.js").RefinedType} current
  * @param {string} memberOrSelector

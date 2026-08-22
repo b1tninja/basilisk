@@ -25,10 +25,11 @@
  */
 
 import {
+  canonicalCellSources,
+  canonicalNotebookSource,
   compileRecipe,
   migrateRecipe,
   publishedSlots,
-  serializeRecipe,
 } from "./recipe.js";
 import { planRun, planChains } from "./plan.js";
 import { buildRunManifest } from "./manifest.js";
@@ -57,6 +58,42 @@ import {
  * manifest, the plan and the editor all number the same way precisely because
  * they all read this string.
  *
+ * ## The manifest states identity twice, and the two used to disagree
+ *
+ * `buildRunManifest` digests the notebook once whole (`recipeDigest`) and once
+ * per cell (`cells[].recipeDigest`). The cells go through `serializeRecipe`, so
+ * a doubled space between two steps changes nothing. The whole used to be the
+ * *source text verbatim*, so the same doubled space changed everything: three
+ * matching cell digests underneath a notebook digest that said two peers were
+ * holding two different notebooks, and `handoff.js` refuses on the coarse one.
+ * The fine-grained evidence said the offer was fine and the coarse claim threw
+ * it out — one document contradicting itself, which is a defect whether or not
+ * anything crashes.
+ *
+ * So the notebook is digested in **the cells' own canonical form**:
+ * `canonicalNotebookSource` is `canonicalCellSources` joined by the blank line
+ * between cells, and `cells[].recipe` is `canonicalCellSources`' own entries.
+ * They are the same strings, so the two levels cannot disagree — not "agree
+ * today", cannot. Whatever a cell digest ignores the notebook digest ignores;
+ * whatever a cell digest notices the notebook digest notices.
+ *
+ * **This does not reopen the rule above.** The reason `source` is not simply
+ * replaced by `serializeRecipe(chains)` is that serializing *drops* blank cells
+ * and renumbers everything after one. `canonicalCellSources` emits one entry per
+ * chain and spells a blank cell `""`, so the list that goes in comes out
+ * one-for-one: `cells[i].index === i` for every notebook, and no index moves.
+ * Cell count and cell order survive canonicalisation; only the spelling inside a
+ * cell is normalised, which is what the per-cell digests already did.
+ *
+ * `recipeSource` carries the canonical text rather than the raw text, because
+ * `buildRunManifest` sets `recipeDigest = digestText(recipeSource)` and a
+ * manifest whose stated source does not hash to its stated digest would be the
+ * same self-contradiction one level further down.
+ *
+ * A notebook that does not parse has no chains to canonicalise. It keeps the
+ * migrated source verbatim — the honest answer, since nothing was read — rather
+ * than being recorded as a manifest for an empty notebook.
+ *
  * @param {{ source: string, me: string, roster: Record<string, string>,
  *   title?: string }} spec
  * @returns {Promise<HandoffContext>}
@@ -65,15 +102,18 @@ export async function handoffContext({ source, me, roster, title = "notebook" })
   const compiled = compileRecipe(source);
   const plan = planRun(compiled, { me, roster });
   const chains = planChains(compiled);
+  const recipes = canonicalCellSources(chains);
   const manifest = await buildRunManifest({
     title,
-    recipeSource: migrateRecipe(source).recipe,
+    recipeSource: chains.length
+      ? canonicalNotebookSource(chains)
+      : migrateRecipe(source).recipe,
     peers: roster,
     cells: chains.map((chain, i) => ({
       index: i,
       peer: String(chain.peer || ""),
       publish: publishedSlots(chain).length > 0,
-      recipe: serializeRecipe({ chains: [chain] }),
+      recipe: recipes[i],
     })),
   });
   return { plan, compiled, manifest };
