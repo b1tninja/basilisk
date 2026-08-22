@@ -41,18 +41,32 @@ runs that succeed today**, and the refusal has to name which suite is
 unverified and what a person can do about it. Deciding that is the work; the
 plumbing is `kernel.js` and `useNotebook.ts`.
 
-### 1.2 A notebook's digest is canonical only by accident of one call site
+### 1.2 The second manifest producer still has the asymmetry
 
-`handoffContext` digests `migrateRecipe(source).recipe` — the source text
-**verbatim**, with no canonicalisation. It is correct today only because its one
-caller hands it `serializeRecipe(chains)`, which is already canonical.
+`handoffContext` is fixed — its notebook digest is now the digest of its own
+cells joined. `engine.js`'s `currentRunManifest` (around line 4154) is the other
+`buildRunManifest` producer and still takes `recipeSource` raw from
+`ctx.recipeSource` while digesting cells through
+`serializeRecipe({ chains: [chain] })`. It already contains the loop
+`canonicalCellSources` now expresses and could adopt both exports directly.
 
-**The manifest states identity at two levels and they disagree with each
-other.** Reproduced on the `handoff-shell` fixture with a *doubled space* — no
-alias, no reordering, nothing a person would call a different notebook:
+### 1.3 The editor's blank cells are dropped before a manifest ever sees them
 
-| | cell 1 | cell 2 | cell 3 | notebook |
-|---|---|---|---|---|
+Separate from the above and older. `handoffContext` takes only `source`, and
+`useNotebook` derives it as `serializeRecipe(chains)` — which filters blank
+cells out. But `useNotebook.addCell` pushes `{ steps: [] }`, so a blank cell in
+the middle of a notebook is a real cell, and `ToolkitShell` numbers cells by
+`nb.chains.map((chain, i) => …)`. So for a notebook with a mid-notebook blank,
+the manifest and the offer already number cells differently from the editor and
+the run log — the exact hazard §1.2's canonicalisation was careful not to
+introduce, arriving one layer earlier.
+
+`engine.js` solved this for its own manifest by having the shell pass
+`receipt.chains` (`engine.js:4117-4132`). `handoffContext` has no equivalent;
+closing it means an optional `chains` on its spec and passing `chains` at the
+five `useNotebook.ts` call sites.
+
+---|---|---|---|---|
 | `… \| out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `aa45ec49b500` |
 | `… \|  out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `2d34d7fdbcf8` |
 
