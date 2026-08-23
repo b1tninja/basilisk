@@ -86,19 +86,30 @@ get two manifests. The underlying asymmetry is untouched. Lives in
 
 ## 2. Checks that cannot fire, or cannot be tested
 
-### 2.1 Intended-recipient (subpacket 35) has no reachable fixture
+### 2.1 The surreptitious-forwarding defence has no message to fire on
 
-The engine half of the RFC 9580 §5.2.3.36 check cannot be exercised here:
-**openpgp.js does not write subpacket 35, and neither does GnuPG 2.4.9** —
-sign-and-encrypt emits subpacket 33 (issuer fingerprint) and 16 (issuer key id)
-and nothing else, and `--dump-options` offers no way to ask for it. Verified
-while capturing the subkey fixtures in `312c133`; recorded beside them in
-`web/src/test/fixtures/README.md`.
+The comparison is right and reachable — `engine.js` decrypts with
+`verificationKeys` and `decryptSignatureVerdict` runs it — and it reads the
+protected half of the signature. What is missing is a message carrying the
+subpacket: **openpgp.js does not write subpacket 35, and neither does GnuPG
+2.4.9.** Sign-and-encrypt emits subpacket 33 and 16 and nothing else, and
+`--dump-options` offers no way to ask for it. Verified while capturing the
+subkey fixtures in `312c133`.
 
-This is not "needs a fixture" — it is untestable with the tooling on hand. The
-module-level seam is covered with a constructed packet. Closing the engine half
-needs a captured artifact from an implementation that emits it (Sequoia, or a
-newer GnuPG).
+So the defence is armed against an attack it will never see evidence of, and
+every real message answers `absent`. Closing it needs a captured artifact from
+an implementation that emits it — Sequoia, or a newer GnuPG.
+
+**What openpgp.js does with one when it arrives is now known, and is the part
+that was wrong here.** There is no `hashedSubpackets` array: `readSubPacket`
+pushes every unhashed subpacket into `unhashedSubpackets` and returns early for
+any type outside issuer-key-id / issuer-fingerprint / embedded-signature, so
+type 35 reaches `unknownSubpackets` **only when it arrived hashed**. That is
+what makes `unknownSubpackets` the trustworthy source and `unhashedSubpackets`
+not — a distinction this repo had to learn by finding both being read.
+
+Criticality is handled and needs nothing: openpgp.js throws on an unrecognised
+**critical** subpacket, which is what RFC 9580 requires.
 
 ---
 

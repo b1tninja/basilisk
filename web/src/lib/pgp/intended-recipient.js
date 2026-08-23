@@ -67,11 +67,30 @@ export function intendedRecipientsFromSigPacket(pkt) {
   if (!pkt) return [];
   /** @type {string[]} */
   const out = [];
-  const lists = [
-    ...(pkt.unknownSubpackets || []),
-    ...(pkt.unhashedSubpackets || []),
-  ];
-  for (const sp of lists) {
+  /**
+   * **`unknownSubpackets` only, and never `unhashedSubpackets`.**
+   *
+   * This subpacket is a statement of the signer's intent, so it is worth
+   * exactly as much as the signature covering it. openpgp.js sorts the two
+   * apart for us, though not obviously: `readSubPacket` pushes every unhashed
+   * subpacket into `unhashedSubpackets` and then **returns early** for any type
+   * outside `allowedUnhashedSubpackets` (issuer key id, issuer fingerprint,
+   * embedded signature). Type 35 is not on that list, so it only reaches the
+   * `default:` arm — and therefore `unknownSubpackets` — when it arrived
+   * *hashed*. `unknownSubpackets` is the protected area; `unhashedSubpackets`
+   * is not.
+   *
+   * This used to read both, and unioning them inverted the check it exists to
+   * perform. Nothing signs the unhashed area, so anyone handling the message
+   * can append a subpacket 35 naming whichever key they like and the signature
+   * still verifies. Against surreptitious forwarding — Mallory re-encrypting
+   * Alice's message to Carol — that hands Mallory the verdict: bolt on an
+   * unhashed 35 naming Carol's key and `checkIntendedRecipient` answers `ok`,
+   * so the sentence tells Carol that Alice addressed it to her. A defence that
+   * an attacker can satisfy is worse than one that is absent, because the
+   * absent one does not reassure anybody.
+   */
+  for (const sp of pkt.unknownSubpackets || []) {
     if (sp?.type !== SUBPACKET_INTENDED_RECIPIENT) continue;
     const body = sp.body;
     if (!(body instanceof Uint8Array) || body.length < 21) continue;
@@ -136,9 +155,17 @@ export function checkIntendedRecipient(intended, decryptFpr) {
         "Signed message has no Intended Recipient Fingerprint subpacket — cannot detect surreptitious forwarding (RFC 9580 §13.12).",
     };
   }
-  const match = intended.some(
-    (i) => i === fpr || (fpr && (i.endsWith(fpr) || fpr.endsWith(i)))
-  );
+  /**
+   * Whole fingerprints, compared whole.
+   *
+   * This was `i === fpr || i.endsWith(fpr) || fpr.endsWith(i)`, which answers
+   * `ok` when either value is merely a *tail* of the other — so a sixteen
+   * character suffix satisfied a forty character claim. That is the short-key-id
+   * problem this codebase refuses everywhere else, in the one comparison whose
+   * whole job is deciding whether a signed message was addressed to this key.
+   * A suffix collision is cheap to manufacture; equality is not.
+   */
+  const match = intended.some((i) => i === fpr);
   if (match) {
     return {
       status: "ok",
