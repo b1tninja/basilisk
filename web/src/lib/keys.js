@@ -109,7 +109,7 @@ export function renderUploadCard(options = {}) {
     : "Paste your armored public key or upload a <code>.asc</code> file. Sign in above to auto-claim keys that match your email; otherwise you can submit anonymously and claim later.";
   return `
     <div class="card" id="submit-key-card">
-      <p class="card-title">Submit a public key</p>
+      <h2 class="card-title">Submit a public key</h2>
       <p class="muted mb-lg">${intro}</p>
       ${renderUploadForm()}
     </div>

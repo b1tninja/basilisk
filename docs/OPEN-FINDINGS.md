@@ -175,18 +175,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   `.cell-bind-messaging`) are still live. It was unreachable in that script
   because the only route to it ran through the dead raw-textarea loader. If it
   is wanted, it needs a new purpose-built script.
-- **`renderSnippetCard` leaves one titled card headingless on two pages.**
-  `web/src/lib/snippets.js:32` emits `<p class="card-title">${title}</p>`, so
-  `/`'s "Command-line usage" and `/key`'s "Install with GnuPG / HKP" are the
-  only titled sections on those pages outside the outline. The class already
-  owns font-size, weight and margin, so it is a tag swap — left because the
-  file was outside the heading pass's ownership.
-- **`/published` has no `h2` in the state most visitors land in.**
-  `published-mount.js` emits "Published under your address" and "Key labels",
-  but only in the signed-in-with-at-least-one-key branch — which is why a
-  signed-out sweep measures zero and why this looked like a headingless page.
-  The signed-out and zero-key states need `keys.js:112` "Submit a public key"
-  and published-mount's two prompts promoted to match.
 
 ---
 
@@ -207,10 +195,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 - **`.design-sync/previews/` is outside `web/tsconfig.json`**, so `tsc --noEmit`
   never sees the preview files. They are verified to parse and to render in
   capture, and by nothing else.
-- **`RoomCells` is not in `web/src/ds-entry.ts`**, so the cell-state table added
-  in `2a49f73` is absent from the synced design system. That barrel is a
-  reviewed decision rather than a heuristic, so this is a choice to make, not a
-  bug to fix.
 
 ---
 

@@ -42,7 +42,7 @@ import { mdsStatusBadgeHtml } from "./webauthn/mds.js";
 function renderVaultCrossLink() {
   return `
     <div class="card mt-lg" id="vault-cross-link">
-      <p class="card-title">Looking for the keys that can sign?</p>
+      <h2 class="card-title">Looking for the keys that can sign?</h2>
       <p class="muted mb-0">
         Private keys live in <a class="text-link" href="/toolkit#keys">this browser's vault</a>,
         on the Toolkit's Keys tray — that is where you generate one, import one,
@@ -52,6 +52,65 @@ function renderVaultCrossLink() {
         publish its public half here.
       </p>
     </div>`;
+}
+
+/**
+ * The sign-in gate, as a section of this page rather than a sentence in it.
+ *
+ * The card already printed this line as its `card-title`; it is the only name
+ * the section has and it says what the section does, so it is the heading.
+ * @param {string} hint
+ * @param {string} buttons
+ */
+function renderSignInCard(hint, buttons) {
+  return `
+      <div class="card maxw-440">
+        <h2 class="card-title">Sign in to see what is published under your address</h2>
+        <p class="muted mb-xl">${hint}</p>
+        ${buttons || "<p class='muted'>Sign-in is not configured.</p>"}
+      </div>`;
+}
+
+/**
+ * The whole signed-out body, so its outline can be read without a DOM.
+ *
+ * Consumed by `renderSignedOut` below; separated only because the tests run in
+ * `node` and there is no jsdom in this project, so the alternative was to
+ * assert on nothing.
+ * @param {{ hint: string, buttons: string }} opts
+ */
+export function renderSignedOutHtml({ hint, buttons }) {
+  return `
+      ${renderUploadCard({ signedIn: false })}
+      ${renderSignInCard(hint, buttons)}
+      ${renderVaultCrossLink()}`;
+}
+
+/**
+ * "Published under your address" when the answer is *nothing*.
+ *
+ * The section exists in both signed-in states — it is the question this page
+ * is named for — so it keeps its heading when the list under it is empty. The
+ * sentence below is the section's body, not a second name for it: it is prose
+ * and stays a `<p>`.
+ */
+export function renderNothingPublishedSection() {
+  return `<h2>Published under your address</h2>
+           <p class="muted">Nothing is published under your address yet. Submit a public key above — you can export one from the browser vault on the Toolkit's Keys tray.</p>`;
+}
+
+/**
+ * The whole signed-in body. See `renderSignedOutHtml` for why this is separate.
+ * @param {{ email: string, keysSectionHtml: string }} opts
+ */
+export function renderSignedInHtml({ email, keysSectionHtml }) {
+  return (
+    `<p class="mb-xl">Signed in as
+        <strong>${escapeHtml(email)}</strong></p>` +
+    renderUploadCard({ signedIn: true }) +
+    keysSectionHtml +
+    renderVaultCrossLink()
+  );
 }
 
 /**
@@ -77,14 +136,7 @@ export function mountPublished(container) {
         : providers.includes("google")
           ? "Sign in with your Google account to see and claim the public keys published under your email address."
           : "Sign in with your Microsoft account to see and claim the public keys published under your email address.";
-    content.innerHTML = `
-      ${renderUploadCard({ signedIn: false })}
-      <div class="card maxw-440">
-        <p class="card-title">Sign in to see what is published under your address</p>
-        <p class="muted mb-xl">${hint}</p>
-        ${buttons || "<p class='muted'>Sign-in is not configured.</p>"}
-      </div>
-      ${renderVaultCrossLink()}`;
+    content.innerHTML = renderSignedOutHtml({ hint, buttons });
   }
 
   /** Render an inline label editor (key label or device label). */
@@ -172,9 +224,6 @@ export function mountPublished(container) {
   }
 
   async function renderSignedIn(user, keys) {
-    const userInfo = `<p class="mb-xl">Signed in as
-        <strong>${escapeHtml(user.email)}</strong></p>`;
-
     // Read for the soft MDS badge on the device-label row only. A vault record
     // is the only place that knows which authenticator protects a key, and the
     // badge is about that device — not about the published key, which is
@@ -192,13 +241,12 @@ export function mountPublished(container) {
            <p class="muted mb-md">Unclaimed pending keys expire after 30 days. Claimed keys can be taken down below.</p>
            ${renderKeysTable(keys, { showClaim: true, showDelete: true })}
            ${renderKeyLabelsSection(keys)}`
-        : `<p class="muted">Nothing is published under your address yet. Submit a public key above — you can export one from the browser vault on the Toolkit's Keys tray.</p>`;
+        : renderNothingPublishedSection();
 
-    content.innerHTML =
-      userInfo +
-      renderUploadCard({ signedIn: true }) +
-      keysSection +
-      renderVaultCrossLink();
+    content.innerHTML = renderSignedInHtml({
+      email: user.email,
+      keysSectionHtml: keysSection,
+    });
     wireKeyLabelEditors(keys || []);
   }
 

@@ -27,9 +27,16 @@ export function renderSnippetCard(opts) {
   const hint = opts.hint
     ? `<p class="muted stack-hint">${escapeHtml(opts.hint)}</p>`
     : "";
+  // `h2`, not `p`. Every card this renders is a titled section sitting directly
+  // under a page's `h1` -- "Command-line usage" on `/`, "Install with GnuPG /
+  // HKP" on `/key`, "Submit with GnuPG" inside the upload card on `/published`
+  // -- and all three were the only titled things on their page with no entry in
+  // the heading outline. `.card-title` already fixes font-size, weight and
+  // margin and outranks the bare `h2` element selector, so nothing moves.
+  // The title is still `escapeHtml`d: it is interpolated from a caller.
   return `
     <div class="card snippet-card">
-      <p class="card-title">${escapeHtml(opts.title)}</p>
+      <h2 class="card-title">${escapeHtml(opts.title)}</h2>
       ${hint}
       ${rows}
     </div>`;
