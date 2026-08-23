@@ -13,7 +13,6 @@ import {
   getStep,
   listDrawerRows,
   listOpCollections,
-  pairRowMatches,
   KEY_FORMAT_PICKS,
   KEY_FORMAT_META,
   formatDirectionForTip,
@@ -22,6 +21,11 @@ import {
   type StepSpec,
 } from "../../lib/toolkit/registry.js";
 import { CIPHER_DISPATCH_TARGETS } from "../../lib/toolkit/step-names.js";
+// The one place a shelf query decides what it admits. Imported rather than
+// re-implemented: two filters answering this question is the defect, and a
+// widget reaching into the notebook hook for a pure helper is the shape
+// `CeremonySheet`, `HandoffQueue` and `SessionLive` already use.
+import { opsMatchingQuery } from "../useNotebook";
 import { listTypes, type TypeMeta } from "../../lib/toolkit/type-registry.js";
 import type { RecipeParams } from "../../lib/toolkit/recipe.js";
 import { toolboxToSuite } from "../../lib/toolkit/suite-gate.js";
@@ -569,15 +573,27 @@ export function OpsShelf({
   }, []);
 
   const grouped = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    // `pairRowMatches` is why the row survives a query that only names its
-    // reverse half — see its comment in the registry. This is the second of
-    // the two places the shelf's op list is cut by the same query.
-    const hit = (op: { name: string; doc?: string; label?: string }) =>
-      op.name.toLowerCase().includes(q) ||
-      (op.doc || "").toLowerCase().includes(q) ||
-      (op.label || "").toLowerCase().includes(q);
-    const filtered = q ? ops.filter((op) => pairRowMatches(asStep(op), hit)) : ops;
+    /*
+     * The shelf's op list is cut by the query in exactly one place, and this
+     * is a call to it — not a second predicate that happens to agree.
+     *
+     * It used to be its own filter, matching name / doc / **label** while
+     * `useNotebook`'s `filteredOps` matched name / doc / **toolbox** over the
+     * same string. Both ran, so the effective search was their intersection:
+     * 13 queries lost ops to it and `flow` returned an empty shelf under a
+     * header reading "Flow". `opsMatchingQuery` is the union of the four
+     * fields and carries the `pairRowMatches` lifting with it, so neither the
+     * field set nor the conjugate-row rule can be remembered in one place and
+     * forgotten in the other. See its comment for the measurement.
+     *
+     * The call stays here rather than being deleted in favour of the hook's:
+     * `ops` is a prop, and the widget catalog hands this component the whole
+     * registry with a live query. Deleting it would make "already narrowed" an
+     * unwritten precondition of the prop. The function is idempotent, so the
+     * shell path — narrowed by the hook, narrowed again here — admits exactly
+     * what one pass admits.
+     */
+    const filtered = opsMatchingQuery(ops, filter);
 
     const byTb = new Map<string, OpsShelfOp[]>();
     for (const op of filtered) {

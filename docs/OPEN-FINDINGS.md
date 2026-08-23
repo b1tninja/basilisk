@@ -103,15 +103,19 @@ module-level seam is covered with a constructed packet. Closing the engine half
 needs a captured artifact from an implementation that emits it (Sequoia, or a
 newer GnuPG).
 
-### 2.2 The shelf's search is the intersection of two disagreeing predicates
+### 2.2 Two op names a person can type reach no search
 
-Two filters cut the op list for one query: `useNotebook.filteredOps` matches
-**name / doc / toolbox**, and `OpsShelf`'s `grouped` matches **name / doc /
-label**. Both run, so the effective search is whatever both accept — silently
-narrower than either. `3ef6526` fixed the conjugate-row half of this
-(`pairRowMatches` lifts a per-step test onto the row it draws) and deliberately
-did not unify the predicates, because they genuinely differ and picking one
-changes what a query finds.
+Closed the intersection; two narrower gaps are left, both measured while doing
+it and neither guessed at.
+
+**`aliases` is in no predicate.** Two steps declare them, they are names a
+person can legitimately type, and no filter has ever matched them.
+
+**A toolbox is searchable by its id, not by the words above the rows.**
+Fourteen of the fifteen headers are the id in different casing — `WebCrypto`,
+`OpenPGP`, `SSS / BLIP39` — so typing the header works by accident. `io` prints
+"Input / output", and typing that finds nothing. Matching `TOOLBOX_META.label`
+would close it.
 
 ---
 

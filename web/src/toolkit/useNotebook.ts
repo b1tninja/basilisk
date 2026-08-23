@@ -66,7 +66,12 @@ import {
   resolvePresetPair,
   bridgeModeMeta,
 } from "../lib/toolkit/conjugate-stitch.js";
-import { listSteps, getStep, pairRowMatches } from "../lib/toolkit/registry.js";
+import {
+  listSteps,
+  getStep,
+  pairRowMatches,
+  type StepSpec,
+} from "../lib/toolkit/registry.js";
 import { readShareHeader } from "../lib/slip39/blip39.js";
 import { wiredForCell } from "../lib/toolkit/slot-graph.js";
 import {
@@ -545,6 +550,88 @@ function dealByCell(
     out[cell].push({ message: String(e.message), stepIndex: global - starts[cell] });
   }
   return out;
+}
+
+/** The fields a shelf query is allowed to read. Every one of them is printed. */
+export type OpQueryFields = {
+  name: string;
+  doc?: string;
+  toolbox?: string;
+  label?: string;
+};
+
+/**
+ * Narrow a list of ops to the ones a shelf query admits — **the only place
+ * that decides this**, for both of the two filters that used to.
+ *
+ * There were two. This hook cut `listSteps()` on name / doc / **toolbox**, and
+ * `OpsShelf`'s `grouped` cut the result again on name / doc / **label**. Both
+ * ran on the same string, so the search that shipped was their *intersection*:
+ * narrower than either predicate, and narrower than anything either author
+ * wrote down. Measured over the real registry (132 steps, a corpus of 1342
+ * queries built from every op name, name segment, toolbox id and doc word):
+ * **13 queries lost ops to the intersection, 114 op-matches in all**, and the
+ * loss was entirely one-directional — the shelf's predicate never found
+ * anything this one missed, in 1342 queries, because *no step in the registry
+ * carries a `label` at all* (0 of 132), so the shelf's third field could only
+ * ever discard what `toolbox` had admitted. `flow` was the worst of it: nine
+ * ops matched here, the shelf threw away all nine, and the query returned an
+ * empty shelf under a section header that prints the word **Flow**.
+ *
+ * The union is what remains, and each field earns its place by being *printed
+ * where the query is typed*:
+ *
+ * - `name` is the row's own monospace token, and the recipe word.
+ * - `doc` is the card's prose and the `+` button's tooltip.
+ * - `toolbox` is the section header the row sits under. This is the field the
+ *   shelf's predicate lacked, and it admits 67 ops across the corpus on queries
+ *   that *are* a toolbox id. It costs 47 more on six queries where the typed
+ *   string is only a substring of one — `crypto` and `bcrypt` inside
+ *   `webcrypto` (+11 / +16), `low` inside `flow` (+9), `rtc` inside `webrtc`
+ *   (+7), `enc` and `in` inside `encoding` (+2 each). Five of those six land
+ *   the reader in the toolbox they were plainly reaching for; only `bcrypt`
+ *   pulls in something unrelated, and there is no `bcrypt` op to lose, so the
+ *   alternative it displaces is a shelf that finds nothing.
+ * - `label` is `StepSpec`'s optional UI verb, which `ToolCard` renders as
+ *   `op.label || op.name`. It matches **nothing today** — measured: it adds 0
+ *   ops across all 1342 queries, because the field is declared and unpopulated.
+ *   It is kept anyway, and this is the honest reason: it costs nothing now, and
+ *   the day a step declares one, that word is on screen and a reader will type
+ *   it. Dropping it would make the search wrong on the commit that adds a
+ *   label rather than on this one.
+ *
+ * `pairRowMatches` lifts the per-step test onto the *row* the step draws.
+ * `listDrawerRows` draws a conjugate pair once, on the forward op, and drops
+ * every step carrying `conjugateOf` — so a match on the reverse half alone has
+ * to reach the row, or typing `unwrap` renders no `wrap`/`unwrap` row and
+ * `symdecrypt` finds nothing while the shelf is printing it on a button. It is
+ * inside this function rather than beside each caller for the same reason the
+ * fields are: it was the property both filters had to remember separately.
+ *
+ * Applying this twice is a no-op — same predicate, and the second pass runs
+ * over a subset of the first — so the shell path, where the hook narrows and
+ * the shelf narrows the same list again with the same query, admits exactly
+ * what one pass would. That is what lets `OpsShelf` keep filtering for the
+ * callers that hand it the whole registry (the widget catalog does) without
+ * the second cut being a second opinion.
+ *
+ * The empty query returns the caller's own array, not a copy: both call sites
+ * did that before and their memos are keyed on it.
+ */
+export function opsMatchingQuery<T extends OpQueryFields>(ops: T[], query: string): T[] {
+  const q = String(query ?? "")
+    .trim()
+    .toLowerCase();
+  if (!q) return ops;
+  const hit = (s: OpQueryFields) =>
+    (s.name || "").toLowerCase().includes(q) ||
+    (s.doc || "").toLowerCase().includes(q) ||
+    (s.toolbox || "").toLowerCase().includes(q) ||
+    (s.label || "").toLowerCase().includes(q);
+  // `pairRowMatches` is typed for a whole `StepSpec` because it reads
+  // `conjugate` / `decodeTwin` off one; the query only ever reads the four
+  // fields above, so the parameter says so and the cast is at the seam.
+  return ops.filter((op) => pairRowMatches(op as unknown as StepSpec, hit));
 }
 
 export function useNotebook() {
@@ -4111,21 +4198,7 @@ export function useNotebook() {
     setKernelEpoch((n) => n + 1);
   }, []);
 
-  const filteredOps = useMemo(() => {
-    const q = opsFilter.trim().toLowerCase();
-    const all = listSteps();
-    if (!q) return all;
-    // The shelf draws a conjugate pair on its forward op and discards the
-    // reverse, so cutting the list step by step deletes any row whose reverse
-    // half was the only match — the shelf went blank on `unwrap`, and now that
-    // the reverse handle prints its own name it would go blank on a name it
-    // had just shown. `pairRowMatches` lifts this test onto the row.
-    const hit = (s: { name: string; doc?: string; toolbox?: string }) =>
-      s.name.includes(q) ||
-      (s.doc || "").toLowerCase().includes(q) ||
-      (s.toolbox || "").toLowerCase().includes(q);
-    return all.filter((s) => pairRowMatches(s, hit));
-  }, [opsFilter]);
+  const filteredOps = useMemo(() => opsMatchingQuery(listSteps(), opsFilter), [opsFilter]);
 
   /*
    * `unlockedCount` was here, and it is gone rather than rewired.
