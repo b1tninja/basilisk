@@ -25,8 +25,19 @@
  *   it now exists. Nothing here implies it could be fetched: there is no
  *   request on this wire, and a sentence that hinted at one would be naming a
  *   remedy that cannot be performed.
- * - **Face up** — the cell finished and this machine holds the slot, because a
- *   value actually arrived. It reads like any other slot, because it is one.
+ * - **Face up** — the cell finished and this machine holds a slot of that
+ *   name. It reads like any other slot, because it is one.
+ *
+ *   **A slot of that *name*, and the distinction is not pedantry.** This said
+ *   "because a value actually arrived", which implies transit — and the row is
+ *   drawn beside the peer's fingerprint, so a reader takes it to mean *their*
+ *   output is here. `facesFor` asks `hasSlot(label)` and nothing else. On an
+ *   unplaced cell, which is `mine` on every machine, both ends run the same
+ *   cell and write the same label locally; with a `random` source they then
+ *   hold *different* values under one name and both rows read face up. Nothing
+ *   crossed. Saying so plainly is the honest half of this; making the row mean
+ *   the stronger thing would mean comparing something the announcement carries,
+ *   which is a protocol change and a disclosure, and is not made here.
  *
  * ## Why `here` is asked of the registry and not of the announcement
  *

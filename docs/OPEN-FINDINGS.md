@@ -177,16 +177,24 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 6. Coverage that is thinner than it looks
 
-- **No face-up cell-state row is proven in a browser.** `2a49f73`'s ceremony
-  numbers slots per member (`$share` on the dealer, `$share-2`/`$share-3` on
-  holders), so no two machines in that notebook ever write the same label and
-  every e2e row is legitimately face down. The face-up case is pinned only at
-  the unit layer.
-- **`dealer-absent-recovery.e2e.js` alone is blind to a foreign dealer share.**
-  `4c27d01` added the all-shares-one-split assertion to `three-party-ceremony`
-  because that is the only spec where all three shares exist at once. The
-  dealer-absent file is covered transitively — the same generator deals both
-  rooms — not directly.
+- **A face-up row means a slot of that name is here, not that the peer's value
+  arrived — and the stronger reading is reachable.** `facesFor` asks
+  `hasSlot(label)`. On an unplaced cell (`mine` on every machine) both ends
+  write the same label locally, so with a `random` source they hold different
+  values under one name and both rows read face up beside each other's
+  fingerprints. The wording now says what the code does. Making the row mean
+  *the peer's own bytes are here* is reachable through the handoff result path —
+  the receiver's Run all declines the sharer's cell and offers it back, the
+  sharer runs and returns the `result`, and accepting it registers the label on
+  the sharer's actual value. `placed-journey.e2e.js` already drives every press
+  in that arc with the direction reversed. It is a protocol-shaped decision
+  (compare something the announcement carries) rather than a test to write.
+- **A peer who only receives a notebook is silent, permanently.** `_sharedEver`
+  is set only by `shareNotebook`, so a machine that never offers a notebook
+  never announces a cell state. That is a deliberate consent gate and it is
+  documented — but it bounds any claim of the form "the room can see what the
+  room is running": in every ceremony spec only the dealer can appear in
+  anybody's table, and the holders are invisible to each other by construction.
 - **No face-up cell-state row is proven in a browser.** `2a49f73`'s ceremony
   numbers slots per member (`$share` on the dealer, `$share-2`/`$share-3` on
   holders), so no two machines in that notebook ever write the same label and

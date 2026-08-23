@@ -47,9 +47,26 @@
  * bystander's send happens over a link the dealer was never part of, after the
  * dealer's browser is gone.
  *
+ * **And that all three cards are of one split**, which this file used to take
+ * on trust. `4c27d01` put that assertion in `three-party-ceremony.e2e.js`
+ * because that is where all three shares are on screen at once, and left this
+ * file covered only transitively: one generator deals both rooms, so if the
+ * generator is right both are right. That is an inference about a sibling test,
+ * and the reason for a second scenario is that it does not rest on the first
+ * one's reasoning. The check is here now, in step 6 — the dealer's card read in
+ * step 4 while there was still a screen to read it off, the two holders' read
+ * the moment they land and before the recovery notebook replaces the cells they
+ * sit in. Without it, a dealer holding a card from a *different* split of the
+ * same secret would deal a room whose recovery is perfect and whose third card
+ * recovers nothing with anybody, and every other assertion in this file would
+ * still be green.
+ *
  * Nothing crosses between the contexts in a variable, which is
  * `room-ceremony.e2e.js`'s rule and the only thing that makes the comparison
- * mean anything.
+ * mean anything. Reading a fact off one machine's screen and asserting on it
+ * after that machine is gone is not that: it is the only shape a claim about a
+ * destroyed browser can have, and it is what `expectedDigest` has always done.
+ * Nothing here is ever *handed* to a browser.
  *
  * ## What remains pinned
  *
@@ -98,6 +115,12 @@ import { chromiumAvailability } from "../helpers/browser-peers.js";
 import { openMesh } from "../helpers/browser-mesh.js";
 import { createQuorumRoom } from "../helpers/quorum-room.js";
 import { readNotebookSource, seedVaultKeyExpr } from "../helpers/toolkit-ui.js";
+// The three-share check `4c27d01` wrote for the sibling suite, in a helper now
+// that two files make the claim. Shared rather than copied because
+// `shareSetId` carries a correction — the tile must be *shut* before its public
+// labels can be read — whose failure mode is a fifteen-second wait that
+// succeeds, not a red test.
+import { expectOneSplit, shareSetId } from "../helpers/share-tile.js";
 // The generator's own number for how long a recovery gather waits. Imported so
 // finding 1b stays pinned to the constant the recipe and the picker both read
 // — from `room-recovery.js` now, because the gather lives in the recovery
@@ -269,6 +292,32 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
   let recoverySource = "";
   /** The digest of the master, off the dealer's screen, before it was closed. */
   let expectedDigest = "";
+  /**
+   * What the dealer's own share tile said about itself, read while there was
+   * still a screen to read it off.
+   *
+   * The same shape as `expectedDigest` and carried for the same reason: a fact
+   * this file must compare *across* the destruction, taken off the machine that
+   * owns it at the last moment it exists. Neither is handed to another browser
+   * — nothing is injected anywhere — and that is the distinction the file's
+   * "nothing crosses in a variable" rule is actually about. Reading a screen
+   * and asserting on it later is the only way a claim about a machine that is
+   * gone can be made at all.
+   * @type {{ who: string, labels: string, setId: string, index: string }|null}
+   */
+  let dealerShare = null;
+  /**
+   * The three cards, each read off the machine that was dealt it.
+   *
+   * Filled across two steps because the three tiles are never on screen at one
+   * moment in this scenario — share 1 is gone with the dealer's browser before
+   * shares 2 and 3 are taken out of their inboxes — and asserted in a step of
+   * its own so that the claim fails alone. A check wired into the middle of the
+   * recovery step would take the recovery down with it and report three red
+   * tests for one defect.
+   * @type {{ who: string, labels: string, setId: string, index: string }[]}
+   */
+  const cards = [];
   /**
    * What the dealer's page had to say for itself, collected before it is closed.
    *
@@ -557,6 +606,27 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
     expect(held, "the whole set reached a slot").not.toContain("set");
     expect(held, "the master reached a slot").not.toContain("secret");
 
+    // **The dealer's card, read at the last moment there is a screen to read
+    // it off.** Step 6b is where it is compared; the argument for the whole
+    // claim is there and in the header.
+    //
+    // The objection `4c27d01` recorded against putting this check here — "it
+    // would mean carrying the dealer's set id across the destruction in a
+    // variable" — applies word for word to `expectedDigest` on the next line,
+    // which this file has always carried and ships on. What the rule forbids is
+    // *handing* one browser something another one knows; reading a screen and
+    // asserting on it afterwards is the only shape a claim about a destroyed
+    // machine can have.
+    //
+    // Read *before* the reveal below, because opening any tile in this cell is
+    // what removes the masked-view span this reads (see `shareSetId`).
+    dealerShare = { who: "dealer", ...(await shareSetId(dealer, 0)) };
+    cards.push(dealerShare);
+    expect(
+      dealerShare.index,
+      `the dealer's share tile said: ${dealerShare.labels}`
+    ).toBe("1"); // canonical position 1 — the share the scatter kept here
+
     expectedDigest = await reveal(dealer, 0, "expected");
     expect(expectedDigest, "the split wrote no digest of the master").toMatch(/^[0-9a-f]{64}$/);
   });
@@ -648,6 +718,15 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
     // delivery.
     const took = (await cell(recoverer, 1).innerText()).replace(/\s+/g, "");
     expect(took, `the receive cell does not name the dealer: ${took}`).toContain(L.dealer);
+
+    // **Both holders' cards, read the moment they land.** This is the only
+    // window there is: a few lines below, the bystander adopts the recovery
+    // notebook and their receive cell stops existing, taking its tile with it.
+    // The reads are here and the claim they feed is the step after this one, so
+    // that a foreign card fails one test rather than taking the recovery down
+    // with it.
+    cards.push({ who: "recoverer", ...(await shareSetId(recoverer, 1)) });
+    cards.push({ who: "bystander", ...(await shareSetId(bystander, 2)) });
 
     // **The picker, with the dealer dead.** The deal's record still lists the
     // dealer as a holder — that is true, their share existed — so the choice
@@ -792,6 +871,44 @@ describe.runIf(availability.ok)("a 2-of-3 rebuilt after the dealer is gone", () 
       .toBe("ok");
     await runSettled(bystander);
   }, 300_000);
+
+  /* ── 6b. all three cards, and the one split they came from ───────────────── */
+
+  it("names one split across all three cards, the destroyed dealer's included", async () => {
+    /* **The check this file used to be blind to.**
+     *
+     * `4c27d01` put the three-share claim in `three-party-ceremony.e2e.js` —
+     * the one spec where all three cards are on screen at once — and left this
+     * file covered only transitively: one generator deals both rooms, so if the
+     * generator is right both are right. A generator is exactly the kind of
+     * single point that transitive coverage cannot see past, and the reason a
+     * second scenario exists at all is that it does not rest on the first one's
+     * reasoning.
+     *
+     * The three tiles are never simultaneous here, so the reads are not either:
+     * the dealer's in step 4, the holders' in step 6 the moment each landed and
+     * before the recovery notebook replaced the cells they sit in.
+     *
+     * A different claim from step 7's digest, and both stand. Step 7 says two
+     * holders rebuild the key the dealer drew. This says the third card — the
+     * one that left the world with the dealer's browser — belonged to the set
+     * those two recombined, which is a property a recovery of *two* shares is
+     * structurally unable to report on: a dealer who split twice and kept a card
+     * from the second split deals a room that recovers perfectly and holds a
+     * card that recovers nothing with anybody.
+     *
+     * The guards are `expectOneSplit`'s, shared with the sibling suite so the
+     * two files cannot drift into two strengths of one claim.
+     */
+    expectOneSplit(cards, fx.peers.length);
+
+    // And *which* three, which is this room's own fact rather than the helper's:
+    // the scatter deals in canonical audience order, so the destroyed dealer was
+    // holding share 1 and the two survivors hold 2 and 3.
+    expect(new Set(cards.map((c) => c.index)), `the cards: ${JSON.stringify(cards)}`).toEqual(
+      new Set(["1", "2", "3"])
+    );
+  });
 
   /* ── 7. two holders, one secret, no dealer ───────────────────────────────── */
 

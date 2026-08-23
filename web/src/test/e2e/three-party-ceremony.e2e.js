@@ -72,6 +72,12 @@ import { chromiumAvailability } from "../helpers/browser-peers.js";
 import { openMesh } from "../helpers/browser-mesh.js";
 import { createQuorumRoom } from "../helpers/quorum-room.js";
 import { readNotebookSource, seedVaultKeyExpr } from "../helpers/toolkit-ui.js";
+// The share-tile read and the one-split claim, moved into a helper when
+// `dealer-absent-recovery.e2e.js` grew its own version of this check. The read
+// carries a correction — the tile must be shut before its public labels exist —
+// whose failure mode is a fifteen-second wait that *passes*, which is exactly
+// the shape of thing a second hand-written copy would lose.
+import { expectOneSplit, shareSetId } from "../helpers/share-tile.js";
 import { RECOVERY_WAIT_MS } from "../../lib/toolkit/room-recovery.js";
 
 const availability = await chromiumAvailability();
@@ -159,50 +165,6 @@ async function reveal(page, i, label) {
   const body = tile.locator(".artifact-body");
   await body.waitFor({ state: "visible", timeout: 10000 });
   return (await body.innerText()).trim();
-}
-
-/**
- * What one machine's masked share tile says about the share that machine holds.
- *
- * The whole label is returned beside the parsed set id on purpose: every
- * assertion built on this compares one machine's four hex digits against
- * another's, so a failure is only diagnosable if the message can print what
- * each screen actually said. A bare `""` against `"4A1C"` names neither the
- * tile that was missing nor the machine it was missing on.
- *
- * `[data-share-identity]` rather than the "Check a share…" panel, and the
- * reason is worth writing down because the panel is where
- * `custodian-recovery.e2e.js` reads a set id. That file's custodian arrives
- * holding *words* and nothing else — no session, no notebook, no slot — so the
- * cold panel is the only surface that can decode them, and reading it there is
- * reading the only thing that reader has. Here every share is already sitting
- * in a tile on the machine that was dealt it, and both spellings come out of
- * `formatSetId` on the same `readShareHeader` of the same mnemonic. Driving
- * three modal sheets to re-read three headers already on screen would be a
- * second route to one fact, which is the thing that argues against it: the
- * tile is what these three people are looking at.
- */
-async function shareSetId(page, i) {
-  // Shut the tile first, and this is not tidying. `ShareIdentity` is the
-  // kind's `publicView`: it is drawn *while the value is masked* and not at
-  // all once the body is showing, so on a screen where an earlier step opened
-  // the share the span does not exist. Playwright waits for it rather than
-  // failing — and gets it fifteen seconds later, when the list-wide auto-hide
-  // timer re-masks the row. That passes, which is the problem: the read would
-  // be timing out and recovering, and the day the timer changed the assertion
-  // would go red for a reason that has nothing to do with set ids.
-  const hide = cell(page, i).getByRole("button", { name: "Hide", exact: true });
-  for (let guard = 0; guard < 4 && (await hide.count()); guard += 1) {
-    await hide.first().click();
-  }
-  const span = cell(page, i).locator("[data-share-identity]").first();
-  await span.waitFor({ state: "visible", timeout: 20000 });
-  const labels = (await span.innerText()).replace(/\s+/g, " ");
-  return {
-    labels,
-    setId: /set ([0-9A-F]{4})/.exec(labels)?.[1] ?? "",
-    index: /Share (\d+)/.exec(labels)?.[1] ?? "",
-  };
 }
 
 /** The ceremony's slots, as the Slots tab prints them, on one machine. */
@@ -1017,45 +979,22 @@ describe.runIf(availability.ok)("a 2-of-3 ceremony across three browsers", () =>
       { who: "recoverer", ...(await shareSetId(recoverer, 1)) },
       { who: "bystander", ...(await shareSetId(bystander, 2)) },
     ];
-    const said = JSON.stringify(read);
 
-    // One read per member of the room, and every one of them off a different
-    // machine's own tile. Counted against the browsers the fixture actually
-    // opened rather than written as `3`, because "all N" is the whole claim: a
-    // fourth member added to this ceremony has to fail here until somebody
-    // reads their share too, instead of quietly leaving one card unchecked.
-    expect(read.length, `the shares read: ${said}`).toBe(fx.peers.length);
+    // The guards and the equality are `expectOneSplit`'s — one read per browser
+    // in the room, every id shaped like an id, three distinct share indices,
+    // and the ids compared to each other rather than to a literal. The whole
+    // argument for each of them lives beside the function, because
+    // `dealer-absent-recovery.e2e.js` makes the same claim and the two must not
+    // be able to drift into two different strengths of it.
+    expectOneSplit(read, fx.peers.length);
 
-    // Each tile produced four hex digits. Without this the equality below is
-    // three empty strings agreeing with each other — the exact shape of a
-    // vacuous pass, and the reason `expectedDigest` is separately pinned to a
-    // regex before it is ever compared.
-    for (const r of read) {
-      expect(r.setId, `${r.who}'s share tile said: ${r.labels} — all: ${said}`).toMatch(
-        /^[0-9A-F]{4}$/
-      );
-    }
-
-    // Three *different* shares, which is what stops this step reading one
-    // share three times and calling the room consistent. The indices are the
-    // canonical audience order the scatter dealt in — the dealer is 1, and the
-    // two holders are 2 and 3 — and they are asserted as a set because what
-    // matters is that the split is covered, not which screen drew which.
-    expect(new Set(read.map((r) => r.index)), `the shares read: ${said}`).toEqual(
+    // The one thing this file can add that the helper cannot: *which* three
+    // shares. The canonical audience order the scatter dealt in puts the dealer
+    // at 1 and the two holders at 2 and 3, and there is no other room here for
+    // that to be true of.
+    expect(new Set(read.map((r) => r.index)), `the shares read: ${JSON.stringify(read)}`).toEqual(
       new Set(["1", "2", "3"])
     );
-
-    // **And one split.** Compared against each other and never against a
-    // literal, for `custodian-recovery.e2e.js`'s reason at its own set-id
-    // assertion: a hard-coded `4A1C` would pin one run's randomness, and the
-    // set id is drawn fresh by every split.
-    //
-    // This is a different claim from step 7's digest, and both stand. Step 7
-    // says a qualifying pair rebuilds the key the dealer drew. This says the
-    // third share is of that same split — that the dealer, who is about to be
-    // left holding share 1 and nothing else, is holding a card that belongs to
-    // the set the other two recombined.
-    expect(new Set(read.map((r) => r.setId)).size, `the shares read: ${said}`).toBe(1);
   }, 180_000);
 
   /* ── 7. recovery is written at recovery time, by the quorum doing it ─────── */
