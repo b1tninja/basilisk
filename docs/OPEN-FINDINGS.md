@@ -126,29 +126,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ---
 
-## 5a. Classes that only a document keeps alive
-
-**Thirteen class rules survive the producer sweep only because prose names
-them.** A token sweep counts a mention in a comment or a `.md` as a producer,
-and for these that is the *only* occurrence: `cell-output`,
-`cell-recipe-mode-btn`, `chef-ops`, `divider`, `notebook-cell`,
-`ops-category-toggle`, `ops-drawer`, `ops-pair-solo`, `ops-shelf-toggle`,
-`preset-grid`, `suggest-next`, plus two worth naming separately.
-
-`artifact-card` is kept alive by `.design-sync/NOTES.md`. **`ops-aes-kit-body`
-is kept alive by this file** — its only two occurrences in the repo are the
-sentence that used to be here, calling it the live counterexample that proves
-you cannot delete by prefix, and the dead rule itself. It was never live. A
-findings document that names a class becomes that class's producer, and then
-cites it as evidence.
-
-Closing this needs a sweep that distinguishes `.foo` from `#foo` from a mention
-in prose — `#suggest-next` and `#preset-grid` are ID selectors, which a class
-rule does not match. That is a different measurement from the one that cleared
-the 395, so it was reported rather than folded in.
-
----
-
 ## 6. Coverage that is thinner than it looks
 
 - **No test can dispatch a drag.** `vitest.config.js` is `environment: "node"`

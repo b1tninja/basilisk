@@ -574,7 +574,7 @@ nav {
   transition: background .1s;
 }
 .sign-in-menu a:hover { background: var(--surface-raised); }
-.sign-in-menu .divider { height: 1px; background: var(--border); margin: 0; }
+
 .provider-icon { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* ===== Typography ===== */
@@ -1975,11 +1975,7 @@ input[type=file] { display: none; }
 .toolkit-presets-summary::-webkit-details-marker {
   display: none;
 }
-.preset-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
+
 .preset-menu-popover {
   width: min(640px, calc(100vw - 1.5rem));
   max-width: min(640px, calc(100vw - 1.5rem));
@@ -2529,29 +2525,7 @@ button.cell-recipe-gap-caret {
 .cell-bind-messaging .binder-slot .field-label {
   font-size: 0.78rem;
 }
-.cell-recipe-mode-btn {
-  margin: 0;
-  padding: 0.18rem 0.55rem;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.68rem;
-  font-weight: 650;
-  letter-spacing: 0.02em;
-  line-height: 1.2;
-  cursor: pointer;
-}
-.cell-recipe-mode-btn:hover,
-.cell-recipe-mode-btn:focus-visible {
-  color: var(--text);
-}
-.cell-recipe-mode-btn.is-active {
-  background: color-mix(in srgb, var(--brand) 14%, var(--surface-raised));
-  color: var(--text);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 28%, transparent);
-}
+
 /* Compound with `.suggest-chip`, and `--error` rather than `--danger`, because
  * this rule drew nothing at all. Two defects, stacked:
  *
@@ -2580,20 +2554,7 @@ button.cell-recipe-gap-caret {
   display: grid;
   gap: 0;
 }
-.notebook-cell {
-  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
-  border-radius: 12px;
-  background: var(--surface);
-  outline: none;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
-  overflow: clip;
-}
-.cell-output {
-  padding: 0.35rem 0.65rem 0.65rem;
-}
-.cell-output:empty {
-  display: none;
-}
+
 .preset-card-wrap {
   display: flex;
   flex-direction: column;
@@ -2611,17 +2572,8 @@ button.cell-recipe-gap-caret {
     overflow: auto;
   }
 
-  /* Collapse state is a desktop concept — always show panes when stacked */
-  .chef-ops {
-    border-bottom: 1px solid var(--border);
-  }
 }
 
-.ops-drawer {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
 /* Shelf tool list — full-width rows (pairs stack encode/decode). */
 .ops-icon-grid {
   display: flex;
@@ -2655,15 +2607,7 @@ button.cell-recipe-gap-caret {
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface-raised) 70%, var(--surface));
 }
-.ops-icon-grid .ops-pair-solo {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.28rem;
-  padding: 0;
-  margin: 0 0 0.28rem;
-  border: none;
-  background: transparent;
-}
+
 .ops-item.ops-item-icon {
   aspect-ratio: auto;
   min-height: 2.55rem;
@@ -2903,56 +2847,10 @@ button.cell-recipe-gap-caret {
   border-top: 1px solid var(--border);
 }
 
-.ops-category-toggle {
-  display: flex;
-  flex-direction: row;
-  width: 100%;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.55rem;
-  padding: 0.3rem 0.4rem;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-.ops-category-toggle:hover {
-  background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
-}
 .ops-glyph {
   flex-shrink: 0;
   display: block;
   opacity: 0.9;
-}
-.ops-shelf-toggle {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.2rem 0.35rem;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted, inherit);
-  font: inherit;
-  font-weight: 600;
-  font-size: 0.72rem;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-}
-.ops-shelf-toggle:hover {
-  background: var(--bg-subtle, rgba(127, 127, 127, 0.08));
-  color: inherit;
-}
-.ops-aes-kit-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.1rem 0 0.15rem;
 }
 
 .ops-pair {
@@ -2961,9 +2859,7 @@ button.cell-recipe-gap-caret {
   gap: 0.28rem;
   align-items: stretch;
 }
-.ops-pair-solo {
-  grid-template-columns: 1fr;
-}
+
 .ops-item {
   display: flex;
   flex-direction: column;
@@ -3040,9 +2936,7 @@ button.cell-recipe-gap-caret {
   color: color-mix(in srgb, var(--text) 72%, var(--muted));
   background: color-mix(in srgb, var(--surface-raised) 92%, var(--surface));
 }
-.ops-category-toggle .toolbox-badge {
-  margin-right: 0.25rem;
-}
+
 .suggest-chip .toolbox-badge {
   margin-right: 0.15rem;
   padding: 0.08rem 0.28rem 0.08rem 0.08rem;
@@ -3087,13 +2981,7 @@ button.cell-recipe-gap-caret {
 .recipient-binder {
   -webkit-user-drag: none;
 }
-.suggest-next {
-  margin: 0.55rem 0 0.25rem;
-  padding: 0.65rem 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--brand) 5%, transparent);
-}
+
 .suggest-next-chips {
   display: flex;
   flex-wrap: wrap;
@@ -3205,9 +3093,7 @@ button.cell-recipe-gap-caret {
   padding-bottom: 0.75rem;
   border-bottom: 1px solid var(--border, #333);
 }
-.artifact-card {
-  margin-bottom: 0.75rem;
-}
+
 .status-row.warn {
   color: var(--text);
   background: color-mix(in srgb, var(--category-yellow, #d4a017) 12%, transparent);

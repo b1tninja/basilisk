@@ -103,6 +103,23 @@ function definedClasses() {
 }
 
 /**
+ * The file with its comments removed.
+ *
+ * A comment describing a class is not a producer of it, and this sweep could
+ * not tell the difference. The legacy shell's names survived in the doc headers
+ * of `scripts/snapshot-*.mjs`, which describe the very UI those scripts stopped
+ * being able to photograph. `fips-engine-entrypoints.test.js` learned this the
+ * same way and states it plainly: a sweep a comment can satisfy is a sweep
+ * documentation can silence.
+ */
+function codeOf(rel, text) {
+  if (rel.endsWith(".html")) return text.replace(/<!--[\s\S]*?-->/g, " ");
+  if (rel.endsWith(".py")) return text.replace(/#[^\n]*/g, " ");
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ");
+}
+/**
  * Every class-shaped token in every tracked non-CSS text file.
  *
  * Enumerated from `git ls-files` rather than by walking a chosen directory:
@@ -113,7 +130,18 @@ function definedClasses() {
 function producedTokens() {
   const files = run("git", ["ls-files"], { cwd: REPO, encoding: "utf8", maxBuffer: 1 << 26 })
     .split("\n")
-    .filter((f) => TEXT.test(f) && !f.endsWith(".css") && !f.includes("/css/"));
+    .filter(
+      (f) =>
+        TEXT.test(f) &&
+        !f.endsWith(".css") &&
+        !f.includes("/css/") &&
+        // Documentation cannot emit a class, and counting it as a producer is
+        // not hypothetical: `ops-aes-kit-body` was kept alive by the sentence
+        // in `docs/OPEN-FINDINGS.md` that cited it as a live counterexample —
+        // a findings file naming a class became that class's producer, and
+        // then used it as evidence. Twelve more survived the same way.
+        !f.endsWith(".md")
+    );
   const tokens = new Set();
   for (const rel of files) {
     let text;
@@ -122,7 +150,7 @@ function producedTokens() {
     } catch {
       continue; // a tracked file that is not on disk in this checkout
     }
-    for (const tok of text.split(/[^A-Za-z0-9_-]+/)) if (tok) tokens.add(tok);
+    for (const tok of codeOf(rel, text).split(/[^A-Za-z0-9_-]+/)) if (tok) tokens.add(tok);
   }
   return { tokens, count: files.length };
 }
