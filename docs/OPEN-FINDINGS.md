@@ -93,18 +93,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **`.cell-recipe-gap-caret` paints `cursor: pointer` on the inert marker.**
-  The armed-branch gap is a `<span>` now, but the stylesheet still gives it a
-  pointer cursor — one of the signals that made it read as a control. A Tailwind
-  utility cannot fix it: `toolkit.css` imports tailwind and then `site.css`
-  unlayered, so `site.css` beats `@layer utilities`. It wants
-  `button.cell-recipe-gap-caret`.
-- **The armed caret is a drop target with no hover accent.** Its call site
-  passes no `onDragLeave` and never sets `active`, so only the cursor's copy
-  effect signals that it will take a drop. The trap is recorded in
-  `InsertGap.tsx`: `active` outranks `pending`, so wiring `active` at that site
-  falls through to the `+` branch and produces a dead `+` button. Fixing it is a
-  change to the condition, not a prop at the call site.
 - **One capture was lost on purpose and should be a decision, not an accident.**
   Deleting `snapshot-ux-resume.mjs` dropped the recipient-binder shot — whose
   selectors (`.recipient-binder`, `.binder-search`, `.keyserver-control`,
@@ -170,6 +158,14 @@ minification preserves.
 
 ## 6. Coverage that is thinner than it looks
 
+- **No test can dispatch a drag.** `vitest.config.js` is `environment: "node"`
+  with no jsdom, happy-dom or `react-test-renderer`, so nothing can fire a
+  `dragover` or observe the state it sets. The armed caret's drop accent is
+  pinned at both ends — the call site passes `active`, and the component's
+  response to `active` is exact — but the link between them is not, and a
+  mutation replacing `setArmedDrop(i)` with `setArmedDrop(null)` survives. The
+  accent itself was confirmed in a browser: the class takes the marker's
+  `transform` from `none` to `matrix(1.15, …)`, so it is not inert CSS.
 - **A face-up row means a slot of that name is here, not that the peer's value
   arrived — and the stronger reading is reachable.** `facesFor` asks
   `hasSlot(label)`. On an unplaced cell (`mine` on every machine) both ends

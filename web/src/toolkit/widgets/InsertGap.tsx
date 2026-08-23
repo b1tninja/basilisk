@@ -63,7 +63,7 @@ export function InsertGap({
     </>
   );
 
-  if (pending && !active) {
+  if (pending && !(active && onClick)) {
     /**
      * **The HERE caret is a control exactly when a press has somewhere to go.**
      *
@@ -105,17 +105,32 @@ export function InsertGap({
      * `aria-label` apply to a non-interactive element, so a screen reader still
      * reaches "insert position" and is no longer promised a press.
      *
-     * One thing to know before wiring `active` on an unclicked gap: `active`
-     * outranks `pending`, so such a caller would fall past this branch into the
-     * `+` below and get back the dead button in a different shape. The armed
-     * caret is the only gap with no drop-hover accent for that reason, and
-     * giving it one is a change to this condition rather than a prop at the
-     * call site.
+     * **What `active` outranking `pending` is actually for, and where it
+     * stops.** A drag hovering a gap returns the `+` wearing
+     * `.cell-recipe-gap-drop-active` — bigger, blue, bordered — which is the
+     * only thing on screen that says the gap will take the drop. That takeover
+     * is worth a shape change *because the `+` it hands back is pressable*. On
+     * an unwired gap it is not: `active && !onClick` used to fall past this
+     * branch and hand back the dead button in a different shape, so the armed
+     * caret was left with no drop accent at all rather than that.
+     *
+     * So the condition is `pending && !(active && onClick)` — the `+` takeover
+     * is scoped to gaps where a `+` would be a control, and the marker keeps
+     * its own shape and takes the accent as a class instead
+     * (`.cell-recipe-gap-caret-drop-active`, same blue and same 1.15 scale, so
+     * the two states read as one). The element type does not change under a
+     * drag hover in either branch now, which is the same property the wired
+     * four rely on for focus, held for a reason that has nothing to do with
+     * focus: a `<span>` that unmounts mid-drag would cancel the drop.
      */
     if (!onClick) {
       return (
         <span
-          className={cn("cell-recipe-gap-caret", className)}
+          className={cn(
+            "cell-recipe-gap-caret",
+            active && "cell-recipe-gap-caret-drop-active",
+            className
+          )}
           role="note"
           aria-label={`${label} — insert position`}
           title={label}

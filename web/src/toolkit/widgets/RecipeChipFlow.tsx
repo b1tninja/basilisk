@@ -348,6 +348,14 @@ export function RecipeChipFlow({
   className,
 }: RecipeChipFlowProps) {
   const [stemDrop, setStemDrop] = useState<number | null>(null);
+  /*
+   * Drop hover on the armed branch's caret. Kept apart from `stemDrop` because
+   * the two collide: the armed caret carries `data-gap-stem={i}`, the same stem
+   * the trailing stem gap carries, and they are different drop targets.
+   * Keyed on the stem for the same reason `stemDrop` is — one armed branch
+   * exists at a time, and a `null` on leave/drop is what clears it.
+   */
+  const [armedDrop, setArmedDrop] = useState<number | null>(null);
 
   /*
    * Escape drops an armed branch. The row is pure client state — nothing has
@@ -596,15 +604,24 @@ export function RecipeChipFlow({
             materializes branch and step together.
 
             `showLabel` and `scale` were passed here and read by nobody: this
-            gap is unconditionally `pending` (and never `active`), and that
-            branch draws the fixed HERE caret, which has no `+` to label and one
-            size. The scope is named anyway by the selector chip immediately to
-            its left, which is what `showLabel` exists to substitute for where
-            there is no such chip.
+            gap is unconditionally `pending`, and that branch draws the fixed
+            HERE caret, which has no `+` to label and one size. The scope is
+            named anyway by the selector chip immediately to its left, which is
+            what `showLabel` exists to substitute for where there is no such
+            chip.
+
+            `active` is passed and it does not fall through to the `+`. It used
+            not to be passed at all — `active` outranked `pending`, so setting
+            it here produced a dead `+` button, and the gap was left as the one
+            drop target on screen with nothing but the cursor's copy effect to
+            say it would take a drop. `InsertGap`'s condition now scopes that
+            takeover to gaps where the `+` would be pressable, so this one keeps
+            its caret and accents it in place.
           */}
           <InsertGap
             label={`Insert first step in ${armedHere.selector}`}
             pending
+            active={armedDrop === i}
             data-cell={cell}
             data-gap-stem={i}
             onDragOver={(e) => {
@@ -612,10 +629,13 @@ export function RecipeChipFlow({
               e.preventDefault();
               e.stopPropagation();
               e.dataTransfer.dropEffect = "copy";
+              setArmedDrop(i);
             }}
+            onDragLeave={() => setArmedDrop((v) => (v === i ? null : v))}
             onDrop={(e) => {
               e.preventDefault();
               e.stopPropagation();
+              setArmedDrop(null);
               const parsed = parseStepMime(
                 e.dataTransfer.getData(STEP_MIME) ||
                   e.dataTransfer.getData("text/plain")

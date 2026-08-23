@@ -90,17 +90,16 @@ const OPTIONAL = {
   // creates the branch (`onAddBranchStep`). The other four gaps spread
   // `bindGap`/`stemGap`, which pass all four handlers.
   //
-  // The one entry here that is a judgement rather than a fact: `InsertGap`
-  // always renders a `<button>`, so this caret is focusable and answers a press
-  // with nothing. Arming the branch is what aimed it, and the × on the chip
-  // beside it is the cancel, so there is no second behaviour missing — but a
-  // marker that is a button is a control by every signal a reader has. Whether
-  // a `pending` gap should render as a `<span>` is a question about all five
-  // call sites, not this one, and it is not answered here.
+  // This entry was once a judgement and is now a fact. `InsertGap` used to
+  // render a `<button>` either way, so the omission left a focusable,
+  // button-announced marker that answered Enter with nothing; the component now
+  // keys the element on the handler, and a `pending` gap with no `onClick` is a
+  // named, unfocusable `<span>` (`gap-marker.test.js` holds both halves of that
+  // split). So the absence here is the input to that rule rather than a gap in
+  // the wiring — which is also why this entry must not be "fixed" by inventing
+  // an `onClick`: a click has nowhere to move a caret that is already where it
+  // is, and doing so would silently turn the marker back into a control.
   "InsertGap.onClick": ["toolkit/widgets/RecipeChipFlow.tsx"],
-  // Same site: its `onDragOver` sets no hover state, so a leave has nothing to
-  // clear. `bindGap`'s does (`setDropAt`), which is why that one passes both.
-  "InsertGap.onDragLeave": ["toolkit/widgets/RecipeChipFlow.tsx"],
 
   // An override with a working default, not a wire. Absent, the Types tab's
   // literal constructor appends through `onAppend(step.name, { params })` — the

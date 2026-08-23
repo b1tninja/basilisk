@@ -3337,8 +3337,29 @@ body.chip-reorder-dragging .cell-recipe-gap-add {
   padding: 0 4px;
   border: none;
   background: transparent;
-  cursor: pointer;
+  /* Not a control by default. `InsertGap` renders this class on a `<span>`
+   * wherever no `onClick` arrived — the armed-branch marker — and a pointer
+   * cursor there is one of the signals that made that marker read as a button.
+   * `default` rather than the UA's `auto`, which would draw an I-beam over the
+   * HERE text and offer selectable prose instead. The pointer is restored
+   * below, on the element that actually answers a press. */
+  cursor: default;
   flex: 0 0 auto;
+}
+button.cell-recipe-gap-caret {
+  cursor: pointer;
+}
+/* Drag hovering the inert caret. Every other gap answers a drop-hover as
+ * `.cell-recipe-gap-add.cell-recipe-gap-drop-active` — a `+`, which is worth
+ * changing shape for because it is pressable. The unwired marker's is not, and
+ * a `+` nothing answers is worse than no accent, so it stays the
+ * caret and takes the accent on the caret itself. Same blue (`var(--caret)`)
+ * and same 1.15 scale as the `+` accent, so the two read as one state. */
+.cell-recipe-gap-caret.cell-recipe-gap-caret-drop-active {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--caret) 14%, transparent);
+  box-shadow: 0 0 0 1px var(--caret);
+  transform: scale(1.15);
 }
 .cell-recipe-gap-caret-bar {
   width: 2px;

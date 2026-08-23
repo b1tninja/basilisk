@@ -526,6 +526,32 @@ function CatalogApp() {
                 <SuggestChip label="out" variant="placed" className="opacity-60" />
               </div>
             </div>
+            {/* The two states below are the ones with no `onClick`, and that is
+                the whole of what distinguishes them from the two above — the
+                element `InsertGap` returns is keyed on whether a press has
+                somewhere to go, so the catalogue can only show them by omitting
+                the handler, not by naming a variant. On screen: no tab stop, no
+                pointer cursor, `role="note"` instead of a button. */}
+            <div>
+              <StateLabel>
+                Marker — the armed branch’s caret; already the insert position, so
+                nothing answers a press (span, not a button)
+              </StateLabel>
+              <div className="flex items-center gap-0.5">
+                <SuggestChip label=":public" variant="selector" />
+                <InsertGap label="Insert first step in :public" pending />
+              </div>
+            </div>
+            <div>
+              <StateLabel>
+                Marker, drop target — the accent the marker takes in place, because
+                the pressable + would be a dead control here
+              </StateLabel>
+              <div className="flex items-center gap-0.5">
+                <SuggestChip label=":public" variant="selector" className="opacity-60" />
+                <InsertGap label="Insert first step in :public" pending active />
+              </div>
+            </div>
             <div>
               <StateLabel>End-of-pipeline caret — append is “caret at the end”</StateLabel>
               <div className="flex items-center gap-0.5">
