@@ -284,11 +284,31 @@ const PROOF_NOT_COMPARABLE =
  * A plain function, exported, because the alternative is a claim about a proof
  * that can only be exercised by mounting a whole notebook.
  */
-export function readRunProof(
+/**
+ * The run documents in the outputs, parsed and **as the bytes they were
+ * printed as**.
+ *
+ * Both, because the two callers need different halves of the same scan and a
+ * second scan is a second answer. `readRunProof` runs the comparison over the
+ * parsed documents; the export writes the text, and it must be the original.
+ * Re-serialising is not a formatting choice here — a manifest's `recipeDigest`
+ * is taken over its own `recipeSource` and `manifestDigest` over the document,
+ * so a pretty-print pass on the way out would hand somebody a document that no
+ * longer matches the digest inside it.
+ */
+export function scanProofOutputs(
   cellOutputs: readonly (readonly unknown[] | undefined)[] | undefined
-): ShareSheetProps["proof"] {
+): {
+  manifestDoc: RunProofDoc | null;
+  receiptDoc: RunProofDoc | null;
+  manifestText: string;
+  receiptText: string;
+  signedBy: string;
+} {
   let manifestDoc: RunProofDoc | null = null;
   let receiptDoc: RunProofDoc | null = null;
+  let manifestText = "";
+  let receiptText = "";
   let signedBy = "";
   for (const tiles of cellOutputs || []) {
     for (const tile of tiles || []) {
@@ -296,14 +316,27 @@ export function readRunProof(
       if (!text.startsWith("{")) continue;
       try {
         const doc = JSON.parse(text) as RunProofDoc;
-        if (doc.kind === "basilisk.run-manifest") manifestDoc = doc;
-        if (doc.kind === "basilisk.run-receipt") receiptDoc = doc;
+        if (doc.kind === "basilisk.run-manifest") {
+          manifestDoc = doc;
+          manifestText = text;
+        }
+        if (doc.kind === "basilisk.run-receipt") {
+          receiptDoc = doc;
+          receiptText = text;
+        }
         if (doc.signedBy) signedBy = String(doc.signedBy);
       } catch {
         /* not a document — an output that merely starts with a brace */
       }
     }
   }
+  return { manifestDoc, receiptDoc, manifestText, receiptText, signedBy };
+}
+
+export function readRunProof(
+  cellOutputs: readonly (readonly unknown[] | undefined)[] | undefined
+): ShareSheetProps["proof"] {
+  const { manifestDoc, receiptDoc, signedBy } = scanProofOutputs(cellOutputs);
   if (!manifestDoc && !receiptDoc) return null;
 
   const brief = (doc: RunProofDoc | null) =>
@@ -900,6 +933,59 @@ function saveNotebookFile(title: string, recipe: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+/**
+ * A proof, as a file: both documents, exactly as the cells printed them.
+ *
+ * **Nothing is re-serialised and nothing wraps them.** A manifest's digest is
+ * taken over its own text and a receipt's over its own, so reformatting either
+ * on the way out would hand somebody a document whose bytes no longer match the
+ * digest inside it — and the whole point of the file is that the recipient can
+ * run the same comparison and reach the same verdict. There is no
+ * `basilisk.run-proof` kind and this does not invent one: a wrapper would be a
+ * schema nothing in the app parses, and each document already names its own
+ * `kind` on its first line.
+ *
+ * So the separators are for a person, not a parser. The recipient's route is to
+ * copy one document out and paste it into the notebook, which is why they are
+ * plainly labelled and why the bytes between them are untouched.
+ *
+ * Exported and pure so what it writes can be tested without a DOM.
+ */
+export function proofFileText(manifestText: string, receiptText: string): string {
+  const NL = String.fromCharCode(10);
+  const parts: string[] = [];
+  if (manifestText) parts.push("--- basilisk.run-manifest ---" + NL + manifestText);
+  if (receiptText) parts.push("--- basilisk.run-receipt ---" + NL + receiptText);
+  return parts.join(NL + NL) + NL;
+}
+
+/**
+ * Save the proof beside the notebook it is about.
+ *
+ * The same shape as `saveNotebookFile` and deliberately not folded into it:
+ * that one saves the recipe *and nothing else*, which is the sentence that
+ * makes a notebook file safe to pass around. This one saves two documents and
+ * no recipe, and keeping them separate keeps both of those claims simple.
+ */
+function saveProofFile(title: string, text: string): void {
+  const stem =
+    String(title || "notebook")
+      .trim()
+      .replace(/[^A-Za-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "notebook";
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${stem}.proof.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick, for the reason `saveNotebookFile` records.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function workspaceStepCount(recipe: string): number {
   try {
     const { ast } = compileRecipe(recipe);
@@ -1386,6 +1472,19 @@ export function ToolkitShell() {
    * without standing up a notebook; the memo is only the caching.
    */
   const runProof = useMemo(() => readRunProof(nb.cellOutputs), [nb.cellOutputs]);
+
+  /**
+   * The bytes the Export proof button writes.
+   *
+   * A second memo over the same outputs rather than a field on `runProof`,
+   * because the sheet has no use for two whole documents and a prop it never
+   * reads is a prop that will be read wrongly later.
+   */
+  const runProofFile = useMemo(() => {
+    const { manifestText, receiptText } = scanProofOutputs(nb.cellOutputs);
+    if (!manifestText && !receiptText) return "";
+    return proofFileText(manifestText, receiptText);
+  }, [nb.cellOutputs]);
 
   /**
    * The share link as a QR, or the reason it cannot be one.
@@ -5516,6 +5615,9 @@ export function ToolkitShell() {
           recipeQr={recipeQr}
           onSaveRecipe={() => saveNotebookFile(nb.title, nb.source)}
           proof={runProof}
+          onExportProof={
+            runProofFile ? () => saveProofFile(nb.title, runProofFile) : undefined
+          }
           session={
             nb.quorumState.room
               ? {

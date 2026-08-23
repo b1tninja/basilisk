@@ -45,23 +45,20 @@ cells joined. `engine.js`'s `currentRunManifest` (around line 4154) is the other
 `serializeRecipe({ chains: [chain] })`. It already contains the loop
 `canonicalCellSources` now expresses and could adopt both exports directly.
 
-### 1.3 The Export proof button is enabled and does nothing
+### 1.3 Nothing sweeps for a control with no handler
 
-`manifestHonouredBy` is wired — but the control beside its verdict is not.
-`ShareSheet` declares `onExportProof`, destructures it and hangs it on a
-`<Button>`, and **no caller passes it**. `ToolkitShell` hands that sheet eleven
-props and this is not one of them, so the button renders enabled whenever a
-proof exists and clicking it does nothing.
+`onExportProof` was declared, destructured, hung on a `<Button>` and passed by
+nobody, so the button rendered enabled and did nothing. It is fixed — but it is
+the **second** time: `session-flow.test.js` records the identical defect for
+`onStartSession`, and it asserts against that one prop by name rather than
+against the shape.
 
-It is the same defect `session-flow.test.js` already records for the sibling
-`onStartSession`, which is why that file asserts against it — the assertion just
-does not cover this prop.
-
-The work is not only wiring: exporting a proof means deciding what a proof *is*
-as a file. It is two documents, and their bytes cannot be re-serialised, because
-a manifest's digest is over its own text and a pretty-print pass would produce a
-document that no longer matches the digest inside it. No bundle kind exists and
-inventing one would be a schema nothing parses.
+An optional handler prop that no caller supplies is a control that looks
+finished. The registry-style sweeps in this repo (`glyph-shadowing`,
+`fips-engine-entrypoints`) exist because a list catches the next one and a named
+assertion does not. The same is possible here: for every component the shell
+renders, every `on*` prop it declares is either passed, or written down as
+deliberately optional.
 
 ---|---|---|---|---|
 | `… \| out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `aa45ec49b500` |
