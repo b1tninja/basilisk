@@ -15,25 +15,26 @@ its evidence.
 
 ## 1. Enforcement that is not enforcing
 
-### 1.1 FIPS mode gates running, and still does not gate adding
+### 1.1 The worker's FIPS gate still guards a message nothing sends
 
-The run half is closed: the notebook builds `bindings.fipsMode` and
-`bindings.suiteStatus` on every kernel run, and `startRun` refuses before the
-cell loop rather than after cell 2. `docs/CRYPTOGRAPHY.md:186` still says the
-switch "hard-blocks **adding**/running ops", and there is no add-time gate
-anywhere — you can write the recipe, you just cannot run it. The tray copy says
-so now; the doc still overclaims.
+The run half is closed and the ways in are pinned:
+`fips-engine-entrypoints.test.js` sweeps the source for every caller of
+`runRecipe`/`runAll` and requires each to route the flag or be argued onto a
+written exemption list. There are three, and `conjugate-smoke.js` is the one
+exemption — the suite self-check must be able to test an unverified suite, or it
+answers the question by declining to ask it.
 
-Two things the closure did **not** close:
+What is left is the worker. `executeToolkitRun` applies the gate on the crypto
+worker's `toolkit-run` arm and **nothing in the app posts that message**;
+`generate` is the only arm anything reaches. So that path enforces nothing, and
+`web/src/lib/pgp/intended-recipient.js:18` recorded the same dead arm from the
+other direction. Deleting it and deleting the worker's `encrypt` arm with it is
+one option; wiring the notebook's runs through the worker is the other. Both are
+decisions about where crypto should execute, not tidying.
 
-- **The dead worker path is untouched.** The notebook was wired to the gate,
-  not the app to the worker. Nothing still posts `toolkit-run` or `encrypt`;
-  `generate` remains the only reachable arm, exactly as
-  `web/src/lib/pgp/intended-recipient.js:18` recorded.
-- **`conjugate-smoke.js` (lines 85, 174, 196) calls `runAll`/`runRecipe` with
-  no `fipsMode`, so it is ungated.** It is a self-check harness rather than a
-  person's run, which is why it was left — but it is a second path into the
-  engine that the switch does not reach.
+There is still no add-time gate — you can write the recipe, you cannot run it.
+`docs/CRYPTOGRAPHY.md` said the switch "hard-blocks adding/running" and now says
+what is true.
 
 ### 1.2 The second manifest producer still has the asymmetry
 

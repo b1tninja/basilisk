@@ -1,6 +1,24 @@
 /**
  * Vitest smoke helpers for companion presets / self-contained roundtrips.
  * Not CAST — full runRecipe / kernel paths only.
+ *
+ * ## Deliberately not FIPS-gated
+ *
+ * This is the third and last way into the engine — `kernel.js` is the
+ * notebook's and `toolkit-run.js` is the worker's — and it is the only one that
+ * passes no `fipsMode`. That is a decision rather than an oversight, and it is
+ * written here because a silent ungated path is indistinguishable from one
+ * somebody forgot.
+ *
+ * The reason is what the switch means. FIPS mode refuses a run that reaches an
+ * unverified suite; this harness exists to *find out whether the ops work*. A
+ * gate here would make the self-check refuse to check exactly the suite whose
+ * verification is in question, which answers the question by declining to ask
+ * it. Nothing a person typed reaches this file either — it runs over the
+ * shipped preset pairs from a test.
+ *
+ * `fips-engine-entrypoints.test.js` pins that set of three so a *fourth* way in
+ * has to be argued for rather than added.
  */
 
 import { runRecipe } from "./engine.js";

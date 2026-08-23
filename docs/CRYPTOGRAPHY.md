@@ -183,7 +183,7 @@ Eager startup self-tests (`runCryptoSelfTests`) cover:
 | **WebCrypto** | CAST-6…11, 13–14 (SHA-256 KAT, AES-GCM, Ed25519, ECDH P-256, HKDF KAT, AES-KW, AES-CBC, AES-CTR) | Verified after POST |
 | **SSS** | CAST-12 (GF(256) split/combine + BLIP39 encode/decode) | Verified after POST |
 
-Toolkit UI always shows **verified** / **⚠ unverified** chips per crypto toolbox. **FIPS mode** (persisted `basilisk.fipsMode`) hard-blocks adding/running ops whose suite is unverified; the worker enforces the same gate via `executeToolkitRun` (`toolkit-run.js`). Disclaimer: FIPS-*inspired* posture only — not a NIST FIPS 140 certificate.
+Toolkit UI always shows **verified** / **⚠ unverified** chips per crypto toolbox. **FIPS mode** (persisted `basilisk.fipsMode`) **refuses a run** that reaches an unverified suite, before the first step executes — the notebook sets `fipsMode`/`suiteStatus` in `useNotebook.buildBindings` and asks `assertRecipeAllowedUnderFips` about the whole run in `startRun`. It does **not** block *adding* an op: you can write the recipe, you cannot run it. There is no add-time gate anywhere, and this sentence claimed one for a long time. `executeToolkitRun` (`toolkit-run.js`) applies the same gate on the crypto worker's `toolkit-run` arm, but **nothing in the app posts that message** — `generate` is the only arm anything reaches — so that path enforces nothing today. Disclaimer: FIPS-*inspired* posture only — not a NIST FIPS 140 certificate.
 
 Encrypt / Decrypt banners say **OpenPGP verified** (CAST-1…5). Shared-notebook session ECDH/HKDF/AES-GCM is **not** CAST-gated today.
 
