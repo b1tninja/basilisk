@@ -126,33 +126,26 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ---
 
-## 5a. Measured, large, and not safe to act on blindly
+## 5a. Classes that only a document keeps alive
 
-**416 of the 949 class selectors in the stylesheets have no producer.** Every
-one of them is in `site.css`; `toolkit.css` has none, which is the cleanest
-signal in the measurement — the current shell's stylesheet is fully live, and
-the legacy toolkit's entire vocabulary is still sitting in the other one. The
-`.chef-*`/`.pane-*` deletion took 176 lines of that and stopped at one family.
+**Thirteen class rules survive the producer sweep only because prose names
+them.** A token sweep counts a mention in a comment or a `.md` as a producer,
+and for these that is the *only* occurrence: `cell-output`,
+`cell-recipe-mode-btn`, `chef-ops`, `divider`, `notebook-cell`,
+`ops-category-toggle`, `ops-drawer`, `ops-pair-solo`, `ops-shelf-toggle`,
+`preset-grid`, `suggest-next`, plus two worth naming separately.
 
-By prefix: `builder-` 53, `ops-` 49, `cell-` 48, `suggest-` 25, `notebook-` 17,
-`encrypt-` 16, `artifact-` 12, `session-` 12, `toolbox-` 12. Note that these are
-*subsets* of live families — `ops-panel`, `ops-category` and `ops-rail` are all
-in use, while `ops-aes-kit-body` is not — so this cannot be deleted by prefix.
+`artifact-card` is kept alive by `.design-sync/NOTES.md`. **`ops-aes-kit-body`
+is kept alive by this file** — its only two occurrences in the repo are the
+sentence that used to be here, calling it the live counterexample that proves
+you cannot delete by prefix, and the dead rule itself. It was never live. A
+findings document that names a class becomes that class's producer, and then
+cites it as evidence.
 
-**The sweep has a false-positive mode and at least one confirmed instance.** A
-class assembled at runtime never appears as a literal: `packet-map.js:291`
-returns `` `pkt-color-${colorIndex % 8}` ``, so the eight `pkt-color-N` rules
-*are* reached and the sweep is wrong about them. Any deletion has to check each
-family for a constructor first. (`receipt.js`'s `ops-${count}-…` is a registry
-version string, not a class — that one is not a producer.)
-
-Method, since it is reusable: the haystack is `git ls-files` plus `web/dist`,
-enumerated rather than hand-walked. The first pass walked `web/src` and
-`web/*.html` and missed `basilisk/web/templates/claim.html` and
-`web/static/*.html` — it happened to change the count by two, but a sweep whose
-coverage cannot be checked is not evidence. The `dist` half is valid here
-because a CSS class reaches the bundle as a **string literal**, which
-minification preserves.
+Closing this needs a sweep that distinguishes `.foo` from `#foo` from a mention
+in prose — `#suggest-next` and `#preset-grid` are ID selectors, which a class
+rule does not match. That is a different measurement from the one that cleared
+the 395, so it was reported rather than folded in.
 
 ---
 
