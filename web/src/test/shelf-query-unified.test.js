@@ -22,10 +22,30 @@
  *     prints the word "Flow".
  *
  * `opsMatchingQuery` is now the only thing that decides this, on the union of
- * the four fields, and both sites call it. What is pinned below is the union
+ * the six fields, and both sites call it. What is pinned below is the union
  * (one assertion per field, each of which fails if that field is dropped), the
  * conjugate-row lifting `3ef6526` added, and the structural claim that there
  * is one producer rather than two that happen to agree today.
+ *
+ * Two of the six were added by a later pass, after their own measurement over
+ * the same corpus (rebuilt by the recipe above; it comes to 1423 queries when
+ * every one- and two-character doc token is kept, which is close to but not
+ * identical with the 1342 the first pass counted, so treat the two totals as
+ * separate measurements of the same registry rather than one number):
+ *
+ *   - **the toolbox's printed label** — 8 queries change, +51 op-matches, none
+ *     lost. Fourteen of the fifteen headers are the toolbox id in different
+ *     casing, so `toolbox` already covered them by accident; `io` prints
+ *     "Input / output" and matched nothing, and `sss` prints "SSS / BLIP39".
+ *   - **`aliases`** — 2 queries change, +2 op-matches, both `blip39`, reached
+ *     by `words` and `word`. `sss.split`'s `split` alias adds nothing, because
+ *     its own name contains the word.
+ *
+ * Isolating each field is the point of the assertions below and it got harder
+ * with the label in: a query that is a toolbox *id* now matches through the
+ * label as well for fourteen of the fifteen, so `flow` no longer fails when
+ * `toolbox` is deleted. `io` is the one id its own label does not contain, and
+ * it is what holds that field down.
  *
  * The component is rendered for real with `react-dom/server`, the way
  * `shelf-search-name.test.js` does, so what is asserted is what a query
@@ -36,7 +56,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { listSteps } from "../lib/toolkit/registry.js";
+import {
+  TOOLBOX_META,
+  listDrawerRows,
+  listSteps,
+  toolboxLabel,
+} from "../lib/toolkit/registry.js";
 import { opsMatchingQuery } from "../toolkit/useNotebook";
 import { OpsShelf } from "../toolkit/widgets/OpsShelf.tsx";
 import { TooltipProvider } from "../components/ui/tooltip.tsx";
@@ -114,9 +139,31 @@ describe("the shelf's op query has one producer", () => {
       ALL.filter((s) => s.label).map((s) => s.name),
       "a step now carries a label — the label case can be measured for real"
     ).toEqual([]);
+    // Two steps declare an alias, and the measured worth of the field is one
+    // of the two: `sss.split`'s own name contains `split`, so only `words`
+    // reaches an op nothing else does. A third alias landing here is a reason
+    // to re-measure, not to trust the number in the header.
+    expect(
+      ALL.filter((s) => s.aliases?.length).map((s) => [s.name, s.aliases]),
+      "the alias inventory moved — the +2 in the header is about this list"
+    ).toEqual([
+      ["sss.split", ["split"]],
+      ["blip39", ["words"]],
+    ]);
+    // The one header whose printed words are not its own id, which is the
+    // whole reason `toolboxLabel` is in the predicate — and the one id its
+    // own label does not contain, which is what still isolates `toolbox`.
+    expect(toolboxLabel("io")).toBe("Input / output");
+    expect(
+      Object.keys(TOOLBOX_META).filter(
+        (id) => !TOOLBOX_META[id].label.toLowerCase().includes(id.toLowerCase())
+      ),
+      "a second header stopped printing its own id, or `io` started"
+    ).toEqual(["io"]);
+    expect(toolboxLabel("nope"), "an unknown toolbox must read as no label").toBe("");
   });
 
-  describe("admits the union of the four fields a reader can see", () => {
+  describe("admits the union of the six fields a reader can see", () => {
     it("matches the op's own name", () => {
       // `recipients.merge` and not `genkey`: `genkey`'s own doc quotes the
       // word `genkey` in its example, so a name query for it is satisfied by
@@ -149,6 +196,67 @@ describe("the shelf's op query has one producer", () => {
       const shown = shownFor("flow");
       // `lit` is kitOnly and is reached through the footer bar, not the tree.
       expect(shown).toEqual(["as", "foreach", "in", "inspect", "peek", "scatter", "select", "tee"]);
+    });
+
+    it("matches the toolbox id even where the header spells it differently", () => {
+      // `flow` above no longer isolates this field: the header prints "Flow",
+      // so deleting `toolbox` leaves the query passing through `toolboxLabel`
+      // and the assertion says nothing about the line it was written for.
+      // `io` is the one id in the registry that its own label does not
+      // contain — "Input / output" has no "io" in it — so this is the query
+      // that fails when the `toolbox` reading goes.
+      const byId = opsMatchingQuery(ALL, "io").map((s) => s.name);
+      // Measured: 13 ops in the `io` toolbox spell "io" in neither their name
+      // nor their doc, and reach the query through the field alone. Two of
+      // them, named rather than counted, because a count passes on a page that
+      // found thirteen of something else.
+      for (const op of ["qr.scan", "clipboard.read", "file.save", "publish"]) {
+        expect(byId, `"io" no longer reaches ${op} through its toolbox id`).toContain(op);
+      }
+    });
+
+    it("matches the words the section header actually prints", () => {
+      // The gap the id left. Fourteen headers are the id in another casing and
+      // are covered by accident; "Input / output" is not, and typing what the
+      // header says found **nothing at all** — 0 ops before this field, the
+      // `flow` defect one toolbox over.
+      const byLabel = opsMatchingQuery(ALL, "input / output").map((s) => s.name).sort();
+      const io = ALL.filter((s) => s.toolbox === "io").map((s) => s.name).sort();
+      expect(io.length, "the io toolbox is empty — this measures nothing").toBe(20);
+      // Exactly the ops under that header: the query is the header, so
+      // anything more would be dragging in a toolbox the reader did not point
+      // at and anything less is the gap still open. (Equality is the honest
+      // assertion and not a lucky one — a conjugate partner outside `io` would
+      // legitimately break it, and that is a re-measurement, not a regression.)
+      expect(byLabel, "typing the header no longer selects its own rows").toEqual(io);
+      expect(shownFor("input / output")).toContain("qr.scan");
+      // The second header that says something its id does not. `sss` prints
+      // "SSS / BLIP39", and these two are under it without the word anywhere
+      // in their own name or doc.
+      const byBlip = opsMatchingQuery(ALL, "blip39").map((s) => s.name);
+      for (const op of ["vss.verify", "dkg.run"]) {
+        expect(byBlip, `"blip39" no longer reaches ${op} through its header`).toContain(op);
+      }
+    });
+
+    it("matches a second spelling the parser takes and the card prints", () => {
+      // `blip39` declares `aliases: ["words"]`. The parser has always accepted
+      // `words`, `ToolCard` prints an "Aliases:" row on every non-compact card
+      // — which is the card `OpsTile` opens off a pair row, and `blip39` draws
+      // one — and no filter has ever matched it: a verb this product takes and
+      // then could not find. Measured: the field changes 2 queries in the
+      // whole corpus and admits 2 op-matches, both this op.
+      //
+      // `words` and not `split`: `sss.split`'s alias is a substring of its own
+      // name, so a `split` query is satisfied by `name` and would keep passing
+      // with `aliases` deleted — the `genkey`/`doc` trap the previous pass
+      // left a note about.
+      expect(opsMatchingQuery(ALL, "words").map((s) => s.name)).toEqual([
+        // `vss.commitments` is here through its doc, and was before this
+        // field; `blip39` is the one the alias adds.
+        "vss.commitments",
+        "blip39",
+      ]);
     });
 
     it("matches a step's UI label, the day a step declares one", () => {
@@ -201,6 +309,29 @@ describe("the shelf's op query has one producer", () => {
       expect(shownFor("gpg.decrypt"), "`gpg.decrypt` reaches no row").toEqual(
         expect.arrayContaining(["gpg.encrypt", "gpg.decrypt"])
       );
+    });
+
+    /**
+     * The five queries `ops-pair-row.e2e.js` types into the built shelf, and
+     * the rows each leaves — asserted here, over `listDrawerRows`, because
+     * that spec runs against `dist/` and a change to the predicate cannot be
+     * scored against it without a rebuild. Four of its five assertions are
+     * `toContain` and would survive an extra row; the fifth is
+     * `toEqual([])` on `gpg.genkey` and would not, which is the one this
+     * mirrors most closely.
+     */
+    it("leaves the e2e's five queries drawing exactly the rows it pins", () => {
+      const pairsFor = (q) =>
+        listDrawerRows(opsMatchingQuery(ALL, q))
+          .filter((r) => r.type === "pair")
+          .map((r) => (r.decodeTwin ? `${r.forward.name}|decode` : `${r.forward.name}|${r.reverse.name}`));
+      expect(pairsFor("gpg.encrypt")).toContain("gpg.encrypt|gpg.decrypt");
+      expect(pairsFor("gpg.decrypt")).toEqual(["gpg.encrypt|gpg.decrypt"]);
+      expect(pairsFor("symdecrypt")).toContain("gpg.symencrypt|gpg.symdecrypt");
+      expect(pairsFor("unwrap")).toContain("wrap|unwrap");
+      // The e2e's control, in the form it asserts it: not "no `gpg` row" but
+      // no conjugate row at all.
+      expect(pairsFor("gpg.genkey"), "a solo query dragged a pair row in").toEqual([]);
     });
 
     it("does not let a solo query drag a pair row in behind it", () => {
@@ -284,13 +415,13 @@ describe("the shelf's op query has one producer", () => {
         HOOK_SRC.match(/pairRowMatches\(/g) || [],
         "a second place in the hook lifts the query onto rows"
       ).toHaveLength(1);
-      // The four field tests, written once. A fifth `.includes(q)` in this
-      // file is either a fifth field nobody documented or a second predicate
+      // The six field tests, written once. A seventh `.includes(q)` in this
+      // file is either a field nobody documented or a second predicate
       // growing back beside the first.
       expect(
         HOOK_SRC.match(/\.includes\(q\)/g) || [],
         "the hook tests a number of fields the producer does not declare"
-      ).toHaveLength(4);
+      ).toHaveLength(6);
     });
   });
 });

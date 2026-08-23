@@ -70,6 +70,7 @@ import {
   listSteps,
   getStep,
   pairRowMatches,
+  toolboxLabel,
   type StepSpec,
 } from "../lib/toolkit/registry.js";
 import { readShareHeader } from "../lib/slip39/blip39.js";
@@ -558,6 +559,7 @@ export type OpQueryFields = {
   doc?: string;
   toolbox?: string;
   label?: string;
+  aliases?: string[];
 };
 
 /**
@@ -599,6 +601,35 @@ export type OpQueryFields = {
  *   the day a step declares one, that word is on screen and a reader will type
  *   it. Dropping it would make the search wrong on the commit that adds a
  *   label rather than on this one.
+ * - `toolboxLabel(toolbox)` is the section header's **printed words**, which
+ *   are not always the id above. Fourteen of the fifteen labels are the id in
+ *   different casing, so `toolbox` covered them by accident; `io` prints
+ *   "Input / output" and `sss` prints "SSS / BLIP39". Measured over the same
+ *   corpus (1423 queries rebuilt by the recipe above, over the same 132 steps):
+ *   **8 queries change, +51 op-matches, and nothing is lost**. The whole of the
+ *   gain is those two headers — `input / output` goes 0 → 20 ops, `output`
+ *   9 → 26, `input` 29 → 43, and `blip39` 14 → 16 (`vss.verify`, `dkg.run`,
+ *   which sit under the header that prints BLIP39 and say the word nowhere
+ *   themselves). The cost is the `bcrypt` case again and no worse: `put`
+ *   (+10), `in` (+3) and `out` (+1) are substrings of "input"/"output", and
+ *   every op they drag in is in the I/O toolbox the reader would have landed
+ *   in anyway; `9` (+2) and `3` (+1) are substrings of "BLIP39" and are
+ *   queries nobody types on purpose. No query gains an op from a toolbox
+ *   unrelated to the words it typed.
+ * - `aliases` is the step's second parse-time spelling, and it is **printed**:
+ *   `ToolCard` renders an "Aliases:" row on every non-compact card, and
+ *   `OpsTile` opens exactly that card off a pair row. Both alias-bearing steps
+ *   draw one (`sss.split` is a conjugate, `blip39` a decode twin), so the word
+ *   is on screen in the panel the query is typed into. Two steps declare one today
+ *   (`sss.split` → `split`, `blip39` → `words`), and measured over the corpus
+ *   the field changes **2 queries and admits 2 op-matches, both `blip39`**:
+ *   `words` (1 → 2) and `word` (4 → 5). `split` adds nothing at all — the name
+ *   `sss.split` already contains it — so one of the two aliases is the whole
+ *   effect. It is worth the line anyway: `words` is a verb the parser accepts,
+ *   the card prints, and the shelf could not find, which is precisely the
+ *   asymmetry `pairRowMatches` was written for one layer down. Nothing wrong
+ *   is admitted: the only op it newly reaches is the one whose card prints the
+ *   word.
  *
  * `pairRowMatches` lifts the per-step test onto the *row* the step draws.
  * `listDrawerRows` draws a conjugate pair once, on the forward op, and drops
@@ -627,10 +658,14 @@ export function opsMatchingQuery<T extends OpQueryFields>(ops: T[], query: strin
     (s.name || "").toLowerCase().includes(q) ||
     (s.doc || "").toLowerCase().includes(q) ||
     (s.toolbox || "").toLowerCase().includes(q) ||
-    (s.label || "").toLowerCase().includes(q);
+    toolboxLabel(s.toolbox).toLowerCase().includes(q) ||
+    (s.label || "").toLowerCase().includes(q) ||
+    (s.aliases || []).some((a) => String(a).toLowerCase().includes(q));
   // `pairRowMatches` is typed for a whole `StepSpec` because it reads
-  // `conjugate` / `decodeTwin` off one; the query only ever reads the four
-  // fields above, so the parameter says so and the cast is at the seam.
+  // `conjugate` / `decodeTwin` off one; the query only ever reads the fields
+  // above, so the parameter says so and the cast is at the seam. The synthetic
+  // `{ name }` it passes for a decode twin has no toolbox and no aliases, and
+  // both readings are written to answer "" / [] for that.
   return ops.filter((op) => pairRowMatches(op as unknown as StepSpec, hit));
 }
 

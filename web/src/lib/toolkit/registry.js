@@ -6079,6 +6079,31 @@ export function instantiateFormatPick(direction, format) {
 }
 
 /**
+ * The words printed on the section header above a toolbox's rows.
+ *
+ * `TOOLBOX_META` is keyed by the *id*, and fourteen of the fifteen labels are
+ * that id in different casing (`webcrypto` → "WebCrypto", `openpgp` →
+ * "OpenPGP"), so a case-insensitive search over `toolbox` covers the header by
+ * accident for those fourteen. Two headers say something the id does not:
+ * `io` prints **"Input / output"**, and `sss` prints **"SSS / BLIP39"**. The
+ * search is what needs this, and it needs it as a *string*, not as a meta
+ * record — hence a named getter beside `getShelfMeta` rather than a
+ * `TOOLBOX_META[id]?.label` at the call site, which is the spelling that has to
+ * be repeated correctly at every site that grows one.
+ *
+ * `""` for an unknown or absent id, so a caller can `.toLowerCase().includes()`
+ * the result without a guard. The empty string is deliberately not the id: a
+ * fallback to `key` would make this function answer "the label is `io`" for the
+ * one toolbox whose label is the reason it exists.
+ *
+ * @param {string|undefined|null} toolbox
+ * @returns {string}
+ */
+export function toolboxLabel(toolbox) {
+  return TOOLBOX_META[String(toolbox || "")]?.label || "";
+}
+
+/**
  * @param {string|undefined|null} shelf
  * @returns {ShelfMeta}
  */
@@ -6133,7 +6158,7 @@ export function defaultCollapsedShelfKeys() {
  * the whole of what that direction can contribute.
  *
  * @param {StepSpec} step a step that might draw a row
- * @param {(s: { name: string, doc?: string, label?: string, toolbox?: string }) => boolean} hit
+ * @param {(s: { name: string, doc?: string, label?: string, toolbox?: string, aliases?: string[] }) => boolean} hit
  * @returns {boolean} whether the row this step draws matches
  */
 export function pairRowMatches(step, hit) {
