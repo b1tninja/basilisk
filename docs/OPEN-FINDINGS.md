@@ -132,22 +132,18 @@ changes what a query finds.
 
 ---
 
-## 4. Protocol changes nobody has decided
+## 4. Was a protocol change, is now a missing reader
 
-- **A shared notebook is written to, never acknowledged.** `1dbc950`'s delivery
-  acks are a `quorum.send` mechanism — the receiver acks a *chat* frame by
-  content digest — and a notebook leaves through `_publishDocument` as a sealed
-  document frame that nothing answers. `7ac9f50` established the honest wording
-  (a count of writes, permanently unconfirmed) rather than inventing an ack.
-  Real delivery confirmation means document frames get their own ack.
-- **A newcomer learns nothing at join time when the retention was retired.**
-  `e7abf2a` tells a peer that a notebook exists, gated on somebody having pressed
-  Share; when the sender edits after the press, the retention is retired and the
-  newcomer is told nothing until an offered cell is refused. Closing it means
-  announcing "a notebook exists here" unconditionally, which is a new disclosure
-  on the wire rather than a wording change.
-
----
+- **A notebook's delivery is confirmed on the wire and shown to nobody.** The
+  entry here said document frames had no ack of their own and that inventing one
+  was the work. It was invented: `_publishDocument` digests a notebook
+  specifically so it can be acked, the receiver calls `_acknowledgeNotebook`,
+  `_onNotebookAck` matches the digest and stamps `peer.notebookReachedAt`, and
+  `_emitRoster` carries the peers map — the fact included — out to the hook.
+  **Every reference to `notebookReachedAt` outside `session.js` is a test.** So
+  the room knows a notebook arrived and no surface says so, and the send-time
+  wording (a count of writes, deliberately not a promise) is still the last
+  thing a person is told. This is a reader, not a protocol change.
 
 ## 4a. One decision nobody has made
 
