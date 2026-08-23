@@ -1,190 +1,46 @@
 /**
- * Web Worker: encrypt / private-key decrypt / keygen in an isolated heap.
+ * Web Worker: OpenPGP keypair generation in an isolated heap.
  *
- * Decrypt:  { id, type:"decrypt", armoredMessage, privateKeyArmored, passphrase?, verificationKeysArmored? }
- * Encrypt:  { id, type:"encrypt", recipientKeysArmored[], passwords[], payloads[], profile, hideRecipients? }
  * Generate: { id, type:"generate", name?, email, keyExpirationTime?, passphrase? }
  *           → { armoredPublic, armoredPrivate, fingerprint }
+ *
+ * ## One arm, because one arm is what anything posts
+ *
+ * This file used to handle `decrypt`, `encrypt` and `toolkit-run` as well. All
+ * three were complete, none had a poster: `lib/generate-key.js` holds the only
+ * `new Worker(new URL("./crypto-worker.js", …))` in the app, and the only
+ * message it sends is `type:"generate"`.
+ *
+ * They were deleted rather than wired because the isolation they advertised was
+ * not real. The worker's value for `generate` is concrete — `generate-key.js`
+ * calls `terminate()` the moment the armored key comes back, so the heap that
+ * held the freshly minted private key is destroyed with it, and nothing on the
+ * main thread ever saw the key object. Nothing like that was true of the other
+ * three: the toolkit holds unlocked private keys on the main thread throughout
+ * (`lib/toolkit/agent-ops.js`, `engine.js`, `key-power.js`, `quorum-ops.js`
+ * read or decrypt them there), so an arm doing the same work "in an isolated
+ * heap" described a boundary the app does not have.
+ *
+ * That false appearance cost twice. `docs/CRYPTOGRAPHY.md` cited the
+ * `toolkit-run` arm's FIPS gate as a protection in force, when nothing could
+ * reach it; and `lib/pgp/intended-recipient.js` reasoned about the `decrypt`
+ * arm as the natural home for its §13.12 check while the live decrypt path grew
+ * one elsewhere.
+ *
+ * Routing the notebook *through* the worker is a defensible design — it is just
+ * a different, larger one, and it needs its own argument rather than arriving as
+ * a deletion's alternative. `src/test/crypto-worker-arms.test.js` holds the
+ * invariant in the meantime: an arm here and a poster in the app are the same
+ * list.
  */
 
-import {
-  decrypt,
-  decryptKey,
-  decryptSessionKeys,
-  generateKey,
-  readKey,
-  readMessage,
-  readPrivateKey,
-} from "openpgp";
-import { encryptArtifacts } from "./pgp/encrypt.js";
-import { intendedRecipientsFromSigPacket } from "./pgp/intended-recipient.js";
-import { zeroKeyMaterial } from "./pgp/memory.js";
-import { executeToolkitRun } from "./toolkit-run.js";
-
-/**
- * Unlock an armored private key for signing (worker-local; wiped after use).
- * @param {string} armored
- * @param {string} [passphrase]
- */
-async function unlockSigningKey(armored, passphrase) {
-  let key = await readPrivateKey({ armoredKey: armored });
-  if (!key.isDecrypted()) {
-    key = await decryptKey({ privateKey: key, passphrase: passphrase || "" });
-  }
-  return key;
-}
+import { generateKey, readKey } from "openpgp";
 
 self.onmessage = async (ev) => {
   const msg = ev.data || {};
   const { id } = msg;
-  let privateKey = null;
   try {
-    if (msg.type === "decrypt") {
-      privateKey = await readPrivateKey({ armoredKey: msg.privateKeyArmored });
-      if (!privateKey.isDecrypted()) {
-        privateKey = await decryptKey({
-          privateKey,
-          passphrase: msg.passphrase || "",
-        });
-      }
-      // Message objects are stateful in OpenPGP.js — decryptSessionKeys
-      // consumes internal packet state, so each call needs a fresh read.
-      // Reusing the same object yields: "Cannot destructure property 'V' of 'e' as it is null".
-      const verificationKeys = [];
-      for (const armored of msg.verificationKeysArmored || []) {
-        try {
-          verificationKeys.push(await readKey({ armoredKey: armored }));
-        } catch (_) {
-          /* skip */
-        }
-      }
-      let sessionKeys = [];
-      try {
-        sessionKeys = await decryptSessionKeys({
-          message: await readMessage({ armoredMessage: msg.armoredMessage }),
-          decryptionKeys: privateKey,
-        });
-      } catch (_) {
-        sessionKeys = [];
-      }
-      const result = await decrypt({
-        message: await readMessage({ armoredMessage: msg.armoredMessage }),
-        decryptionKeys: privateKey,
-        ...(verificationKeys.length ? { verificationKeys } : {}),
-        config: { allowInsecureDecryptionWithSigningKeys: true },
-      });
-      const plaintext =
-        typeof result.data === "string"
-          ? result.data
-          : new TextDecoder().decode(result.data);
-      const sigStatuses = [];
-      for (const s of result.signatures || []) {
-        let ok = false;
-        try {
-          await s.verified;
-          ok = true;
-        } catch (_) {
-          ok = false;
-        }
-        /** @type {string[]} */
-        let intendedRecipients = [];
-        try {
-          const sigObj = await s.signature;
-          for (const pkt of sigObj?.packets || []) {
-            intendedRecipients.push(...intendedRecipientsFromSigPacket(pkt));
-          }
-          intendedRecipients = [...new Set(intendedRecipients)];
-        } catch (_) {
-          intendedRecipients = [];
-        }
-        sigStatuses.push({
-          keyID: s.keyID?.toHex?.() || "",
-          verified: ok,
-          intendedRecipients,
-        });
-      }
-      self.postMessage({
-        id,
-        ok: true,
-        plaintext,
-        signatures: sigStatuses,
-        sessionKeys: (sessionKeys || []).map((sk) => ({
-          algorithm: sk.algorithm,
-          aeadAlgorithm: sk.aeadAlgorithm,
-          length: sk.data?.length || 0,
-        })),
-      });
-    } else if (msg.type === "encrypt") {
-      const recipients = [];
-      for (const armored of msg.recipientKeysArmored || []) {
-        recipients.push(await readKey({ armoredKey: armored }));
-      }
-      /** @type {import("./pgp/types.js").EncryptPayload[]} */
-      const payloads = [];
-      for (const p of msg.payloads || []) {
-        if (p.kind === "text") {
-          payloads.push({ kind: "text", text: p.text || "" });
-        } else if (p.kind === "file") {
-          const bytes =
-            p.bytes instanceof ArrayBuffer
-              ? new Uint8Array(p.bytes)
-              : p.bytes instanceof Uint8Array
-                ? p.bytes
-                : null;
-          if (!bytes) throw new Error("File payload requires bytes.");
-          payloads.push({
-            kind: "file",
-            bytes,
-            filename: p.filename || "file",
-          });
-        }
-      }
-      /** @type {import("openpgp").PrivateKey[]} */
-      const signingKeys = [];
-      if (msg.signingKeyArmored) {
-        signingKeys.push(
-          await unlockSigningKey(msg.signingKeyArmored, msg.signingKeyPassphrase || "")
-        );
-      }
-      try {
-        const artifacts = await encryptArtifacts({
-          recipients,
-          passwords: msg.passwords || [],
-          payloads,
-          profile: msg.profile,
-          hideRecipients: !!msg.hideRecipients,
-          signingKeys,
-        });
-        // Wipe any remaining payload buffers (encryptArtifacts already zeroes file bytes).
-        for (const p of payloads) {
-          if (p.bytes instanceof Uint8Array) {
-            try {
-              p.bytes.fill(0);
-            } catch (_) {
-              /* wipe */
-            }
-          }
-        }
-        self.postMessage({ id, ok: true, artifacts });
-      } finally {
-        for (const sk of signingKeys) {
-          try {
-            zeroKeyMaterial(sk);
-          } catch (_) {
-            /* ignore */
-          }
-        }
-      }
-    } else if (msg.type === "toolkit-run") {
-      // Execute a toolkit recipe AST; return encoded artifacts only.
-      try {
-        const { artifacts, privateKey: pk } = await executeToolkitRun(msg);
-        privateKey = pk;
-        self.postMessage({ id, ok: true, artifacts });
-      } finally {
-        /* privateKey wiped in outer finally */
-      }
-    } else if (msg.type === "generate") {
+    if (msg.type === "generate") {
       const email = String(msg.email || "").trim();
       if (!email) throw new Error("Email is required for key generation");
       const name = String(msg.name || "").trim();
@@ -219,8 +75,5 @@ self.onmessage = async (ev) => {
     }
   } catch (err) {
     self.postMessage({ id, ok: false, error: err?.message || String(err) });
-  } finally {
-    zeroKeyMaterial(privateKey);
-    privateKey = null;
   }
 };

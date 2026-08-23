@@ -15,26 +15,9 @@ its evidence.
 
 ## 1. Enforcement that is not enforcing
 
-### 1.1 The worker's FIPS gate still guards a message nothing sends
-
-The run half is closed and the ways in are pinned:
-`fips-engine-entrypoints.test.js` sweeps the source for every caller of
-`runRecipe`/`runAll` and requires each to route the flag or be argued onto a
-written exemption list. There are three, and `conjugate-smoke.js` is the one
-exemption — the suite self-check must be able to test an unverified suite, or it
-answers the question by declining to ask it.
-
-What is left is the worker. `executeToolkitRun` applies the gate on the crypto
-worker's `toolkit-run` arm and **nothing in the app posts that message**;
-`generate` is the only arm anything reaches. So that path enforces nothing, and
-`web/src/lib/pgp/intended-recipient.js:18` recorded the same dead arm from the
-other direction. Deleting it and deleting the worker's `encrypt` arm with it is
-one option; wiring the notebook's runs through the worker is the other. Both are
-decisions about where crypto should execute, not tidying.
-
-There is still no add-time gate — you can write the recipe, you cannot run it.
-`docs/CRYPTOGRAPHY.md` said the switch "hard-blocks adding/running" and now says
-what is true.
+*Empty. The FIPS gate reaches the notebook, the ways into the engine are a list
+with a written exemption, and the worker arm that guarded a message nothing
+sends is deleted.*
 
 ---
 
@@ -110,16 +93,18 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **`InsertGap` renders a `<button>` when it is `pending`.** The armed-branch
-  caret is focusable and answers a press with nothing. No behaviour is missing —
-  arming aimed it, and the × on the chip beside it cancels — but a marker that is
-  a button reads as a control, and a control that does nothing is the defect this
-  file keeps finding. Whether a `pending` gap should be a `<span>` affects all
-  five call sites, which is why it was recorded rather than changed.
-- **`notebookDelivery` has no consumer.** `useNotebook.ts` exports the structured
-  report — `{ wrote, reached, unconfirmed }` — and only the sentence built from
-  it, `notebookDeliveryNote`, is read anywhere. Either drop the export or give it
-  a reader; it is the recurring shape at small scale.
+- **`.cell-recipe-gap-caret` paints `cursor: pointer` on the inert marker.**
+  The armed-branch gap is a `<span>` now, but the stylesheet still gives it a
+  pointer cursor — one of the signals that made it read as a control. A Tailwind
+  utility cannot fix it: `toolkit.css` imports tailwind and then `site.css`
+  unlayered, so `site.css` beats `@layer utilities`. It wants
+  `button.cell-recipe-gap-caret`.
+- **The armed caret is a drop target with no hover accent.** Its call site
+  passes no `onDragLeave` and never sets `active`, so only the cursor's copy
+  effect signals that it will take a drop. The trap is recorded in
+  `InsertGap.tsx`: `active` outranks `pending`, so wiring `active` at that site
+  falls through to the `+` branch and produces a dead `+` button. Fixing it is a
+  change to the condition, not a prop at the call site.
 - **One capture was lost on purpose and should be a decision, not an accident.**
   Deleting `snapshot-ux-resume.mjs` dropped the recipient-binder shot — whose
   selectors (`.recipient-binder`, `.binder-search`, `.keyserver-control`,

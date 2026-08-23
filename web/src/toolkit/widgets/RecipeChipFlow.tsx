@@ -586,11 +586,25 @@ export function RecipeChipFlow({
             title="New branch — lands with its first step · × or Escape to cancel"
             onRemove={onCancelArmed}
           />
+          {/*
+            The armed caret is a *marker*, not a control: it is already the
+            pending insert position, the branch it would insert into does not
+            exist yet, and the × on the selector chip beside it is the cancel.
+            So no `onClick` is passed, and `InsertGap` renders a named,
+            unfocusable `<span>` rather than a button that answers a press with
+            nothing. The drop still lands — it carries the step name that
+            materializes branch and step together.
+
+            `showLabel` and `scale` were passed here and read by nobody: this
+            gap is unconditionally `pending` (and never `active`), and that
+            branch draws the fixed HERE caret, which has no `+` to label and one
+            size. The scope is named anyway by the selector chip immediately to
+            its left, which is what `showLabel` exists to substitute for where
+            there is no such chip.
+          */}
           <InsertGap
             label={`Insert first step in ${armedHere.selector}`}
-            showLabel
             pending
-            scale="nested"
             data-cell={cell}
             data-gap-stem={i}
             onDragOver={(e) => {

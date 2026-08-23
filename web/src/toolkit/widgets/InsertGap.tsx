@@ -54,7 +54,77 @@ export function InsertGap({
     onDrop,
   } as const;
 
+  const caret = (
+    <>
+      <span className="cell-recipe-gap-caret-bar" aria-hidden />
+      <span className="cell-recipe-gap-caret-label" aria-hidden>
+        HERE
+      </span>
+    </>
+  );
+
   if (pending && !active) {
+    /**
+     * **The HERE caret is a control exactly when a press has somewhere to go.**
+     *
+     * It used to be a `<button>` either way, and one of the five call sites
+     * passes no `onClick` at all — the armed-branch caret in `RecipeChipFlow`,
+     * which is aimed by clicking the ghost chip that armed the branch and
+     * cancelled by the × on the selector chip beside it. So that one took a tab
+     * stop, announced itself as a button, and answered Enter with nothing.
+     *
+     * The rule is keyed on the handler rather than on the site because that is
+     * the fact it is actually about: a marker is not a control, and "nothing is
+     * wired" is how this component learns which it is.
+     *
+     * **The other four keep the button, and that is not a concession.** They
+     * spread `bindGap`/`stemGap`, whose `onClick` calls `onGap(path)` — which in
+     * the shell focuses the cell the caret is in, clears any open chip editor and
+     * re-aims `pendingInsert`. Pressing an *already* pending gap is therefore not
+     * a no-op: `focusedCell` moves independently (clicking another cell's header
+     * sets it and leaves `pendingInsert` where it was), and the shelf's caret
+     * banner reads `describeCaretPosition(pendingInsert, focusedCell, …)` — one
+     * sentence built from both — so while they disagree the banner names a
+     * position that is not where the caret is drawn, and this press is what
+     * repairs it.
+     *
+     * There is a second reason not to make the wired four inert, and it is the
+     * one that would have been the regression. Both branches here render the
+     * same element type, so when a keyboard user presses a `+` gap React updates
+     * that DOM node in place and focus survives into the pending state. Swapping
+     * to a `<span>` would unmount the focused button and mount a span, dropping
+     * focus to the body — activating a control would throw away the caller's
+     * place in the page.
+     *
+     * The span keeps everything the button carried except the two things that
+     * were the defect: it is still the drop target (`onDragOver`/`onDrop` bind to
+     * any element — HTML5 drag and drop is pointer-only and never wanted the
+     * button), still carries `data-gap-insert` and the `data-cell`/`data-gap-*`
+     * attributes hosts and stylesheets select on, still draws through
+     * `.cell-recipe-gap-caret`, and is still *named*: `role="note"` is what lets
+     * `aria-label` apply to a non-interactive element, so a screen reader still
+     * reaches "insert position" and is no longer promised a press.
+     *
+     * One thing to know before wiring `active` on an unclicked gap: `active`
+     * outranks `pending`, so such a caller would fall past this branch into the
+     * `+` below and get back the dead button in a different shape. The armed
+     * caret is the only gap with no drop-hover accent for that reason, and
+     * giving it one is a change to this condition rather than a prop at the
+     * call site.
+     */
+    if (!onClick) {
+      return (
+        <span
+          className={cn("cell-recipe-gap-caret", className)}
+          role="note"
+          aria-label={`${label} — insert position`}
+          title={label}
+          {...shared}
+        >
+          {caret}
+        </span>
+      );
+    }
     return (
       <button
         type="button"
@@ -63,10 +133,7 @@ export function InsertGap({
         title={label}
         {...shared}
       >
-        <span className="cell-recipe-gap-caret-bar" aria-hidden />
-        <span className="cell-recipe-gap-caret-label" aria-hidden>
-          HERE
-        </span>
+        {caret}
       </button>
     );
   }

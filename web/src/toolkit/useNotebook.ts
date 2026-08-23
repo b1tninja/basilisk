@@ -3479,6 +3479,19 @@ export function useNotebook() {
    * has since gone quiet is precisely the peer whose delivery is in doubt, and
    * dropping them off the unconfirmed list would make silence look like
    * resolution — the one direction this report may never be wrong in.
+   *
+   * **Not returned from the hook, and that is the decision rather than an
+   * omission.** It was, and nothing outside this file ever read it — the shell
+   * takes `notebookDeliveryNote` and only that. The structure has no second
+   * reader by design, not by accident: the panel's slot is one string shared
+   * with `notebookShareNote`, the answer to a press, and the two cannot both
+   * occupy it; and the rule argued at that call site and again on
+   * `peersWithoutNotebook` is that arrival is reported in exactly one sentence,
+   * amended in place, never joined by a second line — because an acknowledgment
+   * moves nothing on this machine and a line of its own would say it had. A
+   * structured surface would be that second line. So this stays the input to
+   * `describeNotebookDelivery` and nothing else, and an export nobody reads
+   * stops standing beside it looking like a wired feature.
    */
   const notebookDelivery = useMemo(() => {
     if (notebookWrote === null) return null;
@@ -4384,7 +4397,6 @@ export function useNotebook() {
     peersWithoutNotebook,
     peersHoldingNotebook,
     peerCellRows,
-    notebookDelivery,
     notebookDeliveryNote,
     attestManifest,
     attestation,

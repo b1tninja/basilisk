@@ -90,6 +90,20 @@ export default defineConfig({
           // every page. Stated rather than discovered again.
           if (path.includes("/node_modules/openpgp/")) return "openpgp";
           if (path.endsWith("/lib/notebook/session.js")) return "notebook-session";
+          // `quorum-ops.js`, for the reason above, arriving a second time.
+          //
+          // Deleting the crypto worker's dead `toolkit-run` arm removed an
+          // importer of it, Rollup inlined what was left into the toolkit entry,
+          // and `stun-discovery.e2e.js` — which drives the **shipped** ops rather
+          // than a module compiled from source — lost the export it finds them by.
+          // Seventeen tests went from passing to skipped-with-a-failed-suite: the
+          // STUN and TURN behaviour they cover stopped being checked at all, for
+          // a reason with nothing to do with STUN.
+          //
+          // It also puts WebRTC discovery back in a chunk of its own instead of
+          // the entry every toolkit page loads, which is the same thing
+          // `kernel.js` imports the session dynamically to achieve.
+          if (path.endsWith("/lib/toolkit/quorum-ops.js")) return "quorum-ops";
           return undefined;
         },
       },

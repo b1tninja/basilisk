@@ -10,7 +10,7 @@ Server-side OpenPGP **parsing/policy** (`basilisk/openpgp/`) is out of scope her
 
 | Layer | Role | Primary paths |
 |-------|------|----------------|
-| **OpenPGP.js** | Message encrypt / sign / decrypt; Curve25519 keygen; Argon2 S2K (WASM) | `web/src/lib/pgp/`, `crypto-worker.js` |
+| **OpenPGP.js** | Message encrypt / sign / decrypt; Argon2 S2K (WASM) on the main thread; Curve25519 keygen in a Web Worker that is `terminate()`d as soon as the armored key returns | `web/src/lib/pgp/`, `crypto-worker.js` (keygen only) |
 | **WebCrypto** | Vault KEK, notebook session keys, toolkit keygen/import/export, digests, PBKDF2/HKDF internally | `vault.js`, `notebook/crypto.js`, `toolkit/engine.js` |
 | **Custom** | GF(256) Shamir SSS, BLIP39 mnemonics, EFF diceware | `slip39/`, `passphrase-gen.js` |
 
@@ -65,7 +65,7 @@ Product split (intentional today):
 | `capabilities.js` | Done | SEIPDv2 feature bit / modern vs legacy recipients |
 | `preferences.js` | Done | Preferred algos from key self-sig |
 | `armor.js` / `inspect.js` / `identity.js` | Done | Armor split, packet inspect, key IDs |
-| `intended-recipient.js` | **Parsed, not enforced** | Reads Intended Recipient Fingerprint (subpacket 35). `crypto-worker.js` extracts the fingerprints onto each signature status and **nothing reads them**; `checkIntendedRecipient()` — the comparison that would detect surreptitious forwarding (RFC 9580 §13.12) — has no caller. Do not read this row as a defence that is in force. |
+| `intended-recipient.js` | Done | Reads Intended Recipient Fingerprint (subpacket 35), **hashed area only** — an unhashed 35 is attacker-appendable and unioning the two inverted the check. `decryptSignatureVerdict()` (`decrypt-verify.js`) calls `checkIntendedRecipient()` and puts the result in the verdict's `intended` field; a `mismatch` changes the sentence the reader sees (RFC 9580 §13.12) and never refuses the decrypt. Reached from `gpg.decrypt` (`engine.js`) and `agent.decrypt` (`agent-ops.js`). Answers `absent` — no claim — when the message hides its recipients, since there is then no opening key to compare against. |
 | `notations.js` / `deprecation.js` | Done | Notation data; RFC 9580 deprecation *warnings* |
 | `memory.js` | Done | `zeroKeyMaterial()` wipe of OpenPGP `privateParams` |
 | `passphrase.js` | Done | Soft strength estimate (not a KDF) |
@@ -183,7 +183,7 @@ Eager startup self-tests (`runCryptoSelfTests`) cover:
 | **WebCrypto** | CAST-6…11, 13–14 (SHA-256 KAT, AES-GCM, Ed25519, ECDH P-256, HKDF KAT, AES-KW, AES-CBC, AES-CTR) | Verified after POST |
 | **SSS** | CAST-12 (GF(256) split/combine + BLIP39 encode/decode) | Verified after POST |
 
-Toolkit UI always shows **verified** / **⚠ unverified** chips per crypto toolbox. **FIPS mode** (persisted `basilisk.fipsMode`) **refuses a run** that reaches an unverified suite, before the first step executes — the notebook sets `fipsMode`/`suiteStatus` in `useNotebook.buildBindings` and asks `assertRecipeAllowedUnderFips` about the whole run in `startRun`. It does **not** block *adding* an op: you can write the recipe, you cannot run it. There is no add-time gate anywhere, and this sentence claimed one for a long time. `executeToolkitRun` (`toolkit-run.js`) applies the same gate on the crypto worker's `toolkit-run` arm, but **nothing in the app posts that message** — `generate` is the only arm anything reaches — so that path enforces nothing today. Disclaimer: FIPS-*inspired* posture only — not a NIST FIPS 140 certificate.
+Toolkit UI always shows **verified** / **⚠ unverified** chips per crypto toolbox. **FIPS mode** (persisted `basilisk.fipsMode`) **refuses a run** that reaches an unverified suite, before the first step executes — the notebook sets `fipsMode`/`suiteStatus` in `useNotebook.buildBindings` and asks `assertRecipeAllowedUnderFips` about the whole run in `startRun`. It does **not** block *adding* an op: you can write the recipe, you cannot run it. There is no add-time gate anywhere, and this sentence claimed one for a long time. The notebook is now the *only* gated way in, and that is a simplification rather than a gap: `executeToolkitRun` (`toolkit-run.js`) used to apply the same gate on the crypto worker's `toolkit-run` arm, but nothing ever posted that message, so it enforced nothing — the arm and the module have both been deleted. `src/test/fips-engine-entrypoints.test.js` sweeps the source for engine callers and holds the exemption list. Disclaimer: FIPS-*inspired* posture only — not a NIST FIPS 140 certificate.
 
 Encrypt / Decrypt banners say **OpenPGP verified** (CAST-1…5). Shared-notebook session ECDH/HKDF/AES-GCM is **not** CAST-gated today.
 

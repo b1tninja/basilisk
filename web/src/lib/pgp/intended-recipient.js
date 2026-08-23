@@ -1,7 +1,7 @@
 /**
  * Intended Recipient Fingerprint (RFC 9580 §5.2.3.36 / §13.12).
  *
- * ## `checkIntendedRecipient` has no caller, and wiring it here would be a lie
+ * ## `checkIntendedRecipient` is wired, and where
  *
  * The subpacket names who a signer meant a message for. Comparing it against
  * the key that decrypted the message is what detects **surreptitious
@@ -9,39 +9,33 @@
  * Carol, and Carol reads a good signature from Alice as though Alice wrote to
  * her.
  *
- * The comparison below is correct and tested, and nothing calls it — because
- * **this build has no live path that decrypts a signed message and shows a
- * signature verdict**:
+ * The live consumer is `decryptSignatureVerdict` in `lib/pgp/decrypt-verify.js`
+ * — it calls `intendedRecipientsFromDecryptSignatures` on the signatures and
+ * feeds the result to `checkIntendedRecipient`, and the `intended` field of the
+ * verdict it returns is what the sentence a reader sees is built from. It is
+ * reached: `engine.js`'s `gpg.decrypt` (`decryptGpgSource`) calls it once per
+ * message with the fingerprint of whichever unlocked key opened *that* message,
+ * and `lib/toolkit/agent-ops.js` calls it on the agent read path.
  *
- * - `crypto-worker.js` does verify, and extracts these fingerprints onto each
- *   signature status. Nothing posts `{ type: "decrypt" }` to it. Nothing posts
- *   `encrypt` or `toolkit-run` either; `generate` is the only reachable arm.
- * - The toolkit's live decrypt (`decryptGpgSource` in `engine.js`) passes no
- *   `verificationKeys` at all — it recovers share mnemonics, and has no
- *   signature to attach a verdict to.
- * - `openSignalingEnvelope` verifies, but that is peer signalling sealed to a
- *   pinned audience by construction; the subpacket is not part of it.
- * - `gpg.verify` verifies *cleartext-signed* documents, which are not
- *   encrypted, so there is no re-encryption step to catch.
+ * This header used to say the check had no caller, and named the `decrypt` arm
+ * of `crypto-worker.js` as where it would be wired if one existed. Both halves
+ * are now wrong and in opposite directions. The wiring happened, in
+ * `decrypt-verify.js`, on the main thread; and the worker arm it pointed at was
+ * deleted, because nothing ever posted to it — see `crypto-worker.js`, which
+ * now handles `generate` alone. Do not restore that pointer: adding this check
+ * to an arm no caller reaches would make the defence look present while
+ * changing nothing a person can reach, which is the exact defect this check was
+ * itself found by.
  *
- * So the check is not missing a call site: the call site does not exist. Adding
- * one inside the unreachable worker arm would make the defence look present
- * while changing nothing a person can reach — which is the exact defect the
- * check itself was found by.
- *
- * ## What must exist first, and what to do then
- *
- * A path that decrypts *and* verifies for a person: the worker's `decrypt` arm
- * gaining a caller, or `gpg.decrypt` gaining `verificationKeys`. The boundary
- * is not the problem — the worker already holds the decrypted private key in
- * the same scope as the extraction, so the comparison belongs right beside it,
- * and its verdict rides on the signature status the UI renders.
- *
- * The three outcomes, decided in advance so the wiring is not blocked on them:
+ * ## The three outcomes, and why `decrypt-verify.js` renders them that way
  *
  * - **`absent` — say nothing.** Most messages carry no subpacket. Treating its
  *   absence as a warning would fire on the common case and teach people to
  *   ignore the one that matters. Absence is *no claim made*, not a failed one.
+ *   `decrypt-verify.js` also answers `absent` when it cannot name the key that
+ *   opened the message — a hidden-recipients message names no key id — because
+ *   this function has no case for an empty decryption fingerprint and would
+ *   otherwise return `mismatch` for a message that was addressed correctly.
  * - **`match` — say nothing loud.** The expected case; do not badge the normal.
  * - **`mismatch` — change what the signature verdict says.** Do not refuse the
  *   decrypt: the plaintext is already recoverable and refusing would hide the
