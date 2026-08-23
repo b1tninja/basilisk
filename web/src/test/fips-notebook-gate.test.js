@@ -4,14 +4,18 @@
  * The defect this file closes (OPEN-FINDINGS §1.1): `assertRecipeAllowedUnderFips`
  * was real, correct and unreachable. It fires for a caller that sets
  * `bindings.fipsMode`, and the only one was `executeToolkitRun` — the
- * crypto-worker's `toolkit-run` arm, which nothing in the app posts. The
+ * crypto-worker's `toolkit-run` arm, which nothing in the app ever posted. The
  * notebook runs through `createKernel`, which never set the flag, so the switch
  * flagged and never refused.
  *
- * So these tests deliberately go through `createKernel().runCell`, not through
- * `runRecipe` directly and not through `executeToolkitRun`: the thing that was
- * broken was *which callers arrive at the gate*, and a test that calls the gate
- * itself would have passed the whole time the switch did nothing.
+ * That caller no longer exists: the arm and `toolkit-run.js` have both been
+ * deleted, so the notebook is not merely the gated path, it is the only path
+ * the app has into the engine at all.
+ *
+ * So these tests deliberately go through `createKernel().runCell` rather than
+ * calling `runRecipe` directly: the thing that was broken was *which callers
+ * arrive at the gate*, and a test that calls the gate itself would have passed
+ * the whole time the switch did nothing.
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";

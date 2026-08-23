@@ -400,9 +400,11 @@ export async function runRecipe(ast, bindings = {}, opts = {}) {
   // This block is unchanged in *what* it decides — `suite-gate.js` still is
   // the authority — and changed in who arrives at it. It used to fire only for
   // `executeToolkitRun`, the crypto-worker's `toolkit-run` arm, which nothing
-  // in the app ever posted; the notebook runs through `createKernel`, which
-  // never set the flag. `useNotebook.ts`'s `buildBindings` now does, so a
-  // notebook cell, a one-cell run and a ceremony stage all pass through here.
+  // in the app ever posted — the arm, the module and that entry point have all
+  // since been deleted, so nothing reaches the gate that way any more. The
+  // notebook runs through `createKernel`, which never set the flag;
+  // `useNotebook.ts`'s `buildBindings` now does, so a notebook cell, a
+  // one-cell run and a ceremony stage all pass through here.
   //
   // It sits above every step, so the refusal is a refusal and not a report on
   // a run that already happened. The whole-notebook version of the same
@@ -1600,9 +1602,11 @@ async function execStepBody(step, value, bindings, artifacts) {
     }
     case "passphrase": {
       // Lazy: the EFF wordlist is a 7776-line asset pulled in through Vite's
-      // `?raw`, so a static import made every consumer of the engine — the
-      // crypto worker, and now the headless CLI — depend on the bundler even
-      // when no recipe generates a passphrase. Same lazy-import remedy the
+      // `?raw`, so a static import made every consumer of the engine depend on
+      // the bundler even when no recipe generates a passphrase. That was the
+      // crypto worker at the time and is the headless CLI now — the worker's
+      // engine entry point has since been deleted, and the CLI is reason
+      // enough on its own. Same lazy-import remedy the
       // clipboard/rtc cases already use.
       const { generateCharPassphrase, generateWordPassphrase } = await import(
         "../passphrase-gen.js"
@@ -3705,7 +3709,10 @@ async function execStepBody(step, value, bindings, artifacts) {
     case "webauthn.prf":
     case "webauthn.attest":
     case "webauthn.mds": {
-      // Lazy: keep vault/MDS out of the worker bundle unless these steps run.
+      // Lazy: keep vault/MDS out of the toolkit bundle unless these steps run.
+      // Said "the worker bundle" back when the engine had a crypto-worker
+      // entry point; it has none now, and the chunk this keeps small is the
+      // page's.
       const wa = await import("./webauthn-ops.js");
       if (step.name === "webauthn.caps") return wa.execWaCaps();
       if (step.name === "webauthn.create") return wa.execWaCreate(step.params || {});
@@ -4341,10 +4348,10 @@ async function currentRunManifest(bindings, params) {
 
   const title =
     String(params?.title || "").trim() || String(ctx.label || "").trim() || undefined;
-  // Dynamic, like every other import here, and safe for the worker path: a
-  // pool can only be drawn where the live exchange is, so a manifest built
-  // anywhere else reads `null` and keeps the `local` default — which is true
-  // there.
+  // Dynamic, like every other import here, and safe wherever the run happens
+  // to be: a pool can only be drawn where the live exchange is, so a manifest
+  // built anywhere else reads `null` and keeps the `local` default — which is
+  // true there.
   const { lastPooledEntropy } = await import("./entropy-pool-ops.js");
   const pool = lastPooledEntropy();
   return buildRunManifest({
@@ -4769,18 +4776,24 @@ async function resolveEncryptRecipients(bindings, toParam, policy = "ask") {
 
   if (token.kind === "empty") {
     /**
-     * Two callers bind recipients, and they hand them over differently.
+     * Two shapes of bound recipient arrive here, and only one has a caller
+     * left in the app.
      *
-     * `executeToolkitRun` — the worker path — reads the armor into openpgp
-     * `Key` objects before the run and sets `recipients`. The notebook's
-     * in-page kernel hands `bindings` to `runRecipe` untouched, and what the
-     * Keys tray produced is a `ResolvedRecipient`: armor and a fingerprint,
-     * because that is what survives being held in React state.
+     * The notebook's in-page kernel hands `bindings` to `runRecipe` untouched,
+     * and what the Keys tray produced is a `ResolvedRecipient`: armor and a
+     * fingerprint, because that is what survives being held in React state.
+     * The other shape is parsed openpgp `Key` objects in `recipients`, which
+     * is what `executeToolkitRun` set — it read the armor in before the run —
+     * and that entry point has been deleted with the crypto-worker arm that
+     * reached it. Nothing the app ships sets `recipients` any more; the
+     * callers that still do reach `runRecipe` directly, which today means the
+     * specs.
      *
      * Reading only `recipients` meant a notebook run saw nothing no matter
      * what the tray said, and refused with advice to bind a recipient — which
-     * the person had just done. Parsed keys still win when a caller supplies
-     * them, so the worker path is untouched.
+     * the person had just done. Parsed keys still win where a caller supplies
+     * them, so a caller that has already read its own keys is not
+     * second-guessed.
      */
     let binderKeys = bindings.recipients || [];
     const armored = bindings.recipientKeysArmored || [];
@@ -5229,8 +5242,10 @@ async function decryptGpgSource(value, bindings, step, _artifacts) {
   /**
    * Every private key this run may decrypt with.
    *
-   * A bound `privateKeyArmored` wins — that is the worker message's field, and
-   * a caller who names a key means that key. With none bound this falls back to
+   * A bound `privateKeyArmored` wins — a caller who names a key means that
+   * key. It was the deleted crypto-worker arm's field as well, so no shipped
+   * caller sets it today; the specs do, and this precedence is what they lean
+   * on. With none bound this falls back to
    * the keys already unlocked in My Keys this session, which is what the
    * shipped "OpenPGP decrypt" preset means by "unlock My Keys when prompted".
    *

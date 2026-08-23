@@ -1976,10 +1976,11 @@ export function useNotebook() {
     bindings.receipt = { recipeSource: source, label: title, chains };
     // FIPS mode, on the run path the notebook actually uses.
     //
-    // `runRecipe`'s suite gate has always been real and has always been
+    // `runRecipe`'s suite gate has always been real and was for a long time
     // unreachable from here: it fires for `bindings.fipsMode`, and the only
     // caller that set it was the crypto-worker's `toolkit-run` arm, which
-    // nothing posts. These two lines are the whole of the wiring — every
+    // nothing ever posted — that arm and its entry point have since been
+    // deleted. These two lines are the whole of the wiring — every
     // kernel run (the notebook loop, a one-cell run, a ceremony stage) builds
     // its bindings here, so all of them reach the gate now.
     //

@@ -1,6 +1,26 @@
 # Plan: CAST coverage + remaining test gaps
 
-> **Status (2026-07-26):** Implemented — suite badges + FIPS mode (Phase 0), CAST-6…11 + CAST-13/14 WebCrypto + CAST-12 SSS/BLIP39, expanded unit/type tests, toolkit-run worker smoke, CRYPTOGRAPHY.md updates. Quorum CAST suite and OpenPGP padding remain deferred.
+> **Status (2026-07-26):** Implemented — suite badges + FIPS mode (Phase 0), CAST-6…11 + CAST-13/14 WebCrypto + CAST-12 SSS/BLIP39, expanded unit/type tests, CRYPTOGRAPHY.md updates. Quorum CAST suite and OpenPGP padding remain deferred.
+
+> **Worker note (later than the plan below).** This plan assumed the toolkit
+> could run inside the crypto worker, and half its enforcement story is written
+> in those terms: a `toolkit-run` message, a worker that refuses, a second
+> double-check behind the UI. That arm existed and was complete, and **nothing
+> in the app ever posted to it** — `lib/generate-key.js` holds the only
+> `new Worker(…crypto-worker.js…)` and the only message it sends is
+> `type:"generate"`. The arm, `lib/toolkit/toolkit-run.js` and its
+> `executeToolkitRun` entry point have all been deleted; see the header of
+> [`crypto-worker.js`](../web/src/lib/crypto-worker.js) for the argument.
+>
+> So wherever the plan below says *worker* as a second enforcement point, there
+> is one enforcement point and it is the notebook: `useNotebook.buildBindings`
+> sets `fipsMode`/`suiteStatus` and `startRun` asks the gate about the whole run
+> before the first cell executes. That is a simplification rather than a gap —
+> the removed check guarded a message nobody sent — but it does mean the
+> "UI bypass is not enough" argument in Phase 0 now rests on the gate sitting
+> inside `runRecipe` rather than on a separate process. Routing the notebook
+> through a worker is still a defensible design; it needs its own argument
+> rather than arriving as this plan's leftover.
 
 > **Vocabulary note (later than the plan below).** Where this document says
 > *Quorum* it means the multi-party P2P session, since renamed the **shared
@@ -8,7 +28,7 @@
 > *m*-of-*n* threshold code. The deferred item is a CAST suite for the shared
 > notebook's ECDH/HKDF/AES-GCM, and it is still deferred.
 
-Extend FIPS-inspired POST/CAST to cover shipped WebCrypto toolkit paths (today only OpenPGP CAST-1…5 run), make the **UI refuse to imply verification it does not have**, then fill unit/type/worker test gaps and document remaining deferred product items.
+Extend FIPS-inspired POST/CAST to cover shipped WebCrypto toolkit paths (today only OpenPGP CAST-1…5 run), make the **UI refuse to imply verification it does not have**, then fill unit/type test gaps and document remaining deferred product items.
 
 ## Problem
 
@@ -27,10 +47,16 @@ flowchart TD
   Suites --> Badges[verified / warning badges]
   Suites --> Toggle{FIPS mode?}
   Toggle -->|off| Soft[allow + warn]
-  Toggle -->|on| Hard[block add + Run + worker]
-  Soft --> Worker[toolkit-run]
-  Hard --> Worker
+  Toggle -->|on| Hard[refuse the run]
+  Soft --> Run[notebook run]
+  Hard --> Run
 ```
+
+*Diagram corrected: it had both branches feed a `toolkit-run` worker node. See
+the worker note at the top — there is no worker leg, and the toggle's two
+outcomes are read by the notebook's own run path. The plan's `block add` half
+never shipped either: FIPS refuses a run, it does not stop you writing the
+recipe.*
 
 ---
 
@@ -77,16 +103,16 @@ Regardless of FIPS mode:
 
 Explicit control on the toolkit header (encrypt/decrypt/settings later if useful):
 
-| FIPS mode | Unverified suite ops | Run / worker |
+| FIPS mode | Unverified suite ops | Run |
 |-----------|----------------------|--------------|
 | **Off** (default for exploration) | Usable; amber warning badges only | Allowed; optional status note “recipe uses unverified suites” |
-| **On** | Cannot add from drawer / suggest; existing steps marked blocked | **Run disabled**; worker refuses with clear error |
+| **On** | Cannot add from drawer / suggest; existing steps marked blocked | **Run refused** with a clear error, before the first step executes |
 
 When FIPS **on**:
 
 - Block append/drag of ops whose toolbox maps to an unverified suite.
 - If recipe already contains them (paste/load/preset): keep visible, blocked cards, disable Run, error like `FIPS mode: recipe uses unverified WebCrypto ops (aes-gcm, sign)`.
-- Engine/worker double-check: refuse unverified suites when FIPS is on (pass flag in `toolkit-run` or shared preference) so UI bypass is not enough.
+- Engine double-check: refuse unverified suites when FIPS is on (the flag rides in the bindings the notebook hands `runRecipe`) so UI bypass is not enough. *Planned as an engine/worker pair; only the engine half exists — see the worker note.*
 - Persist preference (`localStorage` e.g. `basilisk.fipsMode`).
 - **Disclaimer:** this is Basilisk’s FIPS-*inspired* posture (POST/CAST + verified-only), **not** a NIST FIPS 140 certificate. Tooltip/subtitle: `Verified suites only (POST/CAST). Not a FIPS 140 certificate.`
 
@@ -143,9 +169,15 @@ Add cases for shipped but untested paths:
 
 Refined-type walks for `digest`, `sign`, `aes-gcm`, `hkdf`, `ecdh`, `wrap`/`unwrap` (accept bytes/text; ecdh/wrap from `none`).
 
-### B3 — Optional worker smoke
+### B3 — Optional worker smoke — **withdrawn, not deferred**
 
-One test or small harness: post `toolkit-run` with `random 16 | digest | to hex` through [`crypto-worker.js`](../web/src/lib/crypto-worker.js) (or extract a testable `runToolkitInWorker` helper). Confirms worker SubtleCrypto path, not only main-thread `runRecipe`.
+~~One test or small harness: post `toolkit-run` with `random 16 | digest | to hex` through [`crypto-worker.js`](../web/src/lib/crypto-worker.js) (or extract a testable `runToolkitInWorker` helper). Confirms worker SubtleCrypto path, not only main-thread `runRecipe`.~~
+
+This was built and has been removed with the arm it exercised. It is struck rather than moved to the deferred list, because the two are different promises: a deferred item says *do this later*, and doing this later now means **re-adding the `toolkit-run` arm in order to have something to smoke-test**. That is the defect that was just removed — a complete, tested mechanism with no caller, advertising an isolation boundary the app does not have (the toolkit holds unlocked private keys on the main thread throughout).
+
+The item's stated value was "confirms worker SubtleCrypto path, not only main-thread `runRecipe`". There is no worker SubtleCrypto path to confirm; `crypto-worker.js` does OpenPGP keygen and nothing else. A test here would have measured a path that exists only because the test wanted one.
+
+What the item was really reaching for — *the engine's WebCrypto ops are exercised somewhere* — is covered by B1/B2 against `runRecipe` directly, which is the path the app uses. If the notebook is ever routed through a worker, this smoke test comes back as part of that design's own argument, not as a leftover checkbox from this plan.
 
 ---
 
@@ -177,11 +209,11 @@ UI copy: suite-aware banners; “crypto module” only when OpenPGP + WebCrypto 
 
 ## Suggested order of work
 
-1. **0** — Suite status API + warning badges + FIPS mode toggle (UI + worker enforce)
+1. **0** — Suite status API + warning badges + FIPS mode toggle (UI + engine enforce)
 2. **A** — CAST-6…11 → flips `webcrypto` suite to verified; FIPS mode then allows those ops
 3. **B1/B2** — broaden unit/type coverage
 4. **C** — docs
-5. **B3** — toolkit-run worker smoke (`executeToolkitRun`) ✓
+5. **B3** — ~~toolkit-run worker smoke (`executeToolkitRun`)~~ withdrawn; built, then removed with the arm (see B3)
 6. **SSS CAST-12** — flips `sss` suite ✓
 
 ## Remaining deferred (non-goals / later)
@@ -193,7 +225,7 @@ UI copy: suite-aware banners; “crypto module” only when OpenPGP + WebCrypto 
 ## Success criteria
 
 - Default (FIPS off): WebCrypto/SSS usable but show amber **unverified** badges; banner is suite-specific
-- FIPS on + only OpenPGP CASTs: WebCrypto/SSS cannot be added or run; worker refuses
+- FIPS on + only OpenPGP CASTs: WebCrypto/SSS cannot be run; the gate inside `runRecipe` refuses
 - After CAST-6…11 + FIPS on: WebCrypto ops run; green verified chips; POST fails closed if AES-GCM or Ed25519 sign/verify is broken
 - Toggle disclaimer visible; no implication of NIST certification
 - `npx vitest run src/test/crypto-self-test.test.js src/test/toolkit-webcrypto.test.js src/test/toolkit-types.test.js` green
@@ -201,9 +233,9 @@ UI copy: suite-aware banners; “crypto module” only when OpenPGP + WebCrypto 
 
 ## Implementation todos
 
-1. Suite status + amber/verified badges + FIPS mode toggle (persist + worker enforce) + honest banners
+1. Suite status + amber/verified badges + FIPS mode toggle (persist + engine enforce) + honest banners
 2. Add CAST-6..11 WebCrypto KATs to `crypto-self-test.js`; update `SelfTestResults`/labels; latch + `crypto-self-test.test.js`
 3. Expand `toolkit-webcrypto.test.js`: ECDSA/RSA-PSS/HMAC, digest 384/512, AES-128+AAD, X25519 skip, hkdf/pbkdf2 hashes
 4. Add `toolkit-types.test.js` cases for new WebCrypto ops
-5. Optional: toolkit-run worker smoke for digest recipe
+5. ~~Optional: toolkit-run worker smoke for digest recipe~~ — withdrawn, see B3
 6. Update CRYPTOGRAPHY.md CAST + FIPS-mode + RSA-OAEP/quorum notes; fix stale CAST count comment

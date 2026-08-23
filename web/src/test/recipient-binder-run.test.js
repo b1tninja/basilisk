@@ -3,11 +3,12 @@
  *
  * `useNotebook.buildBindings` records what the binder produced as
  * `recipientKeysArmored` + `recipientFingerprints` — armor, because that is
- * what a `ResolvedRecipient` holds and what the worker message carries.
+ * what a `ResolvedRecipient` holds.
  *
  * The engine's `gpg.encrypt` reads `bindings.recipients`, which is parsed
- * openpgp `Key` objects. `executeToolkitRun` — the worker path — bridges the
- * two by calling `readKey` on the way in. The in-page kernel does not: it hands
+ * openpgp `Key` objects. `executeToolkitRun` used to bridge the two by calling
+ * `readKey` on the way in; it has been deleted with the crypto-worker arm that
+ * reached it, and the in-page kernel never did the bridging — it hands
  * `bindings` to `runRecipe` untouched.
  *
  * So a notebook run saw an empty recipient list no matter what the tray said,
@@ -79,10 +80,14 @@ describe("a recipient bound in the Keys tray reaches the run", () => {
     kernel.destroy();
   });
 
-  it("prefers parsed keys when a caller supplies them, so the worker path is unchanged", async () => {
-    // `executeToolkitRun` sets `recipients` itself and does not set armor.
-    // The bridge must not clobber that or the two paths would disagree about
-    // who a run is encrypted to.
+  it("prefers parsed keys when a caller supplies them, which is the precedence a direct caller relies on", async () => {
+    // `executeToolkitRun` set `recipients` itself and never set armor, and it
+    // is the reason this precedence exists. It has been deleted, and the rule
+    // outlives it: any caller that reaches `runRecipe` directly having already
+    // read its keys must not have them clobbered by the bridge, or the two
+    // ways of naming a recipient would disagree about who a run is encrypted
+    // to. Only the specs take that route today, which is why it is pinned here
+    // rather than assumed.
     const rec = await armoredRecipient();
     const { readKey } = await import("openpgp");
     const parsed = await readKey({ armoredKey: rec.armoredKey });

@@ -114,6 +114,30 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ---
 
+- **Two engine binding fields have only test producers now.**
+  `bindings.recipients` (parsed openpgp `Key` objects) and
+  `bindings.gpg.privateKeyArmored` were both set by `executeToolkitRun`, which
+  is deleted. Nothing the app ships writes either; the engine reads them in four
+  and two places. **Not a deletion candidate** — they are a real contract for
+  anyone calling `runRecipe` directly, several specs exercise them, and the
+  precedence rule between armor and parsed keys is load-bearing. Recorded
+  because "only tests produce it" is the shape that usually precedes a removal,
+  and here a removal would be wrong.
+- **A family of "worker-safe" comments in `engine.js`** (around lines 3788,
+  3958, 3987, 3993, 4010) classifies ops by whether they could run in a Web
+  Worker. Each claim is still generically true — `RTCPeerConnection` really is
+  absent from workers — and the classification is worth keeping, since routing
+  the notebook through a worker is a design that may yet be argued for. But
+  there is no worker path now, and a reader can take the family as evidence one
+  exists. A decision, not a defect.
+- **`CAST-AND-TEST-GAPS.md`'s "block add" half never shipped.** The plan's table
+  and diagram promise ops that "cannot be added from drawer / suggest";
+  `CRYPTOGRAPHY.md` states plainly there is no add-time gate anywhere. Unrelated
+  to the worker deletion and flagged inline beneath the diagram, but the plan
+  still reads as though half of it is in force.
+
+---
+
 ## 5a. Measured, large, and not safe to act on blindly
 
 **416 of the 949 class selectors in the stylesheets have no producer.** Every

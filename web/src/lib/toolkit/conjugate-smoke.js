@@ -4,11 +4,17 @@
  *
  * ## Deliberately not FIPS-gated
  *
- * This is the third and last way into the engine — `kernel.js` is the
- * notebook's and `toolkit-run.js` is the worker's — and it is the only one that
- * passes no `fipsMode`. That is a decision rather than an oversight, and it is
- * written here because a silent ungated path is indistinguishable from one
- * somebody forgot.
+ * This is the second of the two ways into the engine — `kernel.js` is the
+ * other, and it is the notebook's — and it is the one that passes no
+ * `fipsMode`. That is a decision rather than an oversight, and it is written
+ * here because a silent ungated path is indistinguishable from one somebody
+ * forgot.
+ *
+ * There were three. `toolkit-run.js` was the crypto worker's, and it did route
+ * the flag; it has been deleted along with the worker arm that reached it,
+ * because nothing in the app ever posted that message. Losing it did not widen
+ * this exemption — the gated way in is still gated, and this is still the only
+ * ungated one.
  *
  * The reason is what the switch means. FIPS mode refuses a run that reaches an
  * unverified suite; this harness exists to *find out whether the ops work*. A
@@ -17,8 +23,8 @@
  * it. Nothing a person typed reaches this file either — it runs over the
  * shipped preset pairs from a test.
  *
- * `fips-engine-entrypoints.test.js` pins that set of three so a *fourth* way in
- * has to be argued for rather than added.
+ * `fips-engine-entrypoints.test.js` pins that set so a *third* way in has to be
+ * argued for rather than added.
  */
 
 import { runRecipe } from "./engine.js";

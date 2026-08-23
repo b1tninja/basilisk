@@ -5549,9 +5549,11 @@ export function ToolkitShell() {
                         passes `fipsMode` into `runRecipe`. For a long time the
                         only such caller was `executeToolkitRun`, reached by
                         the crypto-worker's `toolkit-run` message, which
-                        nothing in the app posts; the notebook runs through
-                        `createKernel`, which never set the flag. So the switch
-                        flagged and never refused, and this paragraph said so.
+                        nothing in the app ever posted; the notebook runs
+                        through `createKernel`, which never set the flag. So
+                        the switch flagged and never refused, and this
+                        paragraph said so. That caller has since been deleted
+                        with the arm it belonged to.
 
                         `useNotebook.ts` now sets `fipsMode`/`suiteStatus` in
                         `buildBindings` and asks the same gate about the whole

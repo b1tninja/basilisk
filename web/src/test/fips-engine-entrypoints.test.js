@@ -4,8 +4,9 @@
  * `assertRecipeAllowedUnderFips` fires for a caller that puts `fipsMode` into
  * the bindings it hands `runRecipe`. For a long time exactly one caller did,
  * and it was `executeToolkitRun` — reached by a crypto-worker message nothing
- * in the app posts — so the switch flagged a recipe and then ran it anyway.
- * The notebook is wired now.
+ * in the app ever posted — so the switch flagged a recipe and then ran it
+ * anyway. That caller has since been deleted along with the arm, and the
+ * notebook is wired, so the one gated way in is a way in something uses.
  *
  * The failure that produced was not "the gate is wrong"; it was that nobody
  * could see which callers reached the gate and which did not. This sweeps the
@@ -82,6 +83,11 @@ function engineCallers() {
 describe("the FIPS gate reaches every way into the engine", () => {
   it("finds the callers it is measuring", () => {
     // An empty sweep passes every assertion below it.
+    //
+    // The sweep finds exactly two now — `kernel.js` and `conjugate-smoke.js` —
+    // so this bound has no slack left. It was three until `toolkit-run.js` was
+    // deleted with the crypto-worker arm nothing posted. A third disappearing
+    // is the scan breaking, which is what this is for.
     const callers = engineCallers();
     expect(callers.length, "no engine callers found at all — the scan is broken").toBeGreaterThan(1);
     expect(callers, "the notebook's own path is gone from the sweep").toContain(
