@@ -187,8 +187,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   because that is the only spec where all three shares exist at once. The
   dealer-absent file is covered transitively — the same generator deals both
   rooms — not directly.
-- **Collapsed rail states are not in the layout suite.** `cdf8f8c` drove them by
-  hand at both widths; the spec covers the default state only.
 - **`.design-sync/previews/` is outside `web/tsconfig.json`**, so `tsc --noEmit`
   never sees the preview files. They are verified to parse and to render in
   capture, and by nothing else.
