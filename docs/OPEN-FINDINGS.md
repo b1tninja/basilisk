@@ -129,6 +129,36 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ---
 
+## 5a. Measured, large, and not safe to act on blindly
+
+**416 of the 949 class selectors in the stylesheets have no producer.** Every
+one of them is in `site.css`; `toolkit.css` has none, which is the cleanest
+signal in the measurement — the current shell's stylesheet is fully live, and
+the legacy toolkit's entire vocabulary is still sitting in the other one. The
+`.chef-*`/`.pane-*` deletion took 176 lines of that and stopped at one family.
+
+By prefix: `builder-` 53, `ops-` 49, `cell-` 48, `suggest-` 25, `notebook-` 17,
+`encrypt-` 16, `artifact-` 12, `session-` 12, `toolbox-` 12. Note that these are
+*subsets* of live families — `ops-panel`, `ops-category` and `ops-rail` are all
+in use, while `ops-aes-kit-body` is not — so this cannot be deleted by prefix.
+
+**The sweep has a false-positive mode and at least one confirmed instance.** A
+class assembled at runtime never appears as a literal: `packet-map.js:291`
+returns `` `pkt-color-${colorIndex % 8}` ``, so the eight `pkt-color-N` rules
+*are* reached and the sweep is wrong about them. Any deletion has to check each
+family for a constructor first. (`receipt.js`'s `ops-${count}-…` is a registry
+version string, not a class — that one is not a producer.)
+
+Method, since it is reusable: the haystack is `git ls-files` plus `web/dist`,
+enumerated rather than hand-walked. The first pass walked `web/src` and
+`web/*.html` and missed `basilisk/web/templates/claim.html` and
+`web/static/*.html` — it happened to change the count by two, but a sweep whose
+coverage cannot be checked is not evidence. The `dist` half is valid here
+because a CSS class reaches the bundle as a **string literal**, which
+minification preserves.
+
+---
+
 ## 6. Coverage that is thinner than it looks
 
 - **A face-up row means a slot of that name is here, not that the peer's value
