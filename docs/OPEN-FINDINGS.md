@@ -187,9 +187,20 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   because that is the only spec where all three shares exist at once. The
   dealer-absent file is covered transitively — the same generator deals both
   rooms — not directly.
-- **`.design-sync/previews/` is outside `web/tsconfig.json`**, so `tsc --noEmit`
-  never sees the preview files. They are verified to parse and to render in
-  capture, and by nothing else.
+- **The design-system previews have drifted from the components they preview,
+  and `tsc` has never looked.** `.design-sync/previews/` is outside
+  `web/tsconfig.json`'s `include`, and the previews import from
+  `"basilisk-portal"` — a bare specifier that resolves only inside the design
+  tool. Point `paths` at `src/ds-entry.ts` (which *is* that module) and add the
+  directory, and **60 type errors appear across 11 files**: `KeyVault` 14,
+  `PlanPanel` 12, `HandoffQueue` 8, `CastDot` 7, `CellAssign` 6.
+
+  They are real, not resolution noise — that was measured separately and is
+  zero once `react` is mapped too. `CellAssign`'s preview passes a `publish`
+  prop the component does not declare; `CastDot`'s pass partial `SuiteStatusMap`
+  objects missing required suites. So the design tool has been rendering
+  components with props they do not accept, and the capture step cannot see it
+  because a preview that throws still produces an image of *something*.
 
 ---
 
