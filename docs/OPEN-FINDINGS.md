@@ -45,22 +45,23 @@ cells joined. `engine.js`'s `currentRunManifest` (around line 4154) is the other
 `serializeRecipe({ chains: [chain] })`. It already contains the loop
 `canonicalCellSources` now expresses and could adopt both exports directly.
 
-### 1.3 `manifestHonouredBy` verifies a run against its manifest, and nothing calls it
+### 1.3 The Export proof button is enabled and does nothing
 
-Found while closing §1.2's second producer, by checking who would notice if the
-two run documents disagreed. The answer is nobody: `manifestHonouredBy` compares
-a manifest's `recipeDigest`, registry and cell rows against the receipt of the
-run that was supposed to honour it, and **it appears zero times in the built
-bundle** — no `.tsx`, no hook, no op. Its only callers are its own tests.
+`manifestHonouredBy` is wired — but the control beside its verdict is not.
+`ShareSheet` declares `onExportProof`, destructures it and hangs it on a
+`<Button>`, and **no caller passes it**. `ToolkitShell` hands that sheet eleven
+props and this is not one of them, so the button renders enabled whenever a
+proof exists and clicking it does nothing.
 
-That is the shape this file exists for. It is not an unused helper but an
-unrun *check*: "did the run do what the manifest promised" is a question the
-notebook never asks, while `manifest.check` and `run.attest` — which the app
-does reach — verify a document's internal consistency and signature rather than
-its relationship to what actually happened.
+It is the same defect `session-flow.test.js` already records for the sibling
+`onStartSession`, which is why that file asserts against it — the assertion just
+does not cover this prop.
 
-Closing it is a product decision, not wiring: something has to decide when the
-comparison runs and what a mismatch does to a person mid-run.
+The work is not only wiring: exporting a proof means deciding what a proof *is*
+as a file. It is two documents, and their bytes cannot be re-serialised, because
+a manifest's digest is over its own text and a pretty-print pass would produce a
+document that no longer matches the digest inside it. No bundle kind exists and
+inventing one would be a schema nothing parses.
 
 ---|---|---|---|---|
 | `… \| out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `aa45ec49b500` |

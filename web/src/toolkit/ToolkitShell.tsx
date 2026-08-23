@@ -103,6 +103,10 @@ import {
   type SuiteTone,
   type SuiteDetail,
 } from "./widgets/index";
+import { manifestHonouredBy, summarizeHonour } from "../lib/toolkit/manifest.js";
+// Imported from the widget rather than the barrel: the barrel is shared and
+// these are two types used in one place.
+import type { ProofHonoured, ShareSheetProps } from "./widgets/ShareSheet";
 import { getStep } from "../lib/toolkit/registry.js";
 import { stepUnboundSlots } from "../lib/toolkit/input-needs.js";
 import type { DkgParticipant } from "../lib/quorum/dkg-session.js";
@@ -222,6 +226,110 @@ type CastSuiteStatus = {
 
 /** What this browser exposes of the WebAuthn API — see `webauthnApiPresence`. */
 type WebAuthnPresence = "present" | "absent";
+
+/** The two documents a proof is made of, as they arrive: parsed JSON, no more. */
+type RunProofDoc = { kind?: string; recipeDigest?: string; signedBy?: string };
+
+/**
+ * Why a manifest and a receipt could not be held up against each other.
+ *
+ * The thrown message is deliberately not this sentence. What `manifestHonouredBy`
+ * throws on a malformed document is a JavaScript type error —
+ * "((intermediate value) || []).filter is not a function" — which names an
+ * expression nobody reading a share sheet has ever seen, and the reader's next
+ * move is the same whichever internal read tripped. So the surface gets a
+ * sentence about documents, written here beside the call that failed, the same
+ * rule `recipeDiscloses` follows.
+ */
+const PROOF_NOT_COMPARABLE =
+  "One of them parses as JSON and carries the right kind, but is not shaped like " +
+  "the document it says it is — so there is no honest comparison to make.";
+
+/**
+ * The run proof sitting in a notebook's outputs, and whether it holds.
+ *
+ * A proof is not "a run happened" — it is a `run.manifest` and a `run.receipt`
+ * document sitting in the outputs, so the test is for those documents rather
+ * than for a run having occurred. A notebook can be run many times and still
+ * have nothing to send, which is why the sheet's unavailable line names the
+ * cells that would produce one.
+ *
+ * **The documents are kept, not twelve characters of each.** This code held
+ * both in its hands and threw them away, keeping a truncated `recipeDigest`
+ * from each so the sheet could print them side by side — which left the reader
+ * diffing two hex strings to learn something `manifestHonouredBy` answers
+ * outright. That function compares the recipe digest, the op registry, the
+ * receipt envelope, every pinned runtime input and every cell row in order,
+ * and it appeared **nowhere in the built bundle**: the app had a check for
+ * "did this run do what its manifest promised" and never asked it. This is
+ * where it is asked. `summarizeHonour` says the answer in the vocabulary the
+ * comparison itself uses, so the sentence the reader sees and the sentence a
+ * recipient's own check produces are the same sentence — the rule
+ * `recipeDiscloses` follows, for the same reason.
+ *
+ * **One document alone is not a failure.** A notebook being built up has a
+ * manifest and no receipt yet; that is the ordinary case, not a mismatch, so
+ * `honoured` is null there rather than false and the sheet says which half is
+ * still missing.
+ *
+ * **A malformed document cannot take the notebook down.** An output is
+ * whatever a cell printed, so anything that parses as JSON carrying the right
+ * `kind` arrives here, including something a reader typed by hand. This runs
+ * inside a render, so an exception would blank the page over a document that
+ * is only being described. The comparison is guarded, and not being able to
+ * compare is a third thing the sheet can say rather than a crash — and rather
+ * than being folded into "not honoured", which would accuse a run of something
+ * no comparison established.
+ *
+ * A plain function, exported, because the alternative is a claim about a proof
+ * that can only be exercised by mounting a whole notebook.
+ */
+export function readRunProof(
+  cellOutputs: readonly (readonly unknown[] | undefined)[] | undefined
+): ShareSheetProps["proof"] {
+  let manifestDoc: RunProofDoc | null = null;
+  let receiptDoc: RunProofDoc | null = null;
+  let signedBy = "";
+  for (const tiles of cellOutputs || []) {
+    for (const tile of tiles || []) {
+      const text = String((tile as { content?: unknown })?.content ?? "");
+      if (!text.startsWith("{")) continue;
+      try {
+        const doc = JSON.parse(text) as RunProofDoc;
+        if (doc.kind === "basilisk.run-manifest") manifestDoc = doc;
+        if (doc.kind === "basilisk.run-receipt") receiptDoc = doc;
+        if (doc.signedBy) signedBy = String(doc.signedBy);
+      } catch {
+        /* not a document — an output that merely starts with a brace */
+      }
+    }
+  }
+  if (!manifestDoc && !receiptDoc) return null;
+
+  const brief = (doc: RunProofDoc | null) =>
+    String(doc?.recipeDigest || "").slice(0, 12).toUpperCase();
+
+  let honoured: ProofHonoured | null = null;
+  let unreadable = "";
+  if (manifestDoc && receiptDoc) {
+    try {
+      const result = manifestHonouredBy(
+        manifestDoc as Parameters<typeof manifestHonouredBy>[0],
+        receiptDoc as Parameters<typeof manifestHonouredBy>[1]
+      );
+      honoured = { ...result, summary: summarizeHonour(result) };
+    } catch {
+      unreadable = PROOF_NOT_COMPARABLE;
+    }
+  }
+  return {
+    manifest: brief(manifestDoc),
+    receipt: brief(receiptDoc),
+    signedBy,
+    honoured,
+    unreadable,
+  };
+}
 
 /**
  * `file.read | qr.scan` on a photo of a share card.
@@ -1273,35 +1381,11 @@ export function ToolkitShell() {
   }, [nb.source]);
 
   /**
-   * The run proof, when this notebook has made one.
-   *
-   * A proof is not "a run happened" — it is a `run.manifest` and a
-   * `run.receipt` document sitting in the outputs, so the test is for those
-   * documents rather than for a run having occurred. A notebook can be run
-   * many times and still have nothing to send, which is why the sheet's
-   * unavailable line names the cells that would produce one.
+   * The run proof, when this notebook has made one — and whether it holds.
+   * `readRunProof` is a plain function above so the answer can be tested
+   * without standing up a notebook; the memo is only the caching.
    */
-  const runProof = useMemo(() => {
-    let manifest = "";
-    let receipt = "";
-    let signedBy = "";
-    for (const tiles of nb.cellOutputs || []) {
-      for (const tile of tiles || []) {
-        const text = String((tile as { content?: unknown })?.content ?? "");
-        if (!text.startsWith("{")) continue;
-        try {
-          const doc = JSON.parse(text) as Record<string, string>;
-          const digest = String(doc.recipeDigest || "").slice(0, 12).toUpperCase();
-          if (doc.kind === "basilisk.run-manifest") manifest = digest;
-          if (doc.kind === "basilisk.run-receipt") receipt = digest;
-          if (doc.signedBy) signedBy = String(doc.signedBy);
-        } catch {
-          /* not a document — an output that merely starts with a brace */
-        }
-      }
-    }
-    return manifest || receipt ? { manifest, receipt, signedBy } : null;
-  }, [nb.cellOutputs]);
+  const runProof = useMemo(() => readRunProof(nb.cellOutputs), [nb.cellOutputs]);
 
   /**
    * The share link as a QR, or the reason it cannot be one.

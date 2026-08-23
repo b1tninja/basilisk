@@ -28,6 +28,32 @@ export type RecipeLink =
 const NO_PROOF_YET =
   "No proof in this notebook yet — add run.manifest and run.receipt cells, then run it.";
 
+/**
+ * `manifestHonouredBy`'s answer about a proof, carried whole.
+ *
+ * `summary` is `summarizeHonour`'s sentence and is computed beside the
+ * comparison, not here — the same rule `recipeDiscloses` follows, and for the
+ * same reason: a verdict re-worded by the surface that displays it is a second
+ * account of the same fact, free to drift from the one the recipient's own
+ * check will produce. What this sheet adds is the part a status line has no
+ * room for — *which* facts disagreed, and what to do next.
+ *
+ * `mismatches` is `mismatchLog()`'s vocabulary unchanged: `expected` is always
+ * the manifest's side, `actual` always the run's.
+ */
+export type ProofHonoured = {
+  ok: boolean;
+  mismatches: { path: string; field: string; expected: string; actual: string }[];
+  /** Every question asked, not every one that failed. */
+  checked: number;
+  /** Reasons this run would not reproduce even when it honoured its manifest. */
+  declared: string[];
+  summary: string;
+};
+
+/** How many disagreements the sheet lists before it starts counting instead. */
+const MISMATCHES_SHOWN = 4;
+
 export type ShareSheetProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -68,8 +94,35 @@ export type ShareSheetProps = {
    * the state most worth showing.
    */
   defaultQrOpen?: boolean;
-  /** A finished run's proof. Absent means nothing has been run yet. */
-  proof?: { manifest: string; receipt: string; signedBy?: string } | null;
+  /**
+   * A finished run's proof. Absent means nothing has been run yet.
+   *
+   * `manifest` and `receipt` are the two documents' truncated recipe digests.
+   * They stay on screen beside the verdict rather than being replaced by it:
+   * they are how a reader names *which* proof this is when they go and look at
+   * it, and a verdict nobody can trace back to a document is a verdict nobody
+   * can check. What they are no longer asked to do is diff two hex strings by
+   * eye to work out something the code already knows.
+   *
+   * `honoured` is null — not false — when only one of the two documents is
+   * present. A notebook mid-build has a manifest and no receipt, and there is
+   * nothing wrong with that; reporting a missing receipt as a mismatch would
+   * paint the ordinary case red.
+   */
+  proof?: {
+    manifest: string;
+    receipt: string;
+    signedBy?: string;
+    honoured?: ProofHonoured | null;
+    /**
+     * Why the two documents could not be compared at all, or "". An output is
+     * whatever a cell printed, so a hand-written document can carry the right
+     * `kind` and the wrong shape. Not knowing is its own answer and is said
+     * out loud, rather than being folded into "not honoured" — which would
+     * accuse a run of something no comparison actually established.
+     */
+    unreadable?: string;
+  } | null;
   onExportProof?: () => void;
   /**
    * The live session. `joined` and `verified` are deliberately two numbers —
@@ -223,6 +276,10 @@ export function ShareSheet({
             trust="They need your public key to check it"
             blocked={proof ? null : NO_PROOF_YET}
             tone="not-yet"
+            /* The answer, above the two digests it was computed from. This row
+               used to print the digests and stop, which handed the reader a
+               comparison the code had all the parts to make. */
+            verdict={proof ? <ProofVerdict proof={proof} /> : null}
             value={
               proof
                 ? `manifest ${proof.manifest} · receipt ${proof.receipt}${
@@ -232,6 +289,12 @@ export function ShareSheet({
             }
           >
             {(why) => (
+              /* Still enabled when the run did not honour its manifest. The
+                 mismatch is the evidence, and refusing to hand it over would
+                 destroy the only artifact that documents it — the recipient
+                 runs the same comparison on the same two documents and reaches
+                 the same verdict, so a refusal here prevents an honest
+                 hand-off and nothing else. */
               <Button
                 onClick={onExportProof}
                 disabledReason={proof ? undefined : NO_PROOF_YET}
@@ -301,6 +364,176 @@ function RecipeQr({ qr }: { qr: ShareSheetProps["recipeQr"] }) {
   );
 }
 
+/** A hex digest or fingerprint — long, and recognised by its head. */
+const LONG_HEX = /^[0-9a-f]{40,}$/i;
+
+/**
+ * A mismatched value, short enough to sit in a list row.
+ *
+ * Two rules, because the two kinds of value in a mismatch are read for
+ * different reasons. A digest is an identifier: twelve characters is how this
+ * app has always shown one, and nothing is lost by cutting there because the
+ * verdict above has already said whether they agree. A cell's recipe is *text*
+ * — the reader is looking for the word that changed — and cutting it at twelve
+ * turns `in $a | encode base64 | out $b` into `in $a | enco…`, which names the
+ * disagreement and then hides it. One cap for both made one of them useless.
+ */
+function brief(value: string) {
+  const s = String(value || "");
+  if (!s) return "(none)";
+  if (LONG_HEX.test(s)) return `${s.slice(0, 12)}…`;
+  return s.length > 48 ? `${s.slice(0, 48)}…` : s;
+}
+
+/**
+ * Whether the run honoured the manifest it was committed to, in words.
+ *
+ * The sheet used to print `manifest 4F2AC1B39D8E · receipt 91C7E6D5C4B3` next
+ * to an Export button and stop. Both documents were parsed, both were in
+ * memory, and `manifestHonouredBy` — which compares the recipe digest, the op
+ * registry, the receipt envelope, every pinned runtime input and every cell
+ * row in order — was called from nowhere in the shipped app. So the reader was
+ * shown two truncated hex strings and left to conclude, from twelve characters
+ * of each, something the code could have stated. This states it.
+ *
+ * Four states, because the reader's next move differs in each:
+ *
+ * - **Honoured.** Green, and the count of facts that matched, because "matched"
+ *   without a size is a claim of unknown weight. Any declared
+ *   non-reproducible dependency is listed under it: the run did what it
+ *   promised *and* a re-run will still differ, and those are both true at once.
+ * - **Not honoured.** Red, and it names what disagreed — the field, the
+ *   manifest's value and the run's. A verdict that says only "not honoured"
+ *   sends the reader back to diffing, which is the thing being fixed.
+ * - **Not comparable.** Amber. One of the documents is not shaped like the
+ *   thing it claims to be. Nothing is being alleged about the run.
+ * - **Only one document.** Muted, and not a fault: this is what a notebook
+ *   looks like halfway through being built.
+ *
+ * Exported so the unit suite can render it. The sheet it sits in is a Radix
+ * dialog, and a dialog renders through a portal — `renderToStaticMarkup` sees
+ * an empty string for the whole of `ShareSheet`, and this repo's tests run in
+ * `node` with no DOM. Every claim below would be vacuous against the sheet, so
+ * the four states are exercised against the component that draws them.
+ */
+export function ProofVerdict({ proof }: { proof: NonNullable<ShareSheetProps["proof"]> }) {
+  if (proof.unreadable) {
+    return (
+      <div
+        className="flex flex-col gap-1 rounded-[6px] border border-[var(--warn)] px-2 py-1.5"
+        data-proof-verdict
+        data-verdict="unreadable"
+      >
+        <p className="text-[11px] font-semibold text-[var(--warn)]">
+          These two documents could not be compared.
+        </p>
+        <p className="break-words text-[10.5px] text-[var(--muted-foreground)]">
+          {proof.unreadable}
+        </p>
+        <p className="text-[10.5px] text-[var(--muted-foreground)]">
+          Nothing is being said about the run itself. Rebuild the documents by
+          running the notebook again — or export as it stands, which sends them
+          exactly as they are.
+        </p>
+      </div>
+    );
+  }
+
+  if (!proof.honoured) {
+    // Half a proof. The absent half is named, because "incomplete" does not
+    // tell anyone which cell to go and add.
+    const missing = proof.manifest ? "receipt" : "manifest";
+    return (
+      <p
+        className="text-[10.5px] text-[var(--muted-foreground)]"
+        data-proof-verdict
+        data-verdict="incomplete"
+      >
+        Only the {proof.manifest ? "manifest" : "receipt"} is here, so there is
+        nothing to check it against yet. Add a run.{missing} cell and run the
+        notebook, and this row will say whether the run honoured what it
+        promised.
+      </p>
+    );
+  }
+
+  const { ok, mismatches, declared, summary } = proof.honoured;
+
+  if (ok) {
+    return (
+      <div
+        className="flex flex-col gap-1 rounded-[6px] border border-[var(--success)] px-2 py-1.5"
+        data-proof-verdict
+        data-verdict="honoured"
+      >
+        <p className="text-[11px] text-[var(--success)]" data-verdict-summary>
+          {summary}
+        </p>
+        {declared.length ? (
+          <>
+            <p className="text-[10.5px] text-[var(--muted-foreground)]">
+              The run matched its manifest — but the manifest itself declares
+              something a re-run cannot reproduce, so expect their digests to
+              differ from yours:
+            </p>
+            <ul className="flex flex-col gap-0.5" data-declared>
+              {declared.map((reason) => (
+                <li
+                  key={reason}
+                  className="break-words text-[10.5px] text-[var(--muted-foreground)]"
+                >
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </div>
+    );
+  }
+
+  const shown = mismatches.slice(0, MISMATCHES_SHOWN);
+  const rest = mismatches.length - shown.length;
+  return (
+    <div
+      className="flex flex-col gap-1 rounded-[6px] border border-[var(--error)] px-2 py-1.5"
+      data-proof-verdict
+      data-verdict="not-honoured"
+    >
+      <p className="text-[11px] font-semibold text-[var(--error)]" data-verdict-summary>
+        {summary}
+      </p>
+      <ul className="flex flex-col gap-0.5" data-mismatches>
+        {shown.map((m) => (
+          <li
+            key={`${m.path}·${m.field}`}
+            className="break-words text-[10.5px] text-[var(--muted-foreground)]"
+            data-mismatch
+          >
+            <span className="font-mono text-[var(--foreground)]">
+              {m.path} · {m.field}
+            </span>
+            {" — promised "}
+            <span className="font-mono">{brief(m.expected)}</span>
+            {", ran "}
+            <span className="font-mono">{brief(m.actual)}</span>
+          </li>
+        ))}
+      </ul>
+      {rest > 0 ? (
+        <p className="text-[10.5px] text-[var(--muted-foreground)]" data-mismatches-more>
+          …and {rest} more {rest === 1 ? "disagreement" : "disagreements"}.
+        </p>
+      ) : null}
+      <p className="text-[10.5px] text-[var(--muted-foreground)]">
+        Run the notebook again to rebuild both documents, or export it as it
+        stands — the disagreement travels with the proof, and whoever checks it
+        gets this same answer.
+      </p>
+    </div>
+  );
+}
+
 /**
  * One transfer.
  *
@@ -315,6 +548,7 @@ function Tier({
   trustTone = "muted",
   blocked,
   tone = "refused",
+  verdict = null,
   value,
   children,
 }: {
@@ -338,6 +572,13 @@ function Tier({
    * state look like a fault.
    */
   tone?: "refused" | "not-yet";
+  /**
+   * What is *true of this particular transfer right now*, above the identifiers
+   * it was derived from. `what` and `trust` are standing facts about the tier
+   * and read the same on every notebook; this is the line that changes, so it
+   * sits where the eye lands first rather than under the digests it is about.
+   */
+  verdict?: ReactNode;
   value: string;
   /**
    * A function of the blocked sentence's id, not a node, so this row's buttons
@@ -359,6 +600,7 @@ function Tier({
     >
       <h4 className="text-[12.5px] font-semibold text-[var(--foreground)]">{title}</h4>
       <p className="text-[11px] leading-relaxed text-[var(--muted-foreground)]">{what}</p>
+      {verdict}
       {value ? (
         <code className="block truncate rounded-[6px] border border-[var(--border)] px-2 py-1 font-mono text-[10px] text-[var(--muted-foreground)]">
           {value}
