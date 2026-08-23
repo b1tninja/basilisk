@@ -36,52 +36,6 @@ There is still no add-time gate — you can write the recipe, you cannot run it.
 `docs/CRYPTOGRAPHY.md` said the switch "hard-blocks adding/running" and now says
 what is true.
 
-### 1.2 The second manifest producer still has the asymmetry
-
-`handoffContext` is fixed — its notebook digest is now the digest of its own
-cells joined. `engine.js`'s `currentRunManifest` (around line 4154) is the other
-`buildRunManifest` producer and still takes `recipeSource` raw from
-`ctx.recipeSource` while digesting cells through
-`serializeRecipe({ chains: [chain] })`. It already contains the loop
-`canonicalCellSources` now expresses and could adopt both exports directly.
-
-### 1.3 Nothing sweeps for a control with no handler
-
-`onExportProof` was declared, destructured, hung on a `<Button>` and passed by
-nobody, so the button rendered enabled and did nothing. It is fixed — but it is
-the **second** time: `session-flow.test.js` records the identical defect for
-`onStartSession`, and it asserts against that one prop by name rather than
-against the shape.
-
-An optional handler prop that no caller supplies is a control that looks
-finished. The registry-style sweeps in this repo (`glyph-shadowing`,
-`fips-engine-entrypoints`) exist because a list catches the next one and a named
-assertion does not. The same is possible here: for every component the shell
-renders, every `on*` prop it declares is either passed, or written down as
-deliberately optional.
-
----|---|---|---|---|
-| `… \| out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `aa45ec49b500` |
-| `… \|  out $seed \| publish` | `360d760231` | `b6e2d42834` | `bade690b59` | `2d34d7fdbcf8` |
-
-Every cell digest matches, because cells go through `serializeRecipe`. The
-notebook digest does not, because it is the raw text. So the fine-grained
-evidence says these two peers are running the same notebook and the coarse one
-refuses the offer.
-
-`sameNotebook` argues for exact text, and its argument is sound for what it
-answers: serialising *instead of* the source drops blank cells and shifts every
-index after one, so the offer would name cell 4 while the peer's plan calls it
-3. That justifies not substituting a re-serialisation. It does not justify the
-notebook digest disagreeing with its own cell digests — a canonical form that
-preserves cell count and order satisfies both, and nothing has been written
-that weighs one against the other.
-
-`c24992a` avoided adding to this by resolving its alias at parse, and proved the
-hazard by mutation: resolve after the digest and two peers holding one agreement
-get two manifests. The underlying asymmetry is untouched. Lives in
-`handoff-shell.js` / `manifest.js`.
-
 ---
 
 ## 2. Checks that cannot fire, or cannot be tested
@@ -195,25 +149,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   documented — but it bounds any claim of the form "the room can see what the
   room is running": in every ceremony spec only the dealer can appear in
   anybody's table, and the holders are invisible to each other by construction.
-- **No face-up cell-state row is proven in a browser.** `2a49f73`'s ceremony
-  numbers slots per member (`$share` on the dealer, `$share-2`/`$share-3` on
-  holders), so no two machines in that notebook ever write the same label and
-  every e2e row is legitimately face down. The face-up case is pinned only at
-  the unit layer.
-- **`dealer-absent-recovery.e2e.js` alone is blind to a foreign dealer share.**
-  `4c27d01` added the all-shares-one-split assertion to `three-party-ceremony`
-  because that is the only spec where all three shares exist at once. The
-  dealer-absent file is covered transitively — the same generator deals both
-  rooms — not directly.
-- **A `{...spread}` hides a preview's props from the check that now covers
-  them.** TypeScript exempts spread properties from excess-property checking, so
-  a preview built on a shared `base`/`START` const can pass a prop the component
-  does not declare and `tsc` will not say so. That is not hypothetical: it is how
-  `SessionStart`'s `suggestions` survived being renamed to `trusted`, and it was
-  found by reading the prop list against the fixture rather than by the compiler.
-  Annotating those consts with the component's props type would close it —
-  `SessionStartProps` and `VaultKeyView` are not exported from `ds-entry.ts`,
-  which is what makes that impossible today.
 
 ## How to use this file
 
@@ -228,6 +163,14 @@ That last one is the instructive failure, because the method was right and the
 execution was not: the grep that established it ended in `| head -6`, and twelve
 hits in one test file filled all six lines before the real consumer appeared.
 **Do not conclude from a truncated list.** Count the matches, or read them all.
+
+**Re-read this file after editing it.** Its worst state was not a stale entry
+but a corrupt one: a run of slice-based edits left two closed items standing,
+three deleted bullets un-deleted, and a headless fragment of an old entry —
+including a bare table header — dangling under a heading it did not belong to.
+Every one of those edits reported success. None of them was read back. An entry
+that contradicts the code costs a reader an hour; a section that does not parse
+costs them their trust in the whole file.
 
 **The `dist` grep proves less than it looks, and exactly which less is
 measurable.** Several entries here were settled by asking whether a name appears
