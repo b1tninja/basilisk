@@ -173,14 +173,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
-- **Two more snapshot scripts photograph markup that no longer exists.**
-  `snapshot-recipe-preview.mjs` and `snapshot-inline-runtime.mjs` are as dead as
-  the five already dealt with — `.cell-recipe-ta`, `.cell-recipe-summary`,
-  `.notebook-cell`, `#preset-gallery`, `#preset-grid`, `.builder-card`,
-  `.cell-runtime-kicker`, `[data-runtime-slot]` and `.cell-inputs-fallback` are
-  all zero in the build and zero in `src/**/*.tsx`. (`snapshot-tool-card.mjs` is
-  fine: it targets the standalone `tool-card-preview.html` fixture, which emits
-  its own markup.)
 - **One capture was lost on purpose and should be a decision, not an accident.**
   Deleting `snapshot-ux-resume.mjs` dropped the recipient-binder shot — whose
   selectors (`.recipient-binder`, `.binder-search`, `.keyserver-control`,
