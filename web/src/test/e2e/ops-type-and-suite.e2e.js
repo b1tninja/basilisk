@@ -419,9 +419,16 @@ describe.skipIf(!availability.ok)("the header names the suite, not the module", 
 
   it("reads a null suite as nothing verifying it, not as a pass and not as blank", () => {
     // The claim this whole chip is worth making. `age` is unmistakably crypto
-    // and no CAST suite covers it; a chip that omitted the null case would be
-    // worse than no chip, because absence would read as "fine".
-    for (const tb of ["age", "jose", "otp", "io", "encoding", "flow"]) {
+    // and no CAST suite covers it — its math is a third-party package the
+    // self-test never runs; a chip that omitted the null case would be worse
+    // than no chip, because absence would read as "fine".
+    //
+    // `jose` and `otp` were on this list and are gone from it. They sat here
+    // beside `io` and `encoding` as though they were formats, while reaching
+    // `crypto.subtle` twelve times and once respectively — so their headers
+    // said "no CAST suite" about the suite that had in fact been tested, and
+    // FIPS mode could not refuse them. They read `CAST webcrypto` now.
+    for (const tb of ["age", "io", "encoding", "flow"]) {
       const h = heads.find((x) => x.toolbox === tb);
       expect(h, `${tb} is not on the page`).toBeTruthy();
       expect(h.chip, `${tb} header`).toBe("no CAST suite");

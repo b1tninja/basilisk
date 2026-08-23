@@ -11,6 +11,13 @@
  * defines the wire format. Basilisk-specific plumbing (`in`, `out`, `tee`,
  * `agent.*`) has no external spec and is intentionally absent; `docsUrlFor`
  * returns null and the tool card simply omits the row.
+ *
+ * That absence is not a gap to be closed. It is written down, one op at a time
+ * with its reason, in `test/step-docs-coverage.test.js` — a list that may only
+ * shrink, so an op added tomorrow without a reference fails rather than joining
+ * a crowd. Do not add a link here to make a number go up: a reference that does
+ * not define the behaviour is a claim the code does not hold, which is worse
+ * than the empty row.
  */
 
 const MDN = "https://developer.mozilla.org/en-US/docs/Web/API";
@@ -27,6 +34,15 @@ const STEP_DOCS = {
   genkey: { url: `${MDN}/SubtleCrypto/generateKey`, label: "MDN · SubtleCrypto.generateKey()" },
   export: { url: `${MDN}/SubtleCrypto/exportKey`, label: "MDN · SubtleCrypto.exportKey()" },
   import: { url: `${MDN}/SubtleCrypto/importKey`, label: "MDN · SubtleCrypto.importKey()" },
+  // `keypair` is the *source* form of `import` — `engine.js` says so in its own
+  // words ("Delegates to the very same importKey the `import` transform
+  // calls, so a keypair authored here and one piped through `… | import` are
+  // indistinguishable downstream"). Same delegation rule as `seal` and `send`:
+  // one call, one set of bytes, so one reference. Pointing this at something
+  // else — or at nothing, which is where it sat — would claim a difference in
+  // what WebCrypto is handed that does not exist. The paste arriving at run
+  // time is where the material comes from, not what is done to it.
+  keypair: { url: `${MDN}/SubtleCrypto/importKey`, label: "MDN · SubtleCrypto.importKey()" },
   digest: { url: `${MDN}/SubtleCrypto/digest`, label: "MDN · SubtleCrypto.digest()" },
   sign: { url: `${MDN}/SubtleCrypto/sign`, label: "MDN · SubtleCrypto.sign()" },
   verify: { url: `${MDN}/SubtleCrypto/verify`, label: "MDN · SubtleCrypto.verify()" },
@@ -180,14 +196,11 @@ const STEP_DOCS = {
   "rtc.gather": { url: `${MDN}/RTCIceCandidate`, label: "MDN · RTCIceCandidate" },
   "rtc.check": { url: `${RFC}/rfc8445#section-7`, label: "RFC 8445 §7 · ICE checks" },
   "rtc.certificate": { url: `${MDN}/RTCCertificate`, label: "MDN · RTCCertificate" },
-  "rtc.offer": {
-    url: `${MDN}/RTCPeerConnection/createOffer`,
-    label: "MDN · RTCPeerConnection.createOffer()",
-  },
-  "rtc.answer": {
-    url: `${MDN}/RTCPeerConnection/createAnswer`,
-    label: "MDN · RTCPeerConnection.createAnswer()",
-  },
+  // `rtc.offer` and `rtc.answer` had entries here and were retired in §55c —
+  // `step-names.js` migrates both to `peer.offer`/`peer.answer` at parse time,
+  // so no name reaching `docsUrlFor` was ever either of them, and the two
+  // successors already carry these exact links. Two finished references with no
+  // caller; the coverage test now fails on a third.
   "rtc.state": {
     url: `${MDN}/RTCPeerConnection/connectionState`,
     label: "MDN · RTCPeerConnection.connectionState",

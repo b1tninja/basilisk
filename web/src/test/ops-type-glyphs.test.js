@@ -214,14 +214,19 @@ describe("the shelf prints the suite, never the module", () => {
   });
 
   it("keeps the null case a null, for every toolbox that has no suite", () => {
-    // Eleven of the fourteen. `age` is the one worth naming: it is
-    // unmistakably crypto and no CAST suite covers it, which is precisely the
-    // fact a reader weighing the toolbox needs and precisely the fact a
-    // rendered-nothing dot cannot state.
+    // Nine of the fourteen, and it was eleven. `jose` and `otp` were on this
+    // list beside `io` and `flow` as though they were encodings — and their
+    // math is `crypto.subtle`, twelve calls in `jose-ops.js` and the HMAC
+    // counter in `lib/otp/hotp.js`. They name `webcrypto` now, so a JWT and a
+    // TOTP are refused under FIPS on the same terms as the `aes-gcm` cell
+    // beside them, which is what they always should have been.
+    //
+    // `age` stays and is the one worth naming: it is unmistakably crypto and no
+    // CAST suite covers it — its math is a third-party package the self-test
+    // never runs — which is precisely the fact a reader weighing the toolbox
+    // needs and precisely the fact a rendered-nothing dot cannot state.
     for (const tb of [
       "age",
-      "jose",
-      "otp",
       "io",
       "flow",
       "encoding",

@@ -20,7 +20,34 @@ export function toolboxToSuite(toolbox) {
   // qualifies. The encodings are not CAST's job; they get interop fixtures
   // and verb smoke instead (§29g).
   if (tb === "ssh") return "webcrypto";
+  // `jose` and `otp` for the same reason, and they were missing it. A JOSE op
+  // reaches SubtleCrypto through `webcrypto-ops.js` twelve times over and
+  // touches OpenPGP not at all; HOTP's counter is `crypto.subtle.sign("HMAC")`
+  // in `lib/otp/hotp.js`. Both are the WebCrypto suite doing WebCrypto's work
+  // under another toolbox's name — so with the switch on and `webcrypto`
+  // unverified, a JWT or a TOTP ran while an `aes-gcm` cell beside it was
+  // refused. `suitesUsedBySteps` reported nothing for them, so nothing this
+  // file does could reach them.
+  if (tb === "jose") return "webcrypto";
+  if (tb === "otp") return "webcrypto";
   if (tb === "sss") return "sss";
+  // ── The fall-throughs, each on purpose and each for a different reason ──
+  //
+  // `age` has a vector to run and a result to gate on, and still names no
+  // suite — its math is the third-party `age-encryption` package, which no
+  // CAST qualifies. Mapping it to `webcrypto` would be the false claim this
+  // file exists to prevent: the self-test would be vouching for primitives it
+  // never ran. It is a real gap and it can only be closed by a CAST for age,
+  // not by an entry here.
+  //
+  // `agent` is polymorphic and cannot honestly name one suite: `agent.sign`
+  // emits an OpenPGP signature for a PGP key and an sshsig for an SSH key, so
+  // either answer is false on one branch. The suite is a property of the key
+  // the vault hands back, not of the op.
+  //
+  // `quorum`'s session crypto — ECDH, HKDF, AES-GCM in `lib/notebook/crypto.js`
+  // — is not CAST-gated today, which `docs/CRYPTOGRAPHY.md` states outright.
+  //
   // `webauthn` falls through here on purpose, and the fall-through is the
   // whole of FIPS mode's position on it: there is no suite to name, so
   // `suitesUsedBySteps` never reports one, so nothing this file does can

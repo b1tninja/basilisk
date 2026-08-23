@@ -118,11 +118,28 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   the notebook through a worker is a design that may yet be argued for. But
   there is no worker path now, and a reader can take the family as evidence one
   exists. A decision, not a defect.
-- **`CAST-AND-TEST-GAPS.md`'s "block add" half never shipped.** The plan's table
-  and diagram promise ops that "cannot be added from drawer / suggest";
-  `CRYPTOGRAPHY.md` states plainly there is no add-time gate anywhere. Unrelated
-  to the worker deletion and flagged inline beneath the diagram, but the plan
-  still reads as though half of it is in force.
+- **`age` performs cryptography that no CAST qualifies, and cannot be gated.**
+  Its math is the third-party `age-encryption` package. FIPS mode cannot refuse
+  it, and mapping it to `webcrypto` would have the self-test vouch for
+  primitives it never ran — so the honest state is a toolbox with a vector to
+  run, a result to gate on, and no suite. Closing it means a CAST for age.
+  Pinned as an exemption in `suite-gate-reach.test.js`.
+- **`assertSuiteReady` has no production caller.** Exported from
+  `crypto-self-test.js` "for hard gates"; the hard gate that shipped is
+  `assertRecipeAllowedUnderFips`. Annotated in place rather than deleted, but it
+  is the shape this file keeps finding and nobody should cite it as a protection
+  in force.
+- **Four ops have a citation argued for and blocked by a test.**
+  `run.manifest`, `run.attest` and `playbook` all serialize through
+  `receipt.js`'s own `canonicalJson`, which `run.receipt` already cites RFC 8785
+  for on exactly that argument; `agent.decrypt` refuses every non-PGP key by
+  name and then calls openpgp's `decrypt`, so unlike `agent.sign` it is not
+  polymorphic. All four are asserted uncited by
+  `toolkit-type-registry.test.js:493`, so citing them means editing that list
+  and the `UNCITED` entries together. Note `canonicalJson` calls itself
+  "deliberately a *subset* of JCS rather than a claim to implement it" while the
+  two existing citations say RFC 8785 flatly — tighten that for all five at once
+  or not at all.
 
 ---
 
