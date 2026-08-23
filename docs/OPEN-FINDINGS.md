@@ -198,6 +198,24 @@ element that does not exist. Each was disproved in under a minute by grepping
 for the thing it claimed. Do that first; a fix aimed at an already-fixed item
 spends the trust this file runs on.
 
+**The `dist` grep proves less than it looks, and exactly which less is
+measurable.** Several entries here were settled by asking whether a name appears
+in `web/dist/assets/*.js`, on the reasoning that a name absent from the build
+cannot be reached by any code path. The build is **minified**, so that reasoning
+holds for two kinds of name and fails for the third:
+
+| what you are grepping for | survives minification | verdict |
+|---|---|---|
+| a string literal — a CSS class, message text | yes | **valid**; `ops-panel` 1, `chef-workspace` 0 |
+| an object property — `peer.notebookReachedAt` | yes | **valid**; 10, 60 and 35 hits on three live ones |
+| a **function identifier** | **no** | **worthless**; `opsMatchingQuery`, `kindGlyph`, `readRunProof` and `planChains` are all live and all score **0** |
+
+So the dead-stylesheet sweep and the `notebookReachedAt` reader stand on it. The
+`manifestHonouredBy` finding does not, and it never needed to — every reference
+to it outside `src/test/` was a comment, and that source sweep is what actually
+established it. For a function, grep the source and check whether each hit is a
+comment; the build tells you nothing.
+
 Take the top of §1 first. Everything there is a control that does not control,
 which is worse than a missing feature: somebody is relying on it. §2 is next,
 because a check that cannot fire is indistinguishable from one that passes.
