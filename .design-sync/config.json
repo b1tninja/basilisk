@@ -52,6 +52,7 @@
     "PresetMenu": "src/toolkit/widgets/PresetMenu.tsx",
     "CeremonySheet": "src/toolkit/widgets/CeremonySheet.tsx",
     "DkgPanel": "src/toolkit/widgets/DkgPanel.tsx",
+    "RoomCells": "src/toolkit/widgets/RoomCells.tsx",
     "ShareCards": "src/toolkit/widgets/ShareCards.tsx",
     "ShareCheck": "src/toolkit/widgets/ShareCheck.tsx",
     "ShareIdentity": "src/toolkit/widgets/ShareIdentity.tsx",

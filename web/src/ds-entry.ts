@@ -217,6 +217,24 @@ export {
   type PoolPanelProps,
   type PoolParticipant,
 } from "./toolkit/widgets/PoolPanel";
+/**
+ * The room's cell ticker, added because it meets this file's own test.
+ *
+ * The rule here is "parts that stand on their own", and it is the reason most
+ * toolkit widgets are absent: `ToolCard` needs the op registry, `OutputList`
+ * needs artifact fixtures. `RoomCells` imports `cn` and `Fingerprint` and
+ * nothing else — both already exported above — so it renders from plain props
+ * with no notebook behind it.
+ *
+ * Its types travel with it. The table's whole subject is which outputs are face
+ * up and which are only known to exist, and a design tool handed the component
+ * without `SlotFace` cannot express that distinction to draw it.
+ */
+export {
+  RoomCells,
+  type PeerCellRow,
+  type SlotFace,
+} from "./toolkit/widgets/RoomCells";
 export { ShareCards } from "./toolkit/widgets/ShareCards";
 export { ShareCheck } from "./toolkit/widgets/ShareCheck";
 export { ShareIdentity } from "./toolkit/widgets/ShareIdentity";
