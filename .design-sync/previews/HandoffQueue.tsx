@@ -25,7 +25,14 @@ const MARA = "D772078C5C7C2A0EDCA09ED32C5EBBB46AD01388";
 const OKAFOR = "9F2A11B4C8D30E5761AA0C4E88B2F6D5091C7E43";
 
 const noop = () => {};
-const actions = { onAccept: noop, onOffer: noop, onSendResult: noop };
+/**
+ * `onDismiss` is not optional and is not a close button. It discards a document
+ * another person is waiting on the answer to, and it tells them nothing — there
+ * is no decline on this wire by design, so from their end a document you put
+ * down and one you have not read yet look the same. Every pending row draws it
+ * beside Accept and says so underneath.
+ */
+const actions = { onAccept: noop, onDismiss: noop, onOffer: noop, onSendResult: noop };
 
 /**
  * A session, and nothing crossing. The empty state teaches the mechanism — an
@@ -68,24 +75,69 @@ export const NoSession = () => (
     {...actions}
     live={false}
     pending={[]}
-    placedAway={[{ cell: 1, peer: "okafor", produces: ["b64"] }]}
+    placedAway={[{ cell: 1, peer: "okafor", produces: ["b64"], offered: "none" }]}
     owedBack={[]}
   />
 );
 
 /**
  * You are waiting on them: the run declined cell 1 because the plan says it is
- * okafor's, and stopped at cell 2 which reads what cell 1 writes. The press
- * hands it over with the values that cell reads and nothing else —
+ * okafor's, and cell 2 reads what cell 1 writes — so the run handed it over as
+ * it finished, carrying the values that cell reads and nothing else.
  * `buildOfferFor` refuses rather than trimming, because a partial offer says
  * "run this" while withholding something the cell needs.
+ *
+ * **`offered` is what the run already did, not what is queued.** The run decides
+ * as it ends, so by the time this list is on screen the attempt has happened or
+ * been ruled out, and the button says "again" rather than offering work that is
+ * done.
  */
 export const OweThemACell = () => (
   <HandoffQueue
     {...actions}
     live
     pending={[]}
-    placedAway={[{ cell: 1, peer: "okafor", produces: ["b64"] }]}
+    placedAway={[{ cell: 1, peer: "okafor", produces: ["b64"], offered: "sent" }]}
+    owedBack={[]}
+  />
+);
+
+/**
+ * The run tried and could not. The sentence is the handoff layer's own `why`,
+ * rendered verbatim rather than paraphrased, because the remedy is in it — and
+ * the button offers the retry the sentence implies.
+ */
+export const OfferRefused = () => (
+  <HandoffQueue
+    {...actions}
+    live
+    pending={[]}
+    placedAway={[
+      {
+        cell: 1,
+        peer: "okafor",
+        produces: ["b64"],
+        offered: "refused",
+        why: "The session dropped while the offer was in flight. Nothing left this machine.",
+      },
+    ]}
+    owedBack={[]}
+  />
+);
+
+/**
+ * **`aside` is a decision, not a queue.** The run looked at this cell and chose
+ * not to send: it reads no value made here and writes nothing this notebook goes
+ * on to read, so an offer would carry nothing and answer nothing. Its sentence
+ * is separate from `none` because the remedy is different — none at all, unless
+ * the peer asks.
+ */
+export const LeftAside = () => (
+  <HandoffQueue
+    {...actions}
+    live
+    pending={[]}
+    placedAway={[{ cell: 5, peer: "okafor", produces: ["theirs"], offered: "aside" }]}
     owedBack={[]}
   />
 );
@@ -180,7 +232,7 @@ export const AllThreeWaits = () => (
         ts: 1_760_000_090_000,
       },
     ]}
-    placedAway={[{ cell: 4, peer: "okafor", produces: ["sig"] }]}
+    placedAway={[{ cell: 4, peer: "okafor", produces: ["sig"], offered: "sent" }]}
     owedBack={[{ cell: 1, to: MARA, label: "mara" }]}
   />
 );

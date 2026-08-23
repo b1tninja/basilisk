@@ -1,4 +1,4 @@
-import { SessionStart, startIssues } from "basilisk-portal";
+import { SessionStart, START_OPENS, startIssues } from "basilisk-portal";
 
 /*
  * Naming the room, which is the only decision here.
@@ -11,16 +11,17 @@ import { SessionStart, startIssues } from "basilisk-portal";
  *
  * Two things this panel says that no other surface can:
  *
- * - **Start writes cells.** It appends `agent.unlock` and `quorum.offer` /
- *   `quorum.join` to the notebook and runs them. A session started by a hidden
- *   code path would be the one thing in this app that happened without a recipe
- *   saying so, which is why the recipe is shown before it is written.
- * - **Order is correctness, not preference.** The relay brokers only to whoever
- *   is in the group at the instant of a send and stores nothing, and the
- *   creator's signed invite goes out exactly once, inside `start()`. A joiner
- *   arriving one second later is in the right room and will never see the
- *   introduction — which is why the role paragraph tells each side to let the
- *   other press first.
+ * - **Start writes no cells.** It used to append `agent.unlock` and
+ *   `quorum.offer` / `quorum.join` and run them, and this panel printed that
+ *   recipe before writing it. There is no recipe any more, and silence would be
+ *   the wrong replacement: `opens` carries `START_OPENS`' sentences, which say
+ *   what opening a room actually does — chiefly that this key is held for as
+ *   long as the session is open, which is true for far longer than any cell was.
+ * - **Roles say what each end does, not who presses first.** Ordering stopped
+ *   being a correctness question: a joiner announces itself on arrival and the
+ *   creator republishes the signed invite to it, so arriving late costs nothing.
+ *   The two roles remain because a room with two creators or two joiners is a
+ *   room where nobody is introduced.
  *
  * `issues` is `startIssues`' own output rather than fixture prose, so these
  * cells cannot drift from the refusals a press would actually hit.
@@ -35,16 +36,30 @@ const KEYS = [
   { fingerprint: LIN, uid: "Lin Zhou <lin@example.org>" },
 ];
 
-const SUGGESTIONS = [
-  { fingerprint: GRACE, uid: "Grace Hopper <grace@example.org>" },
-  { fingerprint: LIN, uid: "Lin Zhou <lin@example.org>" },
+/**
+ * `trusted`, not `suggestions`: keys this browser has already *met* and marked.
+ * The list used to be this browser's own vault keys, which is the one group
+ * that is mostly not the people you are meeting — your own key joins the room
+ * the moment you choose it above, so every remaining row was a second identity
+ * of yours. A `RecipientChoice` carries `label`, not `uid`.
+ */
+const TRUSTED = [
+  { fingerprint: GRACE, label: "Grace Hopper <grace@example.org>" },
+  { fingerprint: LIN, label: "Lin Zhou <lin@example.org>" },
 ];
 
 const noop = () => {};
 
 const base = {
   keys: KEYS,
-  suggestions: SUGGESTIONS,
+  trusted: TRUSTED,
+  /**
+   * What Start does to your notebook, in `START_OPENS`' own sentences —
+   * required, and the replacement for the `recipe` this panel used to print.
+   * Real exported prose rather than fixture text, so a card can never show a
+   * claim the product does not make.
+   */
+  opens: START_OPENS,
   onRole: noop,
   onKeyFingerprint: noop,
   onAudience: noop,
@@ -55,13 +70,6 @@ const base = {
 
 const linkFor = (audience: string[]) =>
   `https://basilisk.pages.dev/toolkit#j=${[...audience].sort().join(",")}`;
-
-const recipeFor = (audience: string[], key: string, role: "offer" | "join") =>
-  [
-    `agent.unlock ${key} | out $me`,
-    "",
-    `quorum.${role} to="${[...audience].sort().join(",")}" key=$me | out $session`,
-  ].join("\n");
 
 /**
  * **Nothing chosen yet — the state a reader arrives in.** Both refusals are
@@ -77,7 +85,6 @@ export const Empty = () => (
     audience={[]}
     issues={startIssues({ audience: [], keyFingerprint: "" })}
     inviteUrl={null}
-    recipe={recipeFor([], "", "offer")}
   />
 );
 
@@ -95,17 +102,18 @@ export const ReadyToStart = () => (
     audience={[ADA, GRACE].sort()}
     issues={[]}
     inviteUrl={linkFor([ADA, GRACE])}
-    recipe={recipeFor([ADA, GRACE], ADA, "offer")}
   />
 );
 
 /**
  * **The joiner's side, and the reason the roles are visible at all.**
  *
- * The copy inverts: a joiner waits for an invite that is broadcast once and
- * never stored, so pressing after the creator has already started means there is
- * nothing left on the wire to verify. Collapsing the two roles into one
- * "Connect" would make that failure indistinguishable from a network problem.
+ * The copy inverts: a joiner waits for the creator's signed invite and meshes
+ * only after verifying it. Arriving late costs nothing — a joiner announces
+ * itself when it joins, and an invite already published is republished for it —
+ * so the roles are about which end introduces the other, not about who presses
+ * first. Collapsing them into one "Connect" would leave a room with two
+ * creators or two joiners, where nobody is introduced at all.
  */
 export const InvitedByLink = () => (
   <SessionStart
@@ -115,7 +123,6 @@ export const InvitedByLink = () => (
     audience={[ADA, GRACE].sort()}
     issues={[]}
     inviteUrl={linkFor([ADA, GRACE])}
-    recipe={recipeFor([ADA, GRACE], GRACE, "join")}
   />
 );
 
@@ -135,7 +142,6 @@ export const KeyNotInTheRoom = () => (
     audience={[ADA, GRACE].sort()}
     issues={startIssues({ audience: [ADA, GRACE], keyFingerprint: LIN })}
     inviteUrl={linkFor([ADA, GRACE])}
-    recipe={recipeFor([ADA, GRACE], LIN, "offer")}
   />
 );
 
@@ -152,6 +158,5 @@ export const AlreadyLive = () => (
     audience={[ADA, GRACE].sort()}
     issues={startIssues({ audience: [ADA, GRACE], keyFingerprint: ADA, live: true })}
     inviteUrl={linkFor([ADA, GRACE])}
-    recipe={recipeFor([ADA, GRACE], ADA, "offer")}
   />
 );

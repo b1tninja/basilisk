@@ -33,9 +33,32 @@ export const Sizes = () => (
   </div>
 );
 
-export const Disabled = () => (
+/**
+ * There is no `disabled` prop, and that is the system's strongest opinion
+ * about controls: a boolean cannot say *why*, so a button that declines
+ * carries the sentence instead. `disabledReason` is what makes it inert — the
+ * refusal and its explanation are one value and cannot drift apart.
+ *
+ * The button keeps its place in the tab order (`aria-disabled`, never the
+ * `disabled` attribute) and renders the sentence beneath itself, pointed at by
+ * `aria-describedby`. Write the state the reader is in, not "Unavailable".
+ */
+export const Refused = () => (
+  <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+    <Button disabledReason="No recipe is loaded — place a step first.">Run recipe</Button>
+    <Button variant="secondary" disabledReason="This step has produced no output yet.">
+      Copy
+    </Button>
+  </div>
+);
+
+/**
+ * Busy is not a refusal. An in-flight control has declined nothing and owes no
+ * explanation — it says what is happening in its own label — so it gets
+ * `aria-busy` and the same re-entry guard, never `aria-disabled`.
+ */
+export const Busy = () => (
   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-    <Button disabled>Run recipe</Button>
-    <Button variant="secondary" disabled>Copy</Button>
+    <Button busy>Checking…</Button>
   </div>
 );

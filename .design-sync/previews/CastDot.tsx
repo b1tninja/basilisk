@@ -1,6 +1,16 @@
 import { CastDot } from "basilisk-portal";
 
-const ALL_PASSED = { openpgp: "verified", webcrypto: "verified", sss: "verified" };
+/**
+ * `status` is the gate's own `SuiteStatusMap` — **all three named suites, every
+ * time**, not a bag with only the interesting key in it. A partial map is a
+ * type error, and it should be: the dot's whole job is to distinguish "passed"
+ * from "not tested yet", and a suite missing from the map is indistinguishable
+ * from one that has not reported.
+ *
+ * So each story below starts from an all-green session and overrides the one
+ * suite it is about, which is also what the real self-test produces.
+ */
+const ALL_PASSED = { openpgp: "verified", webcrypto: "verified", sss: "verified" } as const;
 
 const rowStyle = {
   display: "flex",
@@ -47,21 +57,21 @@ export const States = () => (
   <div style={{ display: "grid", gap: 8 }}>
     <div style={rowStyle}>
       <span style={slot}>
-        <CastDot op={{ toolbox: "openpgp" }} status={{ openpgp: "verified" }} />
+        <CastDot op={{ toolbox: "openpgp" }} status={ALL_PASSED} />
       </span>
       <span style={toolboxName}>OpenPGP</span>
       <span style={meaning}>verified — self-test passed</span>
     </div>
     <div style={rowStyle}>
       <span style={slot}>
-        <CastDot op={{ toolbox: "sss" }} status={{ sss: "unverified" }} />
+        <CastDot op={{ toolbox: "sss" }} status={{ ...ALL_PASSED, sss: "unverified" }} />
       </span>
       <span style={toolboxName}>SSS / BLIP39</span>
       <span style={meaning}>unverified — not self-tested yet</span>
     </div>
     <div style={rowStyle}>
       <span style={slot}>
-        <CastDot op={{ toolbox: "webcrypto" }} status={{ webcrypto: "error" }} />
+        <CastDot op={{ toolbox: "webcrypto" }} status={{ ...ALL_PASSED, webcrypto: "error" }} />
       </span>
       <span style={toolboxName}>WebCrypto</span>
       <span style={meaning}>error — self-test FAILED</span>
@@ -81,21 +91,21 @@ export const SelfTestFailed = () => (
   <div style={{ display: "grid", gap: 8 }}>
     <div style={rowStyle}>
       <span style={slot}>
-        <CastDot op={{ toolbox: "webcrypto" }} status={{ webcrypto: "error", sss: "verified" }} />
+        <CastDot op={{ toolbox: "webcrypto" }} status={{ ...ALL_PASSED, webcrypto: "error" }} />
       </span>
       <span style={toolboxName}>WebCrypto</span>
       <span style={meaning}>do not rely on these ops</span>
     </div>
     <div style={rowStyle}>
       <span style={slot}>
-        <CastDot op={{ toolbox: "ssh" }} status={{ webcrypto: "error", sss: "verified" }} />
+        <CastDot op={{ toolbox: "ssh" }} status={{ ...ALL_PASSED, webcrypto: "error" }} />
       </span>
       <span style={toolboxName}>SSH</span>
       <span style={meaning}>same suite — SSH&apos;s maths is SubtleCrypto</span>
     </div>
     <div style={rowStyle}>
       <span style={slot}>
-        <CastDot op={{ toolbox: "sss" }} status={{ webcrypto: "error", sss: "verified" }} />
+        <CastDot op={{ toolbox: "sss" }} status={{ ...ALL_PASSED, webcrypto: "error" }} />
       </span>
       <span style={toolboxName}>SSS / BLIP39</span>
       <span style={meaning}>unaffected — a different suite</span>

@@ -69,11 +69,19 @@ export const Filter = () => (
 );
 
 /**
- * Read-only and disabled read differently on purpose. A resolved value the
- * user may copy stays full-strength and selectable; a field whose op is not
- * yet reachable dims to half and refuses the caret.
+ * `readOnly` is the only non-editable state this control has. A value the app
+ * resolved rather than the user typed stays full-strength and selectable,
+ * because the whole point of showing it is that it can be copied.
+ *
+ * **There is no `disabled`** — `InputProps` omits it and types it `never`, the
+ * same rule `Button` enforces with `disabledReason`. A boolean cannot say why a
+ * field went dead, and a grey box with nothing to read is the defect that rule
+ * exists to remove. Nothing in the product disables an input today, so there is
+ * no paired refusal to reach for either: a field whose op is not yet reachable
+ * stays live, and the panel around it says what is missing. Do not dim a field
+ * to mean "not ready".
  */
-export const ReadOnlyAndDisabled = () => (
+export const ReadOnly = () => (
   <div style={{ display: "grid", gap: 10, maxWidth: 360 }}>
     <div style={field}>
       <span style={label}>Fingerprint (resolved by agent.pub)</span>
@@ -81,7 +89,8 @@ export const ReadOnlyAndDisabled = () => (
     </div>
     <div style={field}>
       <span style={label}>Recipient</span>
-      <Input disabled placeholder="Connect a keyring first" />
+      <Input placeholder="Fingerprint, uid, or a key from the keyring" />
+      <small style={help}>No keyring is connected yet — nothing will resolve.</small>
     </div>
   </div>
 );

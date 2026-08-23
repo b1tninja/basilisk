@@ -23,9 +23,19 @@ E2E tests run real `gpg --send-keys` / `--recv-keys` against the basilisk contai
 ```bash
 cd web
 npx vitest run        # node only, no browser, no sockets — seconds
-npx tsc --noEmit      # must exit 0; see below
+npm run typecheck     # must exit 0; see below
 npm run test:e2e      # builds dist/, then drives it in real Chromium
 ```
+
+`npm run typecheck` is two `tsc` passes and not one. The second is
+`tsconfig.previews.json`, which is the only thing that type-checks
+`.design-sync/previews/` — the 50 `.tsx` files the design tool renders. They sit
+outside `web/`, so `tsconfig.json`'s `include` has never reached them, and they
+import `basilisk-portal`, a bare specifier that resolves nowhere in this repo
+without the `paths` that config adds. Nothing else finds their errors: the
+design-sync capture step renders them, and a preview that throws still produces
+an image of something. Bare `npx tsc --noEmit` skips them, which is why the
+command above is the script.
 
 No file count here on purpose: it was `143` for long enough to be wrong by
 forty, and a number nobody updates is worse than no number.
@@ -48,8 +58,8 @@ first: the point is to drive the *shipped* bundle under the *production* CSP.
 
 ### What CI runs, and what it does not
 
-`ci.yml` runs the node suite and `npx tsc --noEmit` on every push and pull
-request. Neither ran there until recently: the job built the portal and audited
+`ci.yml` runs the node suite and `npm run typecheck` — both `tsc` passes,
+including the previews — on every push and pull request. Neither ran there until recently: the job built the portal and audited
 dependencies, and vite strips types without reading them, so a green build said
 nothing about whether anything type-checked. Three real errors reached `main`
 that way.

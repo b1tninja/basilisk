@@ -187,22 +187,15 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   because that is the only spec where all three shares exist at once. The
   dealer-absent file is covered transitively — the same generator deals both
   rooms — not directly.
-- **The design-system previews have drifted from the components they preview,
-  and `tsc` has never looked.** `.design-sync/previews/` is outside
-  `web/tsconfig.json`'s `include`, and the previews import from
-  `"basilisk-portal"` — a bare specifier that resolves only inside the design
-  tool. Point `paths` at `src/ds-entry.ts` (which *is* that module) and add the
-  directory, and **60 type errors appear across 11 files**: `KeyVault` 14,
-  `PlanPanel` 12, `HandoffQueue` 8, `CastDot` 7, `CellAssign` 6.
-
-  They are real, not resolution noise — that was measured separately and is
-  zero once `react` is mapped too. `CellAssign`'s preview passes a `publish`
-  prop the component does not declare; `CastDot`'s pass partial `SuiteStatusMap`
-  objects missing required suites. So the design tool has been rendering
-  components with props they do not accept, and the capture step cannot see it
-  because a preview that throws still produces an image of *something*.
-
----
+- **A `{...spread}` hides a preview's props from the check that now covers
+  them.** TypeScript exempts spread properties from excess-property checking, so
+  a preview built on a shared `base`/`START` const can pass a prop the component
+  does not declare and `tsc` will not say so. That is not hypothetical: it is how
+  `SessionStart`'s `suggestions` survived being renamed to `trusted`, and it was
+  found by reading the prop list against the fixture rather than by the compiler.
+  Annotating those consts with the component's props type would close it —
+  `SessionStartProps` and `VaultKeyView` are not exported from `ds-entry.ts`,
+  which is what makes that impossible today.
 
 ## How to use this file
 

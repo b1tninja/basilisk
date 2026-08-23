@@ -84,13 +84,20 @@ export const SharePair = () => (
 );
 
 /**
- * Disabled: the op that would fill this field is not reachable yet, so the
- * field dims rather than disappearing. Keeping it visible is what tells the
- * user the parameter exists at all.
+ * Not yet filled. **There is no `disabled` prop** — `TextareaProps` omits it
+ * and types it `never`, for the reason spelled out on `Input` and enforced on
+ * `Button` by `disabledReason`: a boolean cannot say why a field went dead, and
+ * a dimmed box with nothing to read is the defect that rule removes.
+ *
+ * So a field whose op has not run yet stays live and legible, and the sentence
+ * that would have been a tooltip on a grey box is ordinary text under the
+ * control. Keeping it visible is what tells the user the parameter exists at
+ * all; keeping it readable is what tells them what to do about it.
  */
-export const Disabled = () => (
+export const NotYetFilled = () => (
   <div style={{ maxWidth: 420 }}>
     <label style={label}>Detached signature</label>
-    <Textarea disabled placeholder="Available once agent.sign has run" />
+    <Textarea rows={3} placeholder="Appears here once agent.sign has run" />
+    <small style={help}>agent.sign has not run in this recipe yet.</small>
   </div>
 );

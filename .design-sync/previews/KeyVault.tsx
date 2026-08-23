@@ -57,20 +57,54 @@ const base = {
   onSuggestPassphrase: async () => ({ passphrase: "acorn ridge candle mint", bits: 62 }),
 };
 
-/** A row, with its badge and sentence taken from the product's own readout. */
-function row(
-  fingerprint: string,
-  key: Parameters<typeof keyPowerReadout>[0],
-  extra: Record<string, unknown> = {}
-) {
-  const readout = keyPowerReadout(key, NOW);
+/**
+ * What `keyPowerReadout` reads, and nothing else.
+ *
+ * `kind` is a closed set here. `PowerKey` spells it `"pgp"|"ssh"|"raw"|string`
+ * so a legacy vault record can arrive with anything in it; the row the panel
+ * draws does not, and a preview is the one place both shapes meet.
+ */
+type PowerFacts = {
+  kind?: "pgp" | "ssh" | "raw";
+  /** passphrase | passkey | device | session — the vault's own word. */
+  protection?: string;
+  expires?: string | number | null;
+  /** `sessionList`'s answer: is OpenPGP's own S2K lock still on the armor. */
+  locked?: boolean;
+  /** Whether the agent session is holding this key's armor at all. */
+  loaded?: boolean;
+};
+
+/** What the panel draws that the readout has no opinion about. */
+type RowExtras = {
+  uid?: string;
+  email?: string;
+  publicLine?: string;
+  loadedUntil?: number | null;
+  deviceLabel?: string;
+};
+
+/**
+ * A row, with its badge and sentence taken from the product's own readout.
+ *
+ * **`PowerKey` and `VaultKeyView` are two different shapes**, and the split
+ * here is the point rather than tidiness. `keyPowerReadout` is asked only about
+ * what it reads — kind, protection, expiry, and the two locks — and everything
+ * the panel draws around that answer (`uid`, `publicLine`, `loadedUntil`) stays
+ * on the row and is never handed to it. Spreading one into the other is how a
+ * `uid` came to be passed to a function that has never had one, and how
+ * `expires` and `locked` came to be set on a row that has no such fields.
+ */
+function row(fingerprint: string, facts: PowerFacts, extras: RowExtras = {}) {
+  const readout = keyPowerReadout({ fingerprint, ...facts }, NOW);
   return {
     fingerprint,
+    kind: facts.kind,
+    protection: facts.protection,
     power: readout.power,
     powerLabel: readout.label,
     why: readout.why,
-    ...key,
-    ...extra,
+    ...extras,
   };
 }
 
@@ -83,16 +117,8 @@ export const AtRest = () => (
   <KeyVault
     {...base}
     keys={[
-      row(ADA, {
-        fingerprint: ADA,
-        uid: "Ada Lovelace <ada@example.org>",
-        protection: "passphrase",
-      }),
-      row(GRACE, {
-        fingerprint: GRACE,
-        uid: "Grace Hopper <grace@example.org>",
-        protection: "passkey",
-      }),
+      row(ADA, { protection: "passphrase" }, { uid: "Ada Lovelace <ada@example.org>" }),
+      row(GRACE, { protection: "passkey" }, { uid: "Grace Hopper <grace@example.org>" }),
     ]}
   />
 );
@@ -109,25 +135,13 @@ export const Open = () => (
     keys={[
       row(
         ADA,
-        {
-          fingerprint: ADA,
-          uid: "Ada Lovelace <ada@example.org>",
-          protection: "device",
-          loaded: true,
-          locked: false,
-        },
-        { loadedUntil: NOW + 238_000 }
+        { protection: "device", loaded: true, locked: false },
+        { uid: "Ada Lovelace <ada@example.org>", loadedUntil: NOW + 238_000 }
       ),
       row(
         GRACE,
-        {
-          fingerprint: GRACE,
-          uid: "Grace Hopper <grace@example.org>",
-          protection: "passphrase",
-          loaded: true,
-          locked: true,
-        },
-        { loadedUntil: NOW + 61_000 }
+        { protection: "passphrase", loaded: true, locked: true },
+        { uid: "Grace Hopper <grace@example.org>", loadedUntil: NOW + 61_000 }
       ),
     ]}
   />
@@ -143,19 +157,19 @@ export const CannotSign = () => (
   <KeyVault
     {...base}
     keys={[
-      row(LIN, {
-        fingerprint: LIN,
-        uid: "Lin Zhou <lin@example.org>",
-        protection: "passphrase",
-        expires: inDays(-4),
-      }),
-      row(SSH, {
-        fingerprint: SSH,
-        uid: "lin@workstation",
-        kind: "ssh",
-        protection: "device",
-        publicLine: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF9k lin@workstation",
-      }),
+      row(
+        LIN,
+        { protection: "passphrase", expires: inDays(-4) },
+        { uid: "Lin Zhou <lin@example.org>" }
+      ),
+      row(
+        SSH,
+        { kind: "ssh", protection: "device" },
+        {
+          uid: "lin@workstation",
+          publicLine: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF9k lin@workstation",
+        }
+      ),
     ]}
   />
 );
@@ -177,11 +191,7 @@ export const NoPasskeySupport = () => (
     {...base}
     passkeyAvailable={false}
     keys={[
-      row(ADA, {
-        fingerprint: ADA,
-        uid: "Ada Lovelace <ada@example.org>",
-        protection: "passphrase",
-      }),
+      row(ADA, { protection: "passphrase" }, { uid: "Ada Lovelace <ada@example.org>" }),
     ]}
   />
 );

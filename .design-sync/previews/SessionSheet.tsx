@@ -1,4 +1,4 @@
-import { SessionSheet, startIssues } from "basilisk-portal";
+import { SessionSheet, START_OPENS, startIssues } from "basilisk-portal";
 
 /*
  * The shared session's own window — a `Sheet`, per the rule that a design
@@ -39,17 +39,20 @@ const START = {
   keyFingerprint: ADA,
   onKeyFingerprint: noop,
   audience: AUDIENCE,
-  suggestions: [{ fingerprint: GRACE, uid: "Grace Hopper <grace@example.org>" }],
+  // `trusted`, not `suggestions` — keys this browser has met and marked, and a
+  // `RecipientChoice` carries `label` rather than `uid`.
+  trusted: [{ fingerprint: GRACE, label: "Grace Hopper <grace@example.org>" }],
   onAudience: noop,
   onPaste: noop,
   issues: startIssues({ audience: AUDIENCE, keyFingerprint: ADA }),
   inviteUrl: URL,
   onCopyInvite: noop,
-  recipe: [
-    `agent.unlock ${ADA} | out $me`,
-    "",
-    `quorum.offer to="${AUDIENCE.join(",")}" key=$me | out $session`,
-  ].join("\n"),
+  // `opens` replaced `recipe`. Start no longer writes `agent.unlock` and
+  // `quorum.offer` into the notebook, so there is no recipe to print before it
+  // runs — and silence would be the wrong replacement. `START_OPENS` says what
+  // opening a room does instead, chiefly that this key is held for as long as
+  // the session is open.
+  opens: START_OPENS,
   onStart: noop,
 };
 

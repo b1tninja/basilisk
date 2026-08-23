@@ -139,14 +139,19 @@ export const InAnOutputRow = () => (
 );
 
 /**
- * Sizing, and the sizes it is actually asked for. 12px is the badge default
- * and pairs with 11px type; 14 and 16 appear on the type card, where the
- * glyph is the heading. `strokeWidth` is fixed at 2 so the family holds
- * together as the box grows.
+ * Sizing. `size` is a **closed set** — `GlyphSize` is `12 | 14 | 16 | 18 | 22`
+ * and nothing between them exists, because the glyph family is drawn on a grid
+ * and an off-ladder box lands the strokes off-pixel. Asking for 20 is a type
+ * error, not a rounding.
+ *
+ * The product asks for two of the five: 12px is the badge default and pairs
+ * with 11px type, 14px is the output row. The rest of the ladder is here so the
+ * family can be seen holding together — `strokeWidth` is fixed at 2 as the box
+ * grows, which is what keeps 22 from reading as a different set of icons.
  */
 export const Sizes = () => (
   <div style={{ display: "flex", gap: 16, alignItems: "flex-end", color: "var(--foreground)" }}>
-    {[12, 14, 16, 20].map((size) => (
+    {([12, 14, 16, 18, 22] as const).map((size) => (
       <div key={size} style={{ display: "grid", justifyItems: "center", gap: 4 }}>
         <KindGlyph kind="signature" size={size} />
         <span style={{ fontSize: 10, color: "var(--muted-foreground)" }}>{size}px</span>

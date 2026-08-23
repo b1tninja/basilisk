@@ -11,6 +11,14 @@ import { CellAssign } from "basilisk-portal";
  * It sets the same fields the text sets, so the two views cannot disagree
  * about where a cell runs. Every cell passes `defaultOpen`: a closed menu
  * photographs as a button, and the items are the whole of what this control is.
+ *
+ * **What leaves is a list, not a flag.** There is no `publish` prop —
+ * `publishSlots` is the `out`s a `publish` step stands behind, and the trigger's
+ * `publish $x` modifier is derived from it (`publishSlots.length > 0`). Empty
+ * means *none of them*, and now means only that. The header used to spell "no
+ * slots named" and "every slot" identically, so emptying the list published
+ * everything and the last click did the opposite of what it said; a boolean
+ * beside the list could only ever agree with it or contradict it.
  */
 
 const frame = { padding: "0 0 210px" };
@@ -46,7 +54,7 @@ const CEREMONY_SLOTS = ["expected", "commitments", "share"];
  */
 export const Default = () => (
   <div style={frame}>
-    <CellAssign peer={null} publish={false} choices={ROOM} onAssign={() => {}} defaultOpen />
+    <CellAssign peer={null} choices={ROOM} onAssign={() => {}} defaultOpen />
   </div>
 );
 
@@ -67,7 +75,6 @@ export const PublishingOneSlot = () => (
   <div style={tall}>
     <CellAssign
       peer={ADA}
-      publish
       outSlots={CEREMONY_SLOTS}
       publishSlots={["commitments"]}
       choices={ROOM}
@@ -78,19 +85,21 @@ export const PublishingOneSlot = () => (
 );
 
 /**
- * The same cell publishing everything, which is what a bare `publish` means.
+ * The same cell publishing everything — which is now spelled out, every slot
+ * named.
  *
  * Every slot reads "Keep … here", because every one of them is currently
- * leaving. There is no item for publishing nothing: an empty list *is* the
- * bare `publish`, so the way to stop is the line above — which is why the last
- * remaining slot cannot be switched off from here.
+ * leaving. Turning the last one off is offered and simply stops publishing: the
+ * list is exactly what leaves, so an empty list cannot be read as "all of
+ * them". It used to be, which made the last click on this menu do the opposite
+ * of what it said.
  */
 export const PublishingEverything = () => (
   <div style={tall}>
     <CellAssign
       peer={ADA}
-      publish
       outSlots={CEREMONY_SLOTS}
+      publishSlots={CEREMONY_SLOTS}
       choices={ROOM}
       onAssign={() => {}}
       defaultOpen
@@ -105,11 +114,12 @@ export const PublishingEverything = () => (
  *
  * Publishing is now offered, and it is the only item below the separator: the
  * constructive choices are the peers, and this is a change of what the cell is
- * allowed to do rather than of who does it.
+ * allowed to do rather than of who does it. The cell writes one `out` and
+ * publishes none of it — `publishSlots` empty, which means exactly that.
  */
 export const Assigned = () => (
   <div style={frame}>
-    <CellAssign peer={ADA} publish={false} choices={ROOM} onAssign={() => {}} defaultOpen />
+    <CellAssign peer={ADA} outSlots={["pubA"]} choices={ROOM} onAssign={() => {}} defaultOpen />
   </div>
 );
 
@@ -127,8 +137,8 @@ export const Publishing = () => (
   <div style={frame}>
     <CellAssign
       peer={ADA}
-      publish
       outSlots={["pubA"]}
+      publishSlots={["pubA"]}
       choices={ROOM}
       onAssign={() => {}}
       defaultOpen
@@ -147,6 +157,13 @@ export const Publishing = () => (
  */
 export const BeforeAnyoneJoins = () => (
   <div style={frame}>
-    <CellAssign peer="witness" publish choices={[{ label: "witness" }]} onAssign={() => {}} defaultOpen />
+    <CellAssign
+      peer="witness"
+      outSlots={["attestation"]}
+      publishSlots={["attestation"]}
+      choices={[{ label: "witness" }]}
+      onAssign={() => {}}
+      defaultOpen
+    />
   </div>
 );

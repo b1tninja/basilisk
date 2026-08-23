@@ -21,6 +21,13 @@ import { PlanPanel } from "basilisk-portal";
  * "publish" is a header modifier, not a step. It is what lets $a leave mara's
  * machine, and without it the second cell is a refusal rather than a plan —
  * one of the cells below is exactly that refusal.
+ *
+ * On a cell it shows up as `publishes`: one slot label per `out` a `publish`
+ * header stands behind, empty when nothing leaves. **There is no boolean
+ * beside it.** There was — `publish`, which could only ever be
+ * `publishes.length > 0` — and a summary that can only agree with a list or
+ * contradict it is a place for the two to disagree. Every fixture below
+ * carried the dead boolean until tsc was pointed at these files.
  */
 
 const frame = { maxWidth: 560 };
@@ -55,7 +62,6 @@ export const Default = () => (
               "mara"
             ],
             "mine": true,
-            "publish": true,
             "publishes": [
               "a"
             ],
@@ -78,7 +84,6 @@ export const Default = () => (
               "okafor"
             ],
             "mine": false,
-            "publish": false,
             "publishes": [],
             "produces": [
               "d"
@@ -144,7 +149,6 @@ export const WaitingOnAPeer = () => (
               "mara"
             ],
             "mine": false,
-            "publish": true,
             "publishes": [
               "a"
             ],
@@ -167,7 +171,6 @@ export const WaitingOnAPeer = () => (
               "okafor"
             ],
             "mine": true,
-            "publish": false,
             "publishes": [],
             "produces": [
               "d"
@@ -242,7 +245,6 @@ export const RefusedTwoOwners = () => (
               "mara"
             ],
             "mine": true,
-            "publish": false,
             "publishes": [],
             "produces": [
               "a"
@@ -263,7 +265,6 @@ export const RefusedTwoOwners = () => (
               "mara"
             ],
             "mine": true,
-            "publish": false,
             "publishes": [],
             "produces": [
               "d"
@@ -343,7 +344,6 @@ export const UnknownPeer = () => (
               "mara"
             ],
             "mine": true,
-            "publish": true,
             "publishes": [
               "a"
             ],
@@ -366,7 +366,6 @@ export const UnknownPeer = () => (
               "zara"
             ],
             "mine": false,
-            "publish": false,
             "publishes": [],
             "produces": [
               "d"
@@ -443,7 +442,6 @@ export const Unbound = () => (
               "mara"
             ],
             "mine": false,
-            "publish": true,
             "publishes": [
               "a"
             ],
@@ -466,7 +464,6 @@ export const Unbound = () => (
               "okafor"
             ],
             "mine": false,
-            "publish": false,
             "publishes": [],
             "produces": [
               "d"
@@ -526,7 +523,6 @@ export const Solo = () => (
             "why": "this notebook names no peer, so the cell runs here — the same single runner every recipe without a `@peer` header has always had",
             "runsOn": [],
             "mine": true,
-            "publish": false,
             "publishes": [],
             "produces": [
               "a"
@@ -545,7 +541,6 @@ export const Solo = () => (
             "why": "this notebook names no peer, so the cell runs here — the same single runner every recipe without a `@peer` header has always had",
             "runsOn": [],
             "mine": true,
-            "publish": false,
             "publishes": [],
             "produces": [
               "d"

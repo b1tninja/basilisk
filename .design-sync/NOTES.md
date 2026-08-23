@@ -259,6 +259,33 @@ Two traps that were predicted and both landed:
   computed over that exact `recipeSource`, so editing the text would make the
   digest a lie. Regenerate the receipt if it ever needs updating.
 
+## The previews are type-checked now
+
+`.design-sync/previews/` is 50 `.tsx` files and **`tsc` had never seen one of
+them**. They are outside `web/tsconfig.json`'s `include`, and they import from
+`"basilisk-portal"` — a bare specifier that resolves only inside the design
+tool. Pointed at them for the first time, `tsc` reported **60 errors across 11
+files**, every one of them the previews describing a component that had moved.
+
+The check is `web/tsconfig.previews.json`, and it is chained into
+`npm run typecheck` (`tsc --noEmit && tsc -p tsconfig.previews.json --noEmit`)
+because that is the script CI's *Typecheck portal* step runs. A separate config
+nobody invokes is the defect one level up, so it is not left as one — and bare
+`npx tsc --noEmit` still skips the previews, verified by mutation.
+
+Two things that config carries and the app's own must not:
+
+- `"basilisk-portal": ["./src/ds-entry.ts"]`. The package name is a fiction of
+  the design tool; teaching the app's config to resolve it would invite app code
+  to import a barrel that is deliberately imported by nothing.
+- `"react"` and `"react/jsx-runtime"` mapped into `web/node_modules/@types`.
+  Pure resolution: the previews sit outside `web/` and cannot walk up to
+  `node_modules`. Measured — without the two mappings the run adds **exactly 50
+  `TS2875` errors**, one per file, and nothing else.
+
+**Why the capture step never caught any of it:** a preview that throws still
+produces an image of something. Every one of the 60 rendered a card.
+
 ## Re-sync risks
 
 - **`web/.ds-styles.css` goes stale silently.** It is a copy, gitignored, and

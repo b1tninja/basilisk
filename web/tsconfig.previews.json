@@ -1,0 +1,48 @@
+// Typecheck for .design-sync/previews/ — the 50 .tsx files the design tool
+// renders, one per design-system component.
+//
+// Why they need a config at all: the previews live outside web/, so
+// tsconfig.json's `include` ("src/**/*") has never reached them and tsc has
+// never seen them. They import from "basilisk-portal", a bare specifier that
+// resolves only inside the design tool's own workspace — here it resolves to
+// nothing, so every preview was unchecked in full. When they were first put in
+// front of tsc they produced 60 real errors across 11 files: props that no
+// longer exist, partial objects where a required map was wanted, and previews
+// still describing a component's older shape. The design-sync capture step
+// does not catch any of that, because a preview that throws still produces an
+// image of *something*.
+//
+// Why a separate config rather than widening tsconfig.json:
+//   - The two `react` mappings below exist only because the previews sit
+//     outside web/ and cannot walk up to web/node_modules. Without them tsc
+//     adds 50 TS2875 "react/jsx-runtime" errors that are pure resolution
+//     noise. Those mappings have no business in the app's own config, where
+//     every file already resolves react normally.
+//   - "basilisk-portal" is likewise a fiction of the design tool. Teaching the
+//     app's config to resolve it would invite app code to import it, and
+//     ds-entry.ts is deliberately imported by nothing.
+//
+// A separate config that nothing runs is a check that does not exist, so this
+// one is chained into `npm run typecheck` — the script CI's "Typecheck portal"
+// step invokes. Running bare `npx tsc --noEmit` skips the previews; run the
+// script.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"],
+      // The design tool's package name for this repo's export surface.
+      "basilisk-portal": ["./src/ds-entry.ts"],
+      // Resolution-only: the previews are outside web/ and cannot find
+      // web/node_modules by walking up.
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.js",
+    "../.design-sync/previews/**/*.tsx"
+  ]
+}

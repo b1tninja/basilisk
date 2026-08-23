@@ -20,7 +20,8 @@
     "build": "vite build",
     "build:types": "tsc -p tsconfig.dts.json",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "//typecheck": "Two configs, one script, because CI's `Typecheck portal` step runs the script. The second pass is .design-sync/previews/ — 50 .tsx files outside web/ that tsconfig.json's `include` has never reached and that resolve `basilisk-portal` and `react` only through tsconfig.previews.json's `paths`. They went unchecked long enough to accumulate 60 errors, and the design-sync capture step cannot find them: a preview that throws still produces an image of something. Chained rather than left as a config somebody has to remember, which is the same defect one level up.",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.previews.json --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build && vitest run -c vitest.e2e.config.js"
   },
