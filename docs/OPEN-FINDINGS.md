@@ -121,20 +121,7 @@ newer GnuPG).
 
 ---
 
-## 4. Was a protocol change, is now a missing reader
-
-- **A notebook's delivery is confirmed on the wire and shown to nobody.** The
-  entry here said document frames had no ack of their own and that inventing one
-  was the work. It was invented: `_publishDocument` digests a notebook
-  specifically so it can be acked, the receiver calls `_acknowledgeNotebook`,
-  `_onNotebookAck` matches the digest and stamps `peer.notebookReachedAt`, and
-  `_emitRoster` carries the peers map — the fact included — out to the hook.
-  **Every reference to `notebookReachedAt` outside `session.js` is a test.** So
-  the room knows a notebook arrived and no surface says so, and the send-time
-  wording (a count of writes, deliberately not a promise) is still the last
-  thing a person is told. This is a reader, not a protocol change.
-
-## 4a. One decision nobody has made
+## 4. One decision nobody has made
 
 **A connection state, a diagnostic and a statistic all draw lucide `Activity`.**
 This is what is left of the shadowing item, and it is the half that is a design
@@ -158,6 +145,16 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 
 ## 5. User-visible, small, and real
 
+- **`InsertGap` renders a `<button>` when it is `pending`.** The armed-branch
+  caret is focusable and answers a press with nothing. No behaviour is missing —
+  arming aimed it, and the × on the chip beside it cancels — but a marker that is
+  a button reads as a control, and a control that does nothing is the defect this
+  file keeps finding. Whether a `pending` gap should be a `<span>` affects all
+  five call sites, which is why it was recorded rather than changed.
+- **`notebookDelivery` has no consumer.** `useNotebook.ts` exports the structured
+  report — `{ wrote, reached, unconfirmed }` — and only the sentence built from
+  it, `notebookDeliveryNote`, is read anywhere. Either drop the export or give it
+  a reader; it is the recurring shape at small scale.
 - **One capture was lost on purpose and should be a decision, not an accident.**
   Deleting `snapshot-ux-resume.mjs` dropped the recipient-binder shot — whose
   selectors (`.recipient-binder`, `.binder-search`, `.keyserver-control`,
@@ -190,13 +187,16 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
 ## How to use this file
 
 **Re-verify before acting on an entry.** This file's rule is that items are
-deleted when fixed, and it was broken almost immediately: three of §5's six
-entries described work that had already landed, and survived two later edits of
-this same file because updating it and reading it were separate passes. One of
-the three was not merely stale but wrong — it described a keyboard defect on an
-element that does not exist. Each was disproved in under a minute by grepping
-for the thing it claimed. Do that first; a fix aimed at an already-fixed item
-spends the trust this file runs on.
+deleted when fixed, and it was broken almost immediately. **Eight entries have
+now been disproved by reading the code they name** — including one that
+described a keyboard defect on an element that does not exist, and one written
+during this very sweep, which claimed a delivery confirmation reached no screen
+when `useNotebook` had been spelling it into a sentence since `e7abf2a`.
+
+That last one is the instructive failure, because the method was right and the
+execution was not: the grep that established it ended in `| head -6`, and twelve
+hits in one test file filled all six lines before the real consumer appeared.
+**Do not conclude from a truncated list.** Count the matches, or read them all.
 
 **The `dist` grep proves less than it looks, and exactly which less is
 measurable.** Several entries here were settled by asking whether a name appears
