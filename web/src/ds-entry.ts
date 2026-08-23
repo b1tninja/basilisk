@@ -172,7 +172,11 @@ export { ShareSheet } from "./toolkit/widgets/ShareSheet";
  * states are the whole design; a design tool that had to guess them would guess
  * "unlocked/locked", which is the two-state model this replaced.
  */
-export { KeyVault } from "./toolkit/widgets/KeyVault";
+export {
+  KeyVault,
+  type KeyVaultProps,
+  type VaultKeyView,
+} from "./toolkit/widgets/KeyVault";
 export {
   KEY_POWERS,
   keyPower,
@@ -181,10 +185,17 @@ export {
   strongestPower,
 } from "./lib/toolkit/key-power.js";
 export { InviteCard } from "./toolkit/widgets/InviteCard";
-export { SessionStart } from "./toolkit/widgets/SessionStart";
-export { SessionLive } from "./toolkit/widgets/SessionLive";
+export {
+  SessionStart,
+  type SessionStartProps,
+  type RecipientChoice,
+} from "./toolkit/widgets/SessionStart";
+export { SessionLive, type SessionLiveProps } from "./toolkit/widgets/SessionLive";
 export { SessionSheet } from "./toolkit/widgets/SessionSheet";
-export { HandoffQueue } from "./toolkit/widgets/HandoffQueue";
+export {
+  HandoffQueue,
+  type HandoffQueueProps,
+} from "./toolkit/widgets/HandoffQueue";
 /**
  * The derivations those five render, exported for the same reason `qrSvg` is:
  * the components draw sentences they do not write, so a catalog with no access
@@ -210,13 +221,32 @@ export { ApprovalBanner } from "./toolkit/widgets/ApprovalBanner";
 export { ReadinessBar } from "./toolkit/widgets/ReadinessBar";
 export { ModeToggle } from "./toolkit/widgets/ModeToggle";
 export { PresetMenu } from "./toolkit/widgets/PresetMenu";
-export { CeremonySheet } from "./toolkit/widgets/CeremonySheet";
+export {
+  CeremonySheet,
+  type CeremonySheetProps,
+} from "./toolkit/widgets/CeremonySheet";
 export { DkgPanel } from "./toolkit/widgets/DkgPanel";
 export {
   PoolPanel,
   type PoolPanelProps,
   type PoolParticipant,
 } from "./toolkit/widgets/PoolPanel";
+/**
+ * **Props types travel with their components, and it is not decoration.**
+ *
+ * A preview that builds a shared `base`/`actions` const and spreads it into
+ * several stories is invisible to the type check that now covers this
+ * directory: TypeScript exempts spread properties from excess-property
+ * checking, so a const carrying a prop the component never declared passes.
+ * That is how `SessionStart`'s `suggestions` survived being renamed to
+ * `trusted` — found by reading, not by the compiler.
+ *
+ * Exporting the props type lets the preview write `satisfies Partial<…>` on
+ * that const, which restores the check at the one place it was lost. So a
+ * type here is not a convenience for whoever writes a preview; it is what
+ * makes the preview checkable at all.
+ */
+
 /**
  * The room's cell ticker, added because it meets this file's own test.
  *

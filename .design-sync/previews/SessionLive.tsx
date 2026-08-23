@@ -1,4 +1,4 @@
-import { SessionLive } from "basilisk-portal";
+import { SessionLive, type SessionLiveProps } from "basilisk-portal";
 
 /*
  * The live session: what it is doing, who is in it, and what confirmation
@@ -37,7 +37,7 @@ const actions = {
   onCopyInvite: noop,
   onRestartIce: noop,
   onClose: noop,
-};
+} satisfies Partial<SessionLiveProps>;
 
 const room = (patch: Record<string, unknown>) => ({
   phase: "connected" as const,

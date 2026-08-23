@@ -187,6 +187,16 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   because that is the only spec where all three shares exist at once. The
   dealer-absent file is covered transitively — the same generator deals both
   rooms — not directly.
+- **No face-up cell-state row is proven in a browser.** `2a49f73`'s ceremony
+  numbers slots per member (`$share` on the dealer, `$share-2`/`$share-3` on
+  holders), so no two machines in that notebook ever write the same label and
+  every e2e row is legitimately face down. The face-up case is pinned only at
+  the unit layer.
+- **`dealer-absent-recovery.e2e.js` alone is blind to a foreign dealer share.**
+  `4c27d01` added the all-shares-one-split assertion to `three-party-ceremony`
+  because that is the only spec where all three shares exist at once. The
+  dealer-absent file is covered transitively — the same generator deals both
+  rooms — not directly.
 - **A `{...spread}` hides a preview's props from the check that now covers
   them.** TypeScript exempts spread properties from excess-property checking, so
   a preview built on a shared `base`/`START` const can pass a prop the component

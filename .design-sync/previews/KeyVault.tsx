@@ -1,4 +1,4 @@
-import { KeyVault, keyPowerReadout } from "basilisk-portal";
+import { KeyVault, keyPowerReadout, type KeyVaultProps } from "basilisk-portal";
 
 /*
  * The browser vault, where the notebook can reach it.
@@ -55,7 +55,7 @@ const base = {
   onCopyPublicLine: noop,
   onInsertCell: noop,
   onSuggestPassphrase: async () => ({ passphrase: "acorn ridge candle mint", bits: 62 }),
-};
+} satisfies Partial<KeyVaultProps>;
 
 /**
  * What `keyPowerReadout` reads, and nothing else.

@@ -1,4 +1,4 @@
-import { HandoffQueue } from "basilisk-portal";
+import { HandoffQueue, type HandoffQueueProps } from "basilisk-portal";
 
 /*
  * Cells crossing between machines, and the press each one is waiting for.
@@ -32,7 +32,7 @@ const noop = () => {};
  * down and one you have not read yet look the same. Every pending row draws it
  * beside Accept and says so underneath.
  */
-const actions = { onAccept: noop, onDismiss: noop, onOffer: noop, onSendResult: noop };
+const actions = { onAccept: noop, onDismiss: noop, onOffer: noop, onSendResult: noop } satisfies Partial<HandoffQueueProps>;
 
 /**
  * A session, and nothing crossing. The empty state teaches the mechanism — an

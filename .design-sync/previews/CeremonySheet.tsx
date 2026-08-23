@@ -1,4 +1,4 @@
-import { CeremonySheet } from "basilisk-portal";
+import { CeremonySheet, type CeremonySheetProps } from "basilisk-portal";
 
 /*
  * The guided key ceremony, as a Sheet — the handoff's rule being that a design
@@ -64,7 +64,7 @@ const BASE = {
   recoveredDigest: "",
   shareArtifacts: [],
   receiptText: "",
-};
+} satisfies Partial<CeremonySheetProps>;
 
 /**
  * Stage one: the quorum itself. Nothing has run, and the only decisions are

@@ -1,4 +1,4 @@
-import { SessionStart, START_OPENS, startIssues } from "basilisk-portal";
+import { SessionStart, START_OPENS, startIssues, type SessionStartProps } from "basilisk-portal";
 
 /*
  * Naming the room, which is the only decision here.
@@ -66,7 +66,7 @@ const base = {
   onPaste: noop,
   onCopyInvite: noop,
   onStart: noop,
-};
+} satisfies Partial<SessionStartProps>;
 
 const linkFor = (audience: string[]) =>
   `https://basilisk.pages.dev/toolkit#j=${[...audience].sort().join(",")}`;
