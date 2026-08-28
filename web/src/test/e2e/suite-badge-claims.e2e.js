@@ -87,7 +87,7 @@ function readTray() {
   const all = [...document.querySelectorAll("p,span,div,label")].map(norm);
   return {
     selfTestHeading: all.find((t) => /^Crypto self-test/.test(t)) || null,
-    selfTestBadges: all.filter((t) => /^[✓⚠] (WebCrypto|OpenPGP|SSS|WebAuthn)$/.test(t)),
+    selfTestBadges: all.filter((t) => /^[✓⚠] (WebCrypto|OpenPGP|SSS|age|WebAuthn)$/.test(t)),
     capabilityHeading: all.find((t) => /^Browser capability$/.test(t)) || null,
     capabilityBadge: all.find((t) => /^WebAuthn API /.test(t)) || null,
     capabilityProse: all.find((t) => /^This browser exposes/.test(t)) || null,
@@ -167,18 +167,21 @@ describe.skipIf(!availability.ok)("the suite pill counts self-tests only", () =>
 
   it("says three, not four, when the browser has WebAuthn", async () => {
     const seen = await claims(null);
-    expect(seen.pill).toBe("3 suites verified");
+    expect(seen.pill).toBe("4 suites verified");
     expect(seen.tone).toBe("ok");
     // The row is still there — a person wants to know the API exists — but it
-    // does not say "verified" and it is not one of the three.
+    // does not say "verified" and it is not one of the four. (Three until
+    // CAST-15; `age` is a self-tested suite now, WebAuthn still is not, and
+    // the distinction this test exists for is unchanged by the arrival.)
     expect(seen.rows).toEqual([
       "WebCryptoverified",
       "OpenPGPverified",
       "SSSverified",
+      "ageverified",
       "WebAuthn APIpresent",
     ]);
     expect(seen.selfTestHeading).toBe("Crypto self-test (POST)");
-    expect(seen.selfTestBadges).toEqual(["✓ WebCrypto", "✓ OpenPGP", "✓ SSS"]);
+    expect(seen.selfTestBadges).toEqual(["✓ WebCrypto", "✓ OpenPGP", "✓ SSS", "✓ age"]);
     expect(seen.capabilityHeading).toBe("Browser capability");
     expect(seen.capabilityBadge).toBe("WebAuthn API present");
     expect(seen.capabilityProse).toMatch(/not a self-test result/);
@@ -192,10 +195,10 @@ describe.skipIf(!availability.ok)("the suite pill counts self-tests only", () =>
     // The number and the colour are the self-tests', and the self-tests all
     // passed in this browser. The old build read "3 suites ready · 1 issue"
     // in amber here.
-    expect(seen.pill).toBe("3 suites verified");
+    expect(seen.pill).toBe("4 suites verified");
     expect(seen.tone).toBe("ok");
     expect(seen.rows?.at(-1)).toBe("WebAuthn APIabsent");
-    expect(seen.selfTestBadges).toEqual(["✓ WebCrypto", "✓ OpenPGP", "✓ SSS"]);
+    expect(seen.selfTestBadges).toEqual(["✓ WebCrypto", "✓ OpenPGP", "✓ SSS", "✓ age"]);
     expect(seen.capabilityBadge).toBe("WebAuthn API absent");
     expect(seen.capabilityProse).toMatch(/webauthn ops cannot run here/);
     expect(seen.capabilityProse).toMatch(/not a self-test failure/);
@@ -214,7 +217,7 @@ describe.skipIf(!availability.ok)("the suite pill counts self-tests only", () =>
         return out.buffer;
       };
     });
-    expect(seen.pill).toBe("0 of 3 suites verified");
+    expect(seen.pill).toBe("0 of 4 suites verified");
     expect(seen.tone).toBe("error");
     expect(seen.rows?.at(-1)).toBe("WebAuthn APIpresent");
     // "Refuses", not "Flags": the switch used to have no effect on the run

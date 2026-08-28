@@ -18,7 +18,6 @@ import {
   CryptoModuleError,
   SELF_TEST_LABELS,
   assertCryptoReady,
-  assertSuiteReady,
   formatCryptoVerifiedMessage,
   formatOpenPgpVerifiedMessage,
   formatSuiteStatusMessage,
@@ -46,6 +45,7 @@ describe("crypto-self-test — SELF_TEST_LABELS", () => {
     expect(keys).toContain("aesCbcRoundtrip");
     expect(keys).toContain("aesCtrRoundtrip");
     expect(keys).toContain("sssRoundtrip");
+    expect(keys).toContain("ageKat");
   });
 
   it("labels include CAST identifiers", () => {
@@ -108,6 +108,7 @@ describe("crypto-self-test — runCryptoSelfTests", () => {
     expect(msg).toMatch(/OpenPGP ✓/);
     expect(msg).toMatch(/WebCrypto ✓/);
     expect(msg).toMatch(/SSS ✓/);
+    expect(msg).toMatch(/age ✓/);
     if (result.moduleIntegrity?.root) {
       expect(msg).toMatch(/modules [0-9a-f]{16}/);
     }
@@ -127,20 +128,20 @@ describe("crypto-self-test — runCryptoSelfTests", () => {
 });
 
 describe("crypto-self-test — suite status", () => {
-  it("reports openpgp + webcrypto + sss verified after POST", async () => {
+  it("reports openpgp + webcrypto + sss + age verified after POST", async () => {
     await runCryptoSelfTests();
     const status = getSuiteStatus();
     expect(status.openpgp).toBe("verified");
     expect(status.webcrypto).toBe("verified");
     expect(status.sss).toBe("verified");
+    expect(status.age).toBe("verified");
   });
 
-  it("assertSuiteReady allows openpgp, webcrypto, and sss", async () => {
-    await runCryptoSelfTests();
-    await expect(assertSuiteReady("openpgp")).resolves.toBeUndefined();
-    await expect(assertSuiteReady("webcrypto")).resolves.toBeUndefined();
-    await expect(assertSuiteReady("sss")).resolves.toBeUndefined();
-  });
+  // `assertSuiteReady` was exported here "for hard gates" and had no caller
+  // outside the test that exercised it. The hard gate that shipped is
+  // `assertRecipeAllowedUnderFips`, which asks about a whole recipe; the
+  // per-suite entry point was kept alive by its own assertion and cited in the
+  // docs as a protection. Both are gone.
 
   it("FIPS gate allows SSS after CAST-12", async () => {
     await runCryptoSelfTests();

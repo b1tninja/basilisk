@@ -111,17 +111,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   the notebook through a worker is a design that may yet be argued for. But
   there is no worker path now, and a reader can take the family as evidence one
   exists. A decision, not a defect.
-- **`age` performs cryptography that no CAST qualifies, and cannot be gated.**
-  Its math is the third-party `age-encryption` package. FIPS mode cannot refuse
-  it, and mapping it to `webcrypto` would have the self-test vouch for
-  primitives it never ran — so the honest state is a toolbox with a vector to
-  run, a result to gate on, and no suite. Closing it means a CAST for age.
-  Pinned as an exemption in `suite-gate-reach.test.js`.
-- **`assertSuiteReady` has no production caller.** Exported from
-  `crypto-self-test.js` "for hard gates"; the hard gate that shipped is
-  `assertRecipeAllowedUnderFips`. Annotated in place rather than deleted, but it
-  is the shape this file keeps finding and nobody should cite it as a protection
-  in force.
 - **The whole citation map reaches one paragraph.** `docsUrlFor` has exactly one
   production consumer: `DocsFooter` in `ToolCard.tsx`. It is live and rendered,
   so this is not the dead-mechanism shape — but 108 references across the

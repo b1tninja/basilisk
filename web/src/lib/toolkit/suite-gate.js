@@ -4,9 +4,21 @@
 
 import { getStep } from "./registry.js";
 
-/** @typedef {'openpgp'|'webcrypto'|'sss'} CryptoSuite */
+/** @typedef {'openpgp'|'webcrypto'|'sss'|'age'} CryptoSuite */
 /** @typedef {'verified'|'unverified'|'error'} SuiteState */
-/** @typedef {{ openpgp: SuiteState, webcrypto: SuiteState, sss: SuiteState }} SuiteStatusMap */
+/**
+ * `age` is optional, and deliberately so. It arrived after the other three, and
+ * callers that build a status map by hand — `engine.js`'s
+ * `unverifiedSuiteStatus()`, the fixtures in the test suite — still write three
+ * keys. Requiring a fourth would not make those callers more honest, it would
+ * only make them not compile.
+ *
+ * The omission is safe because every read below is a `!== "verified"` or a
+ * `|| "unverified"`: an absent `age` reads as unverified, so a caller that has
+ * not been taught about the suite refuses age ops rather than admitting them.
+ * `getSuiteStatus()` in `crypto-self-test.js` always sets it.
+ * @typedef {{ openpgp: SuiteState, webcrypto: SuiteState, sss: SuiteState, age?: SuiteState }} SuiteStatusMap
+ */
 
 /**
  * @param {string|undefined|null} toolbox
@@ -31,14 +43,17 @@ export function toolboxToSuite(toolbox) {
   if (tb === "jose") return "webcrypto";
   if (tb === "otp") return "webcrypto";
   if (tb === "sss") return "sss";
+  // `age` is its own suite, not `webcrypto`. It used to fall through below with
+  // a note saying it was a real gap that only a CAST could close, and that note
+  // was right: its math is the third-party `age-encryption` package, so naming
+  // `webcrypto` here would have had the self-test vouch for primitives it never
+  // ran. The CAST now exists — CAST-15 in `crypto-self-test.js`, a decrypt
+  // known-answer test against the age project's published testkit vector plus
+  // the spec's recipient-derivation pair — so there is something qualifying the
+  // toolbox and this entry names it. The suite is `age` rather than a borrowed
+  // name precisely so the claim stays the size of the evidence.
+  if (tb === "age") return "age";
   // ── The fall-throughs, each on purpose and each for a different reason ──
-  //
-  // `age` has a vector to run and a result to gate on, and still names no
-  // suite — its math is the third-party `age-encryption` package, which no
-  // CAST qualifies. Mapping it to `webcrypto` would be the false claim this
-  // file exists to prevent: the self-test would be vouching for primitives it
-  // never ran. It is a real gap and it can only be closed by a CAST for age,
-  // not by an entry here.
   //
   // `agent` is polymorphic and cannot honestly name one suite: `agent.sign`
   // emits an OpenPGP signature for a PGP key and an sshsig for an SSH key, so
@@ -54,7 +69,7 @@ export function toolboxToSuite(toolbox) {
   // block a webauthn op. Nor could it honestly — a passkey's keypair lives
   // inside an authenticator this page cannot address, so there is no vector
   // to run and no result to gate on. Anything upstream that shows WebAuthn
-  // beside the three suites above is showing a capability, not a
+  // beside the four suites above is showing a capability, not a
   // verification, and must not say "verified" or add it to their count.
   return null;
 }

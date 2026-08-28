@@ -13,11 +13,13 @@
  * as the bare word `needs bytes` in the shelf that names it, and six of the
  * twenty types in the registry's own vocabulary had no mark at all.
  *
- * ## 2. Three suites, fourteen toolboxes, and one that is not what it looks
+ * ## 2. Four suites, fourteen toolboxes, and one that is not what it looks
  *
- * `stepNameToSuite` answers `openpgp | webcrypto | sss | null`. `ssh` answers
- * **webcrypto**, because SSH's maths is SubtleCrypto and @noble and that is
- * what CAST exercises; `age`, `jose`, `otp`, `io`, `flow`, `encoding`,
+ * `stepNameToSuite` answers `openpgp | webcrypto | sss | age | null`. `ssh`
+ * answers **webcrypto**, because SSH's maths is SubtleCrypto and @noble and
+ * that is what CAST exercises; `age` answers **age**, its own suite, since
+ * CAST-15 runs the age project's published testkit vector rather than
+ * borrowing WebCrypto's pass; `io`, `flow`, `encoding`,
  * `agent`, `hkp`, `webauthn`, `webrtc` and `quorum` answer **null**, which is
  * not "unverified" but "no self-test covers this at all". `CastDot` renders
  * nothing for the null case — correct for a status light, and indistinguishable
@@ -211,22 +213,26 @@ describe("the shelf prints the suite, never the module", () => {
     expect(toolboxToSuite("openpgp")).toBe("openpgp");
     expect(toolboxToSuite("webcrypto")).toBe("webcrypto");
     expect(toolboxToSuite("sss")).toBe("sss");
+    // `age` is the fourth suite, and its own. The chip must read `CAST age`
+    // rather than `CAST webcrypto`: CAST-15 ran age's published testkit
+    // vector, and a chip naming WebCrypto would credit that pass to code the
+    // vector never touched.
+    expect(toolboxToSuite("age")).toBe("age");
   });
 
   it("keeps the null case a null, for every toolbox that has no suite", () => {
-    // Nine of the fourteen, and it was eleven. `jose` and `otp` were on this
+    // Eight of the fourteen, and it was eleven. `jose` and `otp` were on this
     // list beside `io` and `flow` as though they were encodings — and their
     // math is `crypto.subtle`, twelve calls in `jose-ops.js` and the HMAC
     // counter in `lib/otp/hotp.js`. They name `webcrypto` now, so a JWT and a
     // TOTP are refused under FIPS on the same terms as the `aes-gcm` cell
     // beside them, which is what they always should have been.
     //
-    // `age` stays and is the one worth naming: it is unmistakably crypto and no
-    // CAST suite covers it — its math is a third-party package the self-test
-    // never runs — which is precisely the fact a reader weighing the toolbox
-    // needs and precisely the fact a rendered-nothing dot cannot state.
+    // `age` was the ninth and the one worth naming, on the grounds that no CAST
+    // covered its third-party math. That was a description of a missing test,
+    // not of an untestable one, and CAST-15 is that test — so `age` is off this
+    // list and on the map. What remains here is genuinely uncovered.
     for (const tb of [
-      "age",
       "io",
       "flow",
       "encoding",

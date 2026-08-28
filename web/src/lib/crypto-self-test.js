@@ -37,6 +37,10 @@
  *     SSS suite
  *     CAST-12 GF(256) SSS split/combine + BLIP39 encode/decode roundtrip
  *
+ *     age suite (age-encryption.org/v1, via the `age-encryption` package)
+ *     CAST-15 Published-vector decrypt KAT + recipient-derivation KAT +
+ *             encrypt roundtrip
+ *
  * ── Error state (FIPS 140-3 §4.9.3) ────────────────────────────────────────
  *   Any POST or CAST failure latches the module into ERROR state permanently
  *   for the page lifetime.  Once in ERROR state:
@@ -162,6 +166,48 @@ const CAST6_SHA256_BASILISK =
 const CAST10_HKDF_OKM =
   "563f2100d5ab3bf4c8d2d5c9de441d370ca7d95180de6c74b86027c7665e9cd8";
 
+/**
+ * CAST-15 vectors — age (age-encryption.org/v1).
+ *
+ * **Both vectors are published by the age project. Neither was produced here.**
+ * That is the whole reason this CAST is worth its lines: the toolkit's age math
+ * is the third-party `age-encryption` package, and a self-test that only asked
+ * that package to agree with itself would pass against any self-consistent
+ * implementation, correct or not.
+ *
+ * `AGE_TESTKIT_*` is the `armor_x25519` file of the age testkit —
+ * age-encryption.org/testkit, published as the C2SP Community Cryptography Test
+ * Vectors at https://github.com/C2SP/CCTV/tree/main/age/testdata. Each testkit
+ * file is a header block followed by the age file itself; this one declares
+ * `expect: success`, `armored: yes`, the identity below, and
+ * `payload: 013f…f2ab`, which is the SHA-256 of the plaintext the file decrypts
+ * to. All three are transcribed verbatim.
+ *
+ * `AGE_SPEC_*` is the X25519 key-encoding example printed in the age
+ * specification itself (https://github.com/C2SP/C2SP/blob/main/age.md, X25519
+ * recipient type): an identity and the recipient it must derive to.
+ */
+const AGE_TESTKIT_IDENTITY =
+  "AGE-SECRET-KEY-1EGTZVFFV20835NWYV6270LXYVK2VKNX2MMDKWYKLMGR48UAWX40Q2P2LM0";
+
+/** The `armor_x25519` testkit file body, byte for byte. */
+const AGE_TESTKIT_ARMOR = `-----BEGIN AGE ENCRYPTED FILE-----
+YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBURWlGMHlwcXIrYnB2Y3FY
+TnlDVkpwTDdPdXdQZFZ3UEw3S1FFYkZET0NjCmhqYWJHWHdTTFE5YzNTNkx3Mmkr
+UzJUdTJmaXdRSEhzbGJCTjZCNDFGTEUKLS0tIFd5SnA5Ri85Rk9aaDdnSmRoZXEy
+V0lKY3dIZ1ljOE5JVmgzZGR3aHJjTmcK7s9ix86RtDMnTmjU8vkTTLdMW/73vqpS
+yPC8DpksHoMx+2Y=
+-----END AGE ENCRYPTED FILE-----`;
+
+/** The testkit's `payload:` field — SHA-256 of the decrypted plaintext. */
+const AGE_TESTKIT_PAYLOAD_SHA256 =
+  "013f54400c82da08037759ada907a8b864e97de81c088a182062c4b5622fd2ab";
+
+const AGE_SPEC_IDENTITY =
+  "AGE-SECRET-KEY-1GFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPYYSJZGFPQ4EGAEX";
+const AGE_SPEC_RECIPIENT =
+  "age1zvkyg2lqzraa2lnjvqej32nkuu0ues2s82hzrye869xeexvn73equnujwj";
+
 // ── Public error class ────────────────────────────────────────────────────────
 
 /**
@@ -248,6 +294,7 @@ async function _runAllTests() {
     aesCbcRoundtrip: false,
     aesCtrRoundtrip: false,
     sssRoundtrip: false,
+    ageKat: false,
   };
 
   let privateKey = null;
@@ -550,6 +597,102 @@ async function _runAllTests() {
       results.sssRoundtrip = true;
     }
 
+    // ── CAST-15: age (age-encryption.org/v1) ──────────────────────────────
+    //
+    // Three checks, and the order matters: the two known-answer parts come
+    // first, and the round-trip is last and least.
+    //
+    //  (a) **Recipient-derivation KAT.** `identityToRecipient` of the age
+    //      spec's own example identity must produce the spec's own example
+    //      recipient. This is X25519 scalar multiplication by the base point
+    //      plus the two bech32 encodings, checked against an answer written
+    //      down by the format's editor.
+    //
+    //  (b) **Decrypt KAT.** A fixed armored file from the age project's
+    //      published testkit, decrypted with the identity that testkit names,
+    //      and the recovered plaintext hashed against the digest the testkit
+    //      states. These bytes were produced by `age`, not by this repository,
+    //      so nothing here can arrange for the answer to come out right — a
+    //      wrong HKDF, a wrong ChaCha20-Poly1305 or a wrong STREAM nonce
+    //      schedule all fail. It exercises armor decode, header parse, the
+    //      header HMAC, the X25519 stanza unwrap and the payload in one pass.
+    //
+    //  (c) **Encrypt round-trip.** (b) never constructs an `Encrypter`, and
+    //      `age.encrypt` is half of what the toolbox does. age ciphertext is
+    //      randomized — a fresh ephemeral X25519 share and a fresh file key
+    //      per file — so there is no fixed ciphertext to compare an encrypt
+    //      against, and a decrypt-side comparison against a fixed identity is
+    //      the honest alternative. It is written third because on its own it
+    //      would prove only self-consistency; it is here because without it
+    //      the encrypt direction has no vector at all.
+    {
+      /**
+       * Loaded here rather than at the top of the file, unlike every other
+       * CAST's library, and the asymmetry is deliberate.
+       *
+       * `openpgp` is imported statically above and costs nothing extra: it is
+       * a 393 kB shared chunk every page already pulls. `age-encryption` was
+       * not — it was reached only through `age-ops.js`, which `engine.js`
+       * imports dynamically, so a static import here put 95 kB into the
+       * eagerly-loaded toolkit chunk (measured: 646 kB to 741 kB, and back).
+       * That is the trade `kernel.js` makes the other way when it imports the
+       * session dynamically to keep WebRTC out of the base bundle, and the one
+       * `vite.config.js` makes for `quorum-ops`. Matching the other CASTs'
+       * *shape* would have meant not matching their *cost*.
+       *
+       * The failure semantics are unchanged: a rejected import throws inside
+       * this same `try`, so a missing or broken package latches CAST-15 as
+       * ERROR exactly as a bad vector does.
+       */
+      const {
+        Decrypter: AgeDecrypter,
+        Encrypter: AgeEncrypter,
+        armor: ageArmor,
+        identityToRecipient: ageIdentityToRecipient,
+      } = await import("age-encryption");
+
+      const derived = await ageIdentityToRecipient(AGE_SPEC_IDENTITY);
+      if (derived !== AGE_SPEC_RECIPIENT) {
+        throw new Error(
+          `CAST-15: age recipient derivation mismatch (got ${derived})`
+        );
+      }
+
+      const fromTestkit = new AgeDecrypter();
+      fromTestkit.addIdentity(AGE_TESTKIT_IDENTITY);
+      const recovered = await fromTestkit.decrypt(
+        ageArmor.decode(AGE_TESTKIT_ARMOR),
+        "uint8array"
+      );
+      const payloadDigest = new Uint8Array(
+        await crypto.subtle.digest("SHA-256", recovered)
+      );
+      const payloadHex = bytesToHexLower(payloadDigest);
+      recovered.fill(0);
+      payloadDigest.fill(0);
+      if (payloadHex !== AGE_TESTKIT_PAYLOAD_SHA256) {
+        throw new Error(
+          `CAST-15: age testkit payload mismatch (got ${payloadHex})`
+        );
+      }
+
+      const enc = new AgeEncrypter();
+      enc.addRecipient(AGE_SPEC_RECIPIENT);
+      const canary = textToBytes(POST_CANARY);
+      const sealed = await enc.encrypt(canary);
+      const back = new AgeDecrypter();
+      back.addIdentity(AGE_SPEC_IDENTITY);
+      const opened = await back.decrypt(sealed, "uint8array");
+      const ok =
+        opened.length === canary.length &&
+        opened.every((b, i) => b === canary[i]);
+      canary.fill(0);
+      sealed.fill(0);
+      opened.fill(0);
+      if (!ok) throw new Error("CAST-15: age encrypt/decrypt roundtrip mismatch");
+      results.ageKat = true;
+    }
+
     const moduleIntegrity = await computeLoadedModulesRoot({
       selfModuleUrl: import.meta.url,
     });
@@ -612,6 +755,7 @@ async function _runAllTests() {
       sssRoundtrip: "CAST-12",
       aesCbcRoundtrip: "CAST-13",
       aesCtrRoundtrip: "CAST-14",
+      ageKat: "CAST-15",
     };
     const failedKey = /** @type {keyof SelfTestResults | undefined} */ (
       Object.keys(results).find((k) => !results[/** @type {any} */ (k)])
@@ -727,26 +871,13 @@ export function getSuiteStatus() {
     r?.aesCtrRoundtrip
   );
   const sssOk = !!r?.sssRoundtrip;
+  const ageOk = !!r?.ageKat;
   return {
     openpgp: errOr(openpgpOk),
     webcrypto: errOr(webcryptoOk),
     sss: errOr(sssOk),
+    age: errOr(ageOk),
   };
-}
-
-/**
- * Assert a verification suite is ready (for FIPS hard gates).
- * @param {'openpgp'|'webcrypto'|'sss'} suite
- * @throws {CryptoModuleError}
- */
-export async function assertSuiteReady(suite) {
-  await assertCryptoReady();
-  const status = getSuiteStatus();
-  if (status[suite] !== "verified") {
-    throw new CryptoModuleError(
-      `Suite "${suite}" is not verified by POST/CAST (status=${status[suite]})`
-    );
-  }
 }
 
 /**
@@ -768,6 +899,7 @@ export const SELF_TEST_LABELS = {
   sssRoundtrip: "CAST-12: SSS split/combine + BLIP39 roundtrip",
   aesCbcRoundtrip: "CAST-13: AES-CBC roundtrip",
   aesCtrRoundtrip: "CAST-14: AES-CTR roundtrip",
+  ageKat: "CAST-15: age published-vector decrypt KAT + encrypt roundtrip",
 };
 
 /**
@@ -787,7 +919,7 @@ export function formatSuiteStatusMessage(result) {
     _lastResult?.moduleIntegrity?.leafCount ||
     0;
   const pin = result?.moduleIntegrity?.pin || _lastResult?.moduleIntegrity?.pin;
-  let msg = `OpenPGP ${mark(status.openpgp)} · WebCrypto ${mark(status.webcrypto)} · SSS ${mark(status.sss)}`;
+  let msg = `OpenPGP ${mark(status.openpgp)} · WebCrypto ${mark(status.webcrypto)} · SSS ${mark(status.sss)} · age ${mark(status.age)}`;
   if (ms) msg += ` · ${ms} ms`;
   if (short) {
     msg += ` · modules ${short}`;
@@ -850,6 +982,7 @@ export function formatCryptoVerifiedMessage(result) {
  *   aesCbcRoundtrip: boolean,
  *   aesCtrRoundtrip: boolean,
  *   sssRoundtrip: boolean,
+ *   ageKat: boolean,
  * }} SelfTestResults
  * @typedef {{ root: string, leafCount: number, source: "sri" | "self" | "none", pin?: * }} ModuleIntegrity
  * @typedef {{ passed: boolean, results: SelfTestResults, elapsed: number, error?: string, moduleIntegrity?: ModuleIntegrity }} SelfTestResult

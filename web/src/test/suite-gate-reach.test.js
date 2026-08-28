@@ -21,11 +21,17 @@
  * thought to drive.
  *
  * The exemptions are the interesting half and each says something different: a
- * toolbox can be unmapped because its math is genuinely unqualified by any CAST
- * (`age`), because it is polymorphic and either answer would be false on one
- * branch (`agent`), or because there is no vector to run at all (`webauthn`).
- * Those are three different facts and collapsing them into "not gated" is how
- * the two real gaps hid among them.
+ * toolbox can be unmapped because it is polymorphic and either answer would be
+ * false on one branch (`agent`), because the primitives are real but nothing
+ * qualifies them yet (`quorum`), or because there is no vector to run at all
+ * (`webauthn`). Those are three different facts and collapsing them into "not
+ * gated" is how the real gaps hid among them.
+ *
+ * `age` used to be a fourth kind — "its math is a third-party package no CAST
+ * qualifies" — and that is the one an exemption cannot stay true about, because
+ * it describes a missing test rather than an impossible one. CAST-15 now runs
+ * the age project's own published testkit vector, so `age` names the `age`
+ * suite and has come off this list. That is what the list shrinking looks like.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -43,7 +49,6 @@ const LIB = fileURLToPath(new URL("../lib/toolkit/", import.meta.url));
  * that gating it would be inconvenient.
  */
 const UNGATEABLE = {
-  age: "its math is the third-party `age-encryption` package, which no CAST qualifies — mapping it to webcrypto would have the self-test vouch for primitives it never ran",
   agent:
     "polymorphic: `agent.sign` emits an OpenPGP signature for a PGP key and an sshsig for an SSH key, so either suite is false on one branch",
   quorum:
@@ -121,5 +126,14 @@ describe("the suite gate reaches every toolbox that does crypto", () => {
     // file exists.
     expect(toolboxToSuite("jose"), "jose stopped being gated").toBe("webcrypto");
     expect(toolboxToSuite("otp"), "otp stopped being gated").toBe("webcrypto");
+  });
+
+  it("gates age on its own suite, and never on a borrowed one", () => {
+    // The exemption that came off the list. `age` must name a suite — that is
+    // the gap closing — and it must not name `webcrypto`, because the CAST that
+    // qualifies it ran age's vectors and not SubtleCrypto's. Mapping it to
+    // `webcrypto` would turn one green self-test into a claim about two
+    // different bodies of code, which is the failure this whole file guards.
+    expect(toolboxToSuite("age"), "age lost its suite again").toBe("age");
   });
 });

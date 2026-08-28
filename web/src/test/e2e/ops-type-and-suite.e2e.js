@@ -415,20 +415,32 @@ describe.skipIf(!availability.ok)("the header names the suite, not the module", 
     expect(heads.find((h) => h.toolbox === "openpgp").chip).toBe("CAST openpgp");
     expect(heads.find((h) => h.toolbox === "webcrypto").chip).toBe("CAST webcrypto");
     expect(heads.find((h) => h.toolbox === "sss").chip).toBe("CAST sss");
+    // The fourth suite, and the newest: CAST-15 runs age's own testkit vector.
+    expect(heads.find((h) => h.toolbox === "age").chip).toBe("CAST age");
   });
 
   it("reads a null suite as nothing verifying it, not as a pass and not as blank", () => {
-    // The claim this whole chip is worth making. `age` is unmistakably crypto
-    // and no CAST suite covers it — its math is a third-party package the
-    // self-test never runs; a chip that omitted the null case would be worse
-    // than no chip, because absence would read as "fine".
+    // The claim this whole chip is worth making: `io`, `encoding` and `flow`
+    // touch no cryptography, and a chip that omitted the null case would be
+    // worse than no chip, because absence would read as "fine".
+    //
+    // `age` used to be this test's headline example — unmistakably crypto with
+    // nothing qualifying it. CAST-15 closed that, so the example is gone and
+    // the null case is now only the toolboxes that never had a claim to make.
     //
     // `jose` and `otp` were on this list and are gone from it. They sat here
     // beside `io` and `encoding` as though they were formats, while reaching
     // `crypto.subtle` twelve times and once respectively — so their headers
     // said "no CAST suite" about the suite that had in fact been tested, and
     // FIPS mode could not refuse them. They read `CAST webcrypto` now.
-    for (const tb of ["age", "io", "encoding", "flow"]) {
+    //
+    // `age` left for the opposite reason. It was the honest null — real
+    // cryptography that genuinely nothing qualified — right up until CAST-15
+    // gave it a self-test of its own, running the age project's published
+    // testkit vector. It reads `CAST age`, and it is asserted below beside the
+    // other three rather than being dropped from the file: a suite that stops
+    // being claimed is exactly what this chip exists to show.
+    for (const tb of ["io", "encoding", "flow"]) {
       const h = heads.find((x) => x.toolbox === tb);
       expect(h, `${tb} is not on the page`).toBeTruthy();
       expect(h.chip, `${tb} header`).toBe("no CAST suite");
@@ -442,7 +454,7 @@ describe.skipIf(!availability.ok)("the header names the suite, not the module", 
     const ssh = heads.find((h) => h.toolbox === "ssh");
     expect(ssh.name, `SSH announces ${JSON.stringify(ssh.name)}`).toContain("CAST webcrypto");
     const age = heads.find((h) => h.toolbox === "age");
-    expect(age.name, `age announces ${JSON.stringify(age.name)}`).toContain("no CAST suite");
+    expect(age.name, `age announces ${JSON.stringify(age.name)}`).toContain("CAST age");
   });
 
   it("fits the panel at its default width and at its minimum", () => {

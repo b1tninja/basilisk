@@ -222,6 +222,7 @@ type CastSuiteStatus = {
   openpgp: SuiteState;
   webcrypto: SuiteState;
   sss: SuiteState;
+  age: SuiteState;
 };
 
 /** What this browser exposes of the WebAuthn API — see `webauthnApiPresence`. */
@@ -467,6 +468,7 @@ const SUITE_BADGE_LABEL: Record<keyof CastSuiteStatus, string> = {
   webcrypto: "WebCrypto",
   openpgp: "OpenPGP",
   sss: "SSS",
+  age: "age",
 };
 
 // Same localStorage key/shape as toolkit-legacy.js's pane layout, so the
@@ -2483,6 +2485,7 @@ export function ToolkitShell() {
     openpgp: "unverified",
     webcrypto: "unverified",
     sss: "unverified",
+    age: "unverified",
   }));
   /**
    * Held apart from `suiteStatus` rather than as a fourth key in it: the two
@@ -2503,7 +2506,19 @@ export function ToolkitShell() {
     setWebauthnApi(webauthnApiPresence());
     void runCryptoSelfTests().finally(() => {
       if (cancelled) return;
-      setSuiteStatus(getSuiteStatus());
+      // Normalised here rather than typed away. `SuiteStatusMap` makes `age`
+      // optional so that `engine.js`'s three-key default still satisfies it,
+      // and this component needs every suite to have a state so the badges and
+      // the FIPS sentence can render one. A missing suite reads `unverified`,
+      // which is the direction that cannot mislead: an unrun self-test is not
+      // a passed one.
+      const seen = getSuiteStatus();
+      setSuiteStatus({
+        openpgp: seen.openpgp ?? "unverified",
+        webcrypto: seen.webcrypto ?? "unverified",
+        sss: seen.sss ?? "unverified",
+        age: seen.age ?? "unverified",
+      });
     });
     return () => {
       cancelled = true;
@@ -2515,9 +2530,23 @@ export function ToolkitShell() {
     setFipsModeState(on);
   };
 
-  const unverifiedSuiteNames = (Object.keys(suiteStatus) as (keyof CastSuiteStatus)[]).filter(
-    (k) => suiteStatus[k] !== "verified"
-  );
+  /**
+   * **Read off the label map, not off the status object.**
+   *
+   * This iterated `Object.keys(suiteStatus)` and then rendered each through
+   * `SUITE_BADGE_LABEL`. The moment CAST-15 gave `getSuiteStatus()` a fourth
+   * key, the two lists were different lengths and the FIPS sentence printed
+   * `OpenPGP, WebCrypto, SSS, ` — a trailing empty name for a suite with no
+   * label. `tsc` could not see it, because the `as (keyof CastSuiteStatus)[]`
+   * cast asserts the very agreement that had broken.
+   *
+   * Driving from the label map makes the render impossible to outrun: a suite
+   * with no label cannot be named, and a label with no status reads
+   * `unverified`, which is the fail-closed direction.
+   */
+  const unverifiedSuiteNames = (
+    Object.keys(SUITE_BADGE_LABEL) as (keyof CastSuiteStatus)[]
+  ).filter((k) => suiteStatus[k] !== "verified");
 
   /**
    * The rows behind TopBar's pill, worst-tone-wins (design v2 §21e).
