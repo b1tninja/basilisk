@@ -99,9 +99,6 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   `.cell-bind-messaging`) are still live. It was unreachable in that script
   because the only route to it ran through the dead raw-textarea loader. If it
   is wanted, it needs a new purpose-built script.
-
----
-
 - **Two engine binding fields have only test producers now.**
   `bindings.recipients` (parsed openpgp `Key` objects) and
   `bindings.gpg.privateKeyArmored` were both set by `executeToolkitRun`, which
