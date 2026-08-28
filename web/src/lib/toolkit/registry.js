@@ -214,7 +214,6 @@ import {
  * @property {boolean} [decodeTwin]  drawer shows encode | encode -d pair
  * @property {boolean} [kitOnly]  omit from shelf grids — discover via a meta kit (format/cipher/collection)
  * @property {string} [pairCaption]  optional family label above a conjugate row
- * @property {{ forward: string, reverse: string }} [pairLabels]  friendly tile verbs (Encrypt/Decrypt, Encode/Decode) — UX only
  * @property {string} [glyph]  key into generated glyphs.js (overrides shelf/toolbox)
  * @property {string} doc
  * @property {IoType} input
@@ -1206,7 +1205,6 @@ export const STEPS = [
     shelf: "sign",
     conjugate: "verify",
     pairCaption: "Sign / verify (HMAC via hmac sugar)",
-    pairLabels: { forward: "Sign", reverse: "Verify" },
     doc: "Sign pipeline bytes with a WebCrypto private/HMAC key. Prefer `sign key=$kp` (slot from `out`); else key panel. RSA-PSS `saltLength=` (default 32); ECDSA optional `hash=` override. Example: `input | utf8 | sign key=$kp | base64url`.",
     input: "bytes",
     output: "bytes",
@@ -1304,7 +1302,6 @@ export const STEPS = [
     shelf: "aead",
     decodeTwin: true,
     pairCaption: "AES-GCM",
-    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
     doc: "AES-GCM encrypt (default) or decrypt with `-d`. Prefer `aes-gcm key=$cek`; else key panel. Optional `tagLength=` (default 128). Also accepts `aes-256-gcm` / `AES/GCM/NoPadding`. Bare `encrypt`/`decrypt` sugar is migrator-only — write the concrete op. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
@@ -1367,7 +1364,6 @@ export const STEPS = [
     shelf: "cipher",
     decodeTwin: true,
     pairCaption: "AES-CBC",
-    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
     doc: "AES-CBC encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT. Prefer `aes-cbc key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
@@ -1411,7 +1407,6 @@ export const STEPS = [
     shelf: "cipher",
     decodeTwin: true,
     pairCaption: "AES-CTR",
-    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
     doc: "AES-CTR encrypt/decrypt (`-d`). Unauthenticated — prefer `aes-gcm` for new work. Packing IV(16)||CT (128-bit counter block); `length=` is AesCtrParams.length (default 64), not IV size. Prefer `aes-ctr key=$cek`. Also accepts sized/JCE forms. Distinct from OpenPGP `gpg.encrypt`.",
     input: "bytes",
@@ -1464,7 +1459,6 @@ export const STEPS = [
     shelf: "rsa",
     decodeTwin: true,
     pairCaption: "RSA-OAEP",
-    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
     doc: "RSA-OAEP encrypt (default) or decrypt with `-d`. Prefer `rsa-oaep key=$rk`; else key panel. Optional `label=` (must match on decrypt). Also accepts JCE `RSA/ECB/OAEPWithSHA-256AndMGF1Padding`. Distinct from OpenPGP `gpg.encrypt` and AES `aes-gcm`.",
     input: "bytes",
@@ -1517,7 +1511,6 @@ export const STEPS = [
     shelf: "rsa",
     decodeTwin: true,
     pairCaption: "RSAES-PKCS1",
-    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     kitOnly: true,
     doc: "RSAES-PKCS1-v1_5 encrypt/decrypt (`-d`). Discouraged — prefer `rsa-oaep`. Pure-JS (not SubtleCrypto). Uses any RSA key (OAEP/PSS JWK) via `key=$rk`. Also accepts `RSA/ECB/PKCS1Padding`. Outputs tagged legacy/discouraged.",
     input: "bytes",
@@ -1849,7 +1842,6 @@ export const STEPS = [
     glyph: "pem",
     conjugate: "der",
     pairCaption: "PEM / DER",
-    pairLabels: { forward: "Armor", reverse: "Dearmor" },
     doc: "Wrap DER bytes as PEM armor. Label auto: SPKI/`which=public` → PUBLIC KEY, PKCS#8 → PRIVATE KEY. Conjugate: `der` strips armor. Example: `:public | export spki | pem | out $public`.",
     input: "bytes",
     output: "text",
@@ -1885,7 +1877,6 @@ export const STEPS = [
     glyph: "base64",
     decodeTwin: true,
     pairCaption: "Base64",
-    pairLabels: { forward: "Encode", reverse: "Decode" },
     kitOnly: true,
     doc: "Encode bytes as Base64 (`base64.encode`) or decode (`base64.decode`). Example: `random 32 | base64.encode | out $secret`. Also accepts `base64 -d`.",
     input: "bytes",
@@ -1913,7 +1904,6 @@ export const STEPS = [
     glyph: "base64",
     decodeTwin: true,
     pairCaption: "Base64url",
-    pairLabels: { forward: "Encode", reverse: "Decode" },
     kitOnly: true,
     doc: "Encode bytes as URL-safe Base64 without padding (`base64url.encode`) or decode (`base64url.decode`). Also accepts `base64url -d`.",
     input: "bytes",
@@ -1946,7 +1936,6 @@ export const STEPS = [
     glyph: "hex",
     conjugate: "decode",
     pairCaption: "Encode / Decode",
-    pairLabels: { forward: "Encode", reverse: "Decode" },
     doc: "Encode bytes as text in a base alphabet. Example: `… | digest | encode hex | out $digest`, or `… | encode base64url`. (`to` is the old spelling and still parses.)",
     input: "bytes",
     output: "text",
@@ -2000,7 +1989,6 @@ export const STEPS = [
     glyph: "base32",
     decodeTwin: true,
     pairCaption: "Base32",
-    pairLabels: { forward: "Encode", reverse: "Decode" },
     kitOnly: true,
     doc: "Encode bytes as RFC 4648 Base32 (`base32.encode`) or decode (`base32.decode`). Example: `random 10 | base32.encode | out $id`.",
     input: "bytes",
@@ -2429,7 +2417,6 @@ export const STEPS = [
     aliases: ["words"],
     decodeTwin: true,
     pairCaption: "BLIP39",
-    pairLabels: { forward: "Encode", reverse: "Decode" },
     doc: "Encode raw SSS shares as BLIP39 mnemonics (`blip39.encode`) or decode (`blip39.decode`). Example: `… | sss.split | blip39.encode | foreach`. Recover: `shares | blip39.decode | sss.combine`. Also accepts `blip39 -d`.",
     input: "shares",
     output: "shares",
@@ -3362,7 +3349,6 @@ export const STEPS = [
     shelf: "enrolment",
     conjugate: "otp.parse",
     pairCaption: "Build / read a Key URI",
-    pairLabels: { forward: "Build", reverse: "Read" },
     glyph: "qr",
     doc: "Build the `otpauth://` enrolment URI an authenticator scans, from a Base32 secret (or raw secret bytes, which are encoded for you). `algorithm=`, `digits=` and `period=` are always written into the URI even at their defaults — they are optional in the format, but the defaults readers assume are not uniform, and a URI that states them cannot be read two ways. The output is **masked**: this string is the shared secret plus a label, so it is a credential exactly as a private key is. Example: `random 20 | otp.uri issuer=\"Big Corp\" account=you@example.com | qr`.",
     input: "text",
@@ -3430,7 +3416,6 @@ export const STEPS = [
     shelf: "otpcode",
     conjugate: "otp.verify",
     pairCaption: "Code / verify",
-    pairLabels: { forward: "Code", reverse: "Verify" },
     glyph: "otp",
     doc: "The code showing right now, from a Base32 secret, raw secret bytes, **or** a whole `otpauth://` URI. Handed a URI it takes `mode`, `algorithm`, `digits`, `period` and `counter` from the URI and ignores its own — the URI is what the other side is holding. `at=` pins the instant, which is how the RFC 6238 vectors are stated. The code itself is *not* masked: it expires in one step and exists to be read. Example: `in $secret | otp.code | out $code`.",
     input: "text",
@@ -3871,7 +3856,6 @@ export const STEPS = [
     shelf: "receipt",
     conjugate: "run.verify",
     pairCaption: "Run receipt",
-    pairLabels: { forward: "Receipt", reverse: "Verify" },
     doc: "Emit a signable receipt for this run: recipe source, per-cell input/output **digests** (never the values), timestamps, and the op-registry version. Sign it with the vault key — `run.receipt | gpg.sign key=$me | out $receipt` — and check it later with `run.verify`.",
     input: "none",
     output: "text",
@@ -3951,7 +3935,6 @@ export const STEPS = [
     shelf: "receipt",
     conjugate: "playbook.verify",
     pairCaption: "Recipe playbook",
-    pairLabels: { forward: "Write", reverse: "Verify" },
     doc: "Write a signed playbook for a procedure — what somebody follows when nobody is left to ask. Carries the canonical recipe text (not a digest of it: in a recovery there is nowhere else to get the text from), a `purpose` sentence, and the op-registry version. `recipe=` names the procedure and defaults to the notebook this runs in — a *recovery* playbook usually names the recovery, not the ceremony that would mint a new secret. Sign it and put it in the envelope with the printed cards — `playbook \"Board key recovery\" purpose=\"…\" | gpg.sign key=$me | out $playbook`. Unlike a run manifest it carries no peers, no vault key ids and no pinned inputs, because it is meant to be handed to somebody who was never in the room. Example: `playbook \"Board key recovery\" | out $playbook`.",
     input: "none",
     output: "text",
@@ -4079,7 +4062,6 @@ export const STEPS = [
     shelf: "files",
     conjugate: "stream.open",
     pairCaption: "Chunked AEAD (STREAM)",
-    pairLabels: { forward: "Seal", reverse: "Open" },
     doc: "Chunked AES-GCM in the STREAM construction — the way to encrypt a *file*, since `SubtleCrypto.encrypt` is one-shot and its single tag only verifies after the last byte. Each 64 KiB chunk carries its own tag and its index in the nonce, so reorder, splice, and truncation are all detected. A fresh file key is wrapped under `key=$slot`, which is what makes counter nonces safe with a reused key. **Not age** — same construction, different AEAD and header (see `age.encrypt` for files the `age` CLI can read). Example: `file.read | stream.seal key=$cek | file.save name=doc.bskstrm`.",
     input: "bytes",
     output: "bytes",
@@ -4157,7 +4139,6 @@ export const STEPS = [
     shelf: "files",
     conjugate: "age.decrypt",
     pairCaption: "age (age-encryption.org/v1)",
-    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     doc: "Encrypt to age recipients — real `age-encryption.org/v1`, produced by typage (age's author's implementation), so `age -d` reads it. `to=` takes one or more `age1…` recipients or an `$slot`; `passphrase=` is the scrypt mode instead (never both). `armor=true` for the PEM-style text form. CLI: `age -r age1… -o doc.age doc`. Example: `file.read | age.encrypt to=$pub | file.save`.",
     input: "bytes",
     output: "bytes",
@@ -4262,7 +4243,6 @@ export const STEPS = [
     shelf: "ports",
     conjugate: "file.save",
     pairCaption: "File",
-    pairLabels: { forward: "Read", reverse: "Save" },
     doc: "Open a file from disk into the pipeline. The browser's own picker is the consent — no extra prompt (unlike `clipboard.read`, where the page chooses when to look). Arrives as `bytes`; write `as=text` when the recipe wants it decoded as UTF-8. **The type is read from the recipe, never sniffed from the file** — a source that picked its own type would make every compile-time answer downstream a guess. Filename and MIME ride along in meta, so `file.read | age.encrypt to=$pub | file.save` names the output for you. Main-thread only. Example: `file.read accept=.pem | inspect`.",
     input: "none",
     output: "bytes",
@@ -4539,7 +4519,6 @@ export const STEPS = [
     shelf: "token",
     conjugate: "jose.verify",
     pairCaption: "JWS (RFC 7515)",
-    pairLabels: { forward: "Sign", reverse: "Verify" },
     doc: "Sign the pipeline payload into a compact JWS (a JWT when the payload is JSON claims). `alg=auto` reads the algorithm off the key; naming one is checked against the key, never trusted. Example: `input | jose.sign key=$k alg=es256 | out $token`.",
     input: "text",
     output: "text",
@@ -4617,7 +4596,6 @@ export const STEPS = [
     shelf: "envelope",
     conjugate: "jose.decrypt",
     pairCaption: "JWE (RFC 7516)",
-    pairLabels: { forward: "Encrypt", reverse: "Decrypt" },
     doc: "Encrypt the payload into a compact JWE. AES-GCM content encryption only (`enc=a128gcm|a192gcm|a256gcm`); key management is `dir` (the slot key *is* the CEK), AES-KW, or RSA-OAEP-256. Example: `input | jose.encrypt key=$cek | out $jwe`.",
     input: "text",
     output: "text",
@@ -5810,7 +5788,6 @@ export const CIPHER_PICKER_ALIASES = {
  * @property {Toolbox} toolbox
  * @property {string} shelf  insert near this shelf order
  * @property {string} glyph
- * @property {{ forward: string, reverse: string }} actionLabels
  * @property {string[]} [search]  filter needles for kit visibility
  * @property {OpCollectionMember[]} members
  */
@@ -5823,7 +5800,6 @@ export const OP_COLLECTIONS = {
     toolbox: "webcrypto",
     shelf: "aead",
     glyph: "aead",
-    actionLabels: { forward: "Encrypt", reverse: "Decrypt" },
     search: ["cipher", "encrypt", "decrypt", "aes", "aead", "gcm", "cbc", "ctr"],
     members: [
       {
@@ -5852,7 +5828,6 @@ export const OP_COLLECTIONS = {
     toolbox: "webcrypto",
     shelf: "rsa",
     glyph: "rsa",
-    actionLabels: { forward: "Encrypt", reverse: "Decrypt" },
     search: ["cipher", "encrypt", "decrypt", "rsa", "oaep", "pkcs"],
     members: [
       {
@@ -5875,7 +5850,6 @@ export const OP_COLLECTIONS = {
     toolbox: "encoding",
     shelf: "binary",
     glyph: "binary",
-    actionLabels: { forward: "Encode", reverse: "Decode" },
     search: [
       "encode",
       "decode",
@@ -5934,36 +5908,6 @@ export function collectionForStep(stepName) {
   return null;
 }
 
-/**
- * Friendly shelf-tile verb (Encrypt / Decode / …). Null → use recipe display name.
- * @param {StepSpec|null|undefined} step
- * @param {{ decode?: boolean, pairRole?: "forward"|"reverse"|"solo" }} [opts]
- * @returns {string|null}
- */
-export function pairTileLabel(step, opts = {}) {
-  if (!step) return null;
-  let labels = step.pairLabels || null;
-  if (!labels) {
-    const col = collectionForStep(step.name);
-    if (col) labels = col.actionLabels;
-  }
-  if (!labels && step.conjugateOf) {
-    const fwd = getStep(step.conjugateOf);
-    labels = fwd?.pairLabels || null;
-  }
-  if (!labels) return null;
-  const reverse = !!opts.decode || opts.pairRole === "reverse";
-  if (reverse) return labels.reverse;
-  if (
-    opts.pairRole === "forward" ||
-    opts.pairRole === "solo" ||
-    step.decodeTwin ||
-    step.conjugate
-  ) {
-    return labels.forward;
-  }
-  return labels.forward;
-}
 
 /**
  * AES modes for the OpsShelf AES drawer (kitOnly steps — not shelf tiles).

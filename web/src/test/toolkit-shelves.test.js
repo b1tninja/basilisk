@@ -20,7 +20,6 @@ import {
   listOpCollections,
   listSteps,
   pairRowMatches,
-  pairTileLabel,
   RSA_PADDING_PICKS,
 } from "../lib/toolkit/registry.js";
 
@@ -103,20 +102,19 @@ describe("toolbox shelf taxonomy", () => {
 });
 
 describe("op collections", () => {
-  it("lists AES, RSA, and encoding collections with action labels", () => {
+  it("lists the AES, RSA and encoding collections", () => {
+    // `actionLabels` was asserted here too — `{ forward: "Encrypt", reverse:
+    // "Decrypt" }` and its encoding twin. They are gone with `pairTileLabel`,
+    // the only function that ever read them: a friendly-verb vocabulary of
+    // twenty-four declarations across the registry, tried in `3ef6526` and
+    // rejected because naming the buttons `Encrypt`/`Decrypt` made them
+    // untypeable, then left in place shipping in the bundle and read by
+    // nothing but this assertion.
     expect(listOpCollections().map((c) => c.id).sort()).toEqual([
       "aes",
       "encoding",
       "rsa",
     ]);
-    expect(OP_COLLECTIONS.aes.actionLabels).toEqual({
-      forward: "Encrypt",
-      reverse: "Decrypt",
-    });
-    expect(OP_COLLECTIONS.encoding.actionLabels).toEqual({
-      forward: "Encode",
-      reverse: "Decode",
-    });
   });
 
   it("derives mode picks from OP_COLLECTIONS", () => {
@@ -145,21 +143,6 @@ describe("op collections", () => {
     }
   });
 
-  it("pairTileLabel prefers Encrypt/Decode over verb names", () => {
-    const aes = getStep("aes-gcm");
-    expect(pairTileLabel(aes, { pairRole: "forward" })).toBe("Encrypt");
-    expect(pairTileLabel(aes, { decode: true, pairRole: "reverse" })).toBe(
-      "Decrypt"
-    );
-    const b64 = getStep("base64");
-    expect(pairTileLabel(b64, { pairRole: "forward" })).toBe("Encode");
-    expect(pairTileLabel(b64, { decode: true })).toBe("Decode");
-    const sign = getStep("sign");
-    expect(pairTileLabel(sign, { pairRole: "forward" })).toBe("Sign");
-    expect(pairTileLabel(getStep("verify"), { pairRole: "reverse" })).toBe(
-      "Verify"
-    );
-  });
 });
 
 describe("conjugates and decode twins", () => {

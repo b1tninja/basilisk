@@ -62,10 +62,6 @@ Criticality is handled and needs nothing: openpgp.js throws on an unrecognised
   `635fd58`'s `shares tray=merge`. Full restoration needs either *"what the
   recipe names beats what a tray holds"* or *"one `shares` step per pipeline"*
   loosened. Both are separately argued; neither was touched.
-- **`pairTileLabel`** has no consumer outside its own test. It is the
-  friendly-verb function (`Encrypt`, `Build`), and `3ef6526` recorded why using
-  it would have made the direction buttons untypeable. Dead export, kept
-  deliberately, listed here so it is not rediscovered as a surprise.
 
 ---
 

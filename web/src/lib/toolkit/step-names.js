@@ -253,7 +253,9 @@ export function decodeTwinToken(spec, decode) {
  * see `pairFamilyLabel`, which falls back to the op's toolbox — because that
  * is a display choice and this is token arithmetic.
  *
- * Tokens, not labels. `pairTileLabel` would give this row `Encrypt`/`Decrypt`
+ * Tokens, not labels. A friendly-verb vocabulary existed for exactly this and
+ * is gone: `pairTileLabel` and the twenty-four `pairLabels`/`actionLabels`
+ * declarations feeding it would have given this row `Encrypt`/`Decrypt`
  * and `otp.uri`'s `Build`/`Read`, and a button reading `Build` names no step.
  * Every tail this returns is the back half of a real op name.
  *
