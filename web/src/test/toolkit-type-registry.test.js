@@ -501,7 +501,6 @@ describe("step reference links", () => {
     "tee",
     "peek",
     "agent.sign",
-    "agent.decrypt",
     "agent.unlock",
     "agent.pub",
     "agent.list",
@@ -510,11 +509,43 @@ describe("step reference links", () => {
     "out",
     "publish",
     "text",
-    "run.manifest",
-    "run.attest",
-    "playbook",
   ])("leaves %s uncited — it has no external spec", (name) => {
     expect(getStep(name), name).toBeTruthy();
     expect(docsUrlFor(name), name).toBeNull();
+  });
+
+  it("cites one serializer once across all five documents", () => {
+    // `run.receipt` cited RFC 8785 on the argument that what is normative about
+    // a receipt is the deterministic serialization its digest and signature are
+    // taken over. `manifestToJson`, `attestationToJson` and `playbookToJson` are
+    // each a one-line call to that same `canonicalJson`, so citing two of the
+    // five and not the other three was an asymmetry, not a distinction.
+    const jcs = docsUrlFor("run.receipt");
+    expect(jcs?.url).toBe("https://www.rfc-editor.org/rfc/rfc8785");
+    for (const name of ["run.verify", "run.manifest", "run.attest", "playbook"]) {
+      expect(docsUrlFor(name), name).toEqual(jcs);
+    }
+  });
+
+  it("says subset in the JCS label, because the code says subset", () => {
+    // `receipt.js`: "Deliberately a *subset* of JCS rather than a claim to
+    // implement it" — the receipt holds only strings, integers, booleans, null,
+    // arrays and plain objects, so JCS's hard parts cannot arise and are not
+    // implemented. A flat `RFC 8785 · JSON Canonicalization` claimed a
+    // conformance the module disclaims two files away; the parenthesis is the
+    // whole point of the label and is pinned so it cannot be tidied off.
+    expect(docsUrlFor("run.receipt")?.label).toBe("RFC 8785 · JSON Canonicalization (subset)");
+  });
+
+  it("cites agent.decrypt where agent.sign stays uncited", () => {
+    // `agent.sign` is polymorphic — OpenPGP signature or sshsig, chosen at run
+    // time from the key kind — so no one document covers it. `agent.decrypt`
+    // refuses every non-PGP key by name before it reads anything, then hands an
+    // armored message to openpgp's `decrypt`: the same bytes as `gpg.decrypt`,
+    // with only the key's provenance differing. The pair is pinned together so
+    // neither can be changed to match the other by reflex.
+    expect(docsUrlFor("agent.decrypt")).toEqual(docsUrlFor("gpg.decrypt"));
+    expect(docsUrlFor("agent.decrypt")?.label).toBe("RFC 9580 · OpenPGP");
+    expect(docsUrlFor("agent.sign")).toBeNull();
   });
 });

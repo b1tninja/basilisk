@@ -128,33 +128,14 @@ const UNCITED = {
     "stalls the round rather than shrinking the pool. A commitment-scheme page defines none of " +
     "those four, and they are the whole protocol",
 
-  // ── Open, and recorded as open rather than settled.
-  //
-  // These four are the ones a later pass may well cite, and the reason they are
-  // not cited *here* is not that the argument fails. `glyph-shadowing.test.js`
-  // keeps an `Activity` row on the same terms: an entry can record a decision
-  // nobody has made yet, as long as it says so.
-  //
-  // The blocker is ownership, not doubt: `toolkit-type-registry.test.js` already
-  // asserts `docsUrlFor` returns null for all four, and citing one without
-  // editing that file in the same change turns a documentation improvement into
-  // a red suite.
-  "run.manifest":
-    "OPEN — same family as `run.receipt`, which cites RFC 8785 on the argument that what is " +
-    "normative about a receipt is the deterministic serialization its digest and signature are " +
-    "taken over. `manifest.js` uses `receipt.js`'s own `canonicalJson` and says in its header that " +
-    "a second one would be a second answer; by the receipt's own reasoning this is citable",
-  "run.attest":
-    "OPEN — `attest.js` serializes through the same `canonicalJson` and digests the manifest with " +
-    "`manifestDigest`. Same argument as `run.manifest`, same RFC 8785",
-  playbook:
-    "OPEN — `playbook.js` serializes through the same `canonicalJson`. Same argument again; the " +
-    "content is recipe text and prose, but the digest that makes it checkable is the canonical form",
-  "agent.decrypt":
-    "OPEN — unlike `agent.sign` this one is not polymorphic: it refuses every non-PGP key by name, " +
-    "reads an armored OpenPGP message and calls openpgp's `decrypt`. The bytes are RFC 9580's and " +
-    "the vault only decides where the key came from, which is the same shape as `seal` inheriting " +
-    "`gpg.encrypt`'s reference",
+  // The four `OPEN:` entries that stood here — `run.manifest`, `run.attest`,
+  // `playbook` and `agent.decrypt` — are gone because they were settled, not
+  // because they were dropped. All three documents serialize through
+  // `receipt.js`'s own `canonicalJson`, which is what `run.receipt` was already
+  // citing RFC 8785 for; `agent.decrypt` refuses every non-PGP key by name and
+  // then runs openpgp's `decrypt`, so it is `gpg.decrypt` with a different
+  // provenance for the key and none for the bytes. The citations, and the
+  // reasoning, are in `step-docs.js`.
 };
 
 describe("every op without a reference has a written reason", () => {

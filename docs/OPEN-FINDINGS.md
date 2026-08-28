@@ -122,17 +122,11 @@ marks, which is the reflex that once put one `KeyRound` on six key roles.
   `assertRecipeAllowedUnderFips`. Annotated in place rather than deleted, but it
   is the shape this file keeps finding and nobody should cite it as a protection
   in force.
-- **Four ops have a citation argued for and blocked by a test.**
-  `run.manifest`, `run.attest` and `playbook` all serialize through
-  `receipt.js`'s own `canonicalJson`, which `run.receipt` already cites RFC 8785
-  for on exactly that argument; `agent.decrypt` refuses every non-PGP key by
-  name and then calls openpgp's `decrypt`, so unlike `agent.sign` it is not
-  polymorphic. All four are asserted uncited by
-  `toolkit-type-registry.test.js:493`, so citing them means editing that list
-  and the `UNCITED` entries together. Note `canonicalJson` calls itself
-  "deliberately a *subset* of JCS rather than a claim to implement it" while the
-  two existing citations say RFC 8785 flatly — tighten that for all five at once
-  or not at all.
+- **The whole citation map reaches one paragraph.** `docsUrlFor` has exactly one
+  production consumer: `DocsFooter` in `ToolCard.tsx`. It is live and rendered,
+  so this is not the dead-mechanism shape — but 108 references across the
+  registry are read by a single `<p>`, which is worth knowing before anyone
+  invests further in coverage.
 
 ---
 

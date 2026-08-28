@@ -8,9 +8,20 @@
  *
  * Every link points at the *normative* source for what the step does — the MDN
  * page for the exact WebCrypto/WebRTC/WebAuthn call it makes, or the RFC that
- * defines the wire format. Basilisk-specific plumbing (`in`, `out`, `tee`,
- * `agent.*`) has no external spec and is intentionally absent; `docsUrlFor`
- * returns null and the tool card simply omits the row.
+ * defines the wire format. Basilisk-specific plumbing (`in`, `out`, `tee`, and
+ * most of `agent.*`) has no external spec and is intentionally absent;
+ * `docsUrlFor` returns null and the tool card simply omits the row. The vault
+ * is not a blanket exemption, though: an `agent.*` op is uncited when the
+ * *bytes* it produces depend on what the vault happens to be holding, and
+ * `agent.decrypt` is cited because they do not.
+ *
+ * A label may qualify what it claims. `RFC 8785 · JSON Canonicalization
+ * (subset)` is the one such label here, and the parenthesis is load-bearing:
+ * `receipt.js` says in its own header that `canonicalJson` is "deliberately a
+ * *subset* of JCS rather than a claim to implement it", so a label reading
+ * `RFC 8785 · JSON Canonicalization` flat would assert a conformance the code
+ * declines. Every op that serializes through that one function carries the
+ * qualified label, and all five carry the same one.
  *
  * That absence is not a gap to be closed. It is written down, one op at a time
  * with its reason, in `test/step-docs-coverage.test.js` — a list that may only
@@ -22,6 +33,12 @@
 
 const MDN = "https://developer.mozilla.org/en-US/docs/Web/API";
 const RFC = "https://www.rfc-editor.org/rfc";
+
+/**
+ * The one qualified label in the map, named once so the five ops that share a
+ * serializer cannot drift into saying different things about it.
+ */
+const JCS_SUBSET = "RFC 8785 · JSON Canonicalization (subset)";
 
 /** @typedef {{ url: string, label: string }} DocRef */
 
@@ -69,11 +86,26 @@ const STEP_DOCS = {
 
   // ── I/O ──
   random: { url: `${MDN}/Crypto/getRandomValues`, label: "MDN · Crypto.getRandomValues()" },
-  // The receipt ops have no protocol of their own; what *is* normative about
-  // them is the deterministic serialization the digest and the signature are
-  // taken over, so both point at JCS rather than at nothing.
-  "run.receipt": { url: `${RFC}/rfc8785`, label: "RFC 8785 · JSON Canonicalization" },
-  "run.verify": { url: `${RFC}/rfc8785`, label: "RFC 8785 · JSON Canonicalization" },
+  // ── The three signed documents. None has a protocol of its own; what *is*
+  // normative about each is the deterministic serialization its digest and its
+  // signature are taken over, so all five point at JCS rather than at nothing.
+  //
+  // One serializer, one citation: `manifestToJson`, `attestationToJson` and
+  // `playbookToJson` are each a one-line call to `receipt.js`'s `canonicalJson`
+  // — the very function `receiptToJson` calls — and `attest.js` says in its
+  // header that a second `canonicalJson` would be "a second answer to which
+  // bytes did we sign". Three ops through that function citing nothing while
+  // two cited it was an asymmetry with no argument under it.
+  //
+  // The label says `(subset)` for the reason given at the top of this file:
+  // `canonicalJson` handles the value shapes these documents hold — strings,
+  // integers, booleans, null, arrays, plain objects — and disclaims the rest of
+  // JCS rather than implementing it.
+  "run.receipt": { url: `${RFC}/rfc8785`, label: JCS_SUBSET },
+  "run.verify": { url: `${RFC}/rfc8785`, label: JCS_SUBSET },
+  "run.manifest": { url: `${RFC}/rfc8785`, label: JCS_SUBSET },
+  "run.attest": { url: `${RFC}/rfc8785`, label: JCS_SUBSET },
+  playbook: { url: `${RFC}/rfc8785`, label: JCS_SUBSET },
   passphrase: { url: "https://en.wikipedia.org/wiki/Diceware", label: "Diceware" },
 
   // ── OpenPGP — one spec covers the whole toolbox ──
@@ -94,6 +126,13 @@ const STEP_DOCS = {
   // message on the way out — so it cites the same spec. Pointing a derived verb
   // somewhere else would claim a difference in the bytes that does not exist.
   seal: { url: `${RFC}/rfc9580`, label: "RFC 9580 · OpenPGP" },
+  // `agent.decrypt` is the vault's `gpg.decrypt`, and unlike `agent.sign` it is
+  // not polymorphic: `agent-ops.js` refuses an SSH key and a raw key by name
+  // ("Only pgp-kind keys decrypt") before it reads anything, then hands an
+  // armored OpenPGP message to the same `openpgp.decrypt`. Same bytes in, same
+  // bytes out; only the private key's provenance differs, and provenance is not
+  // what a citation describes. The same shape as `seal` above.
+  "agent.decrypt": { url: `${RFC}/rfc9580`, label: "RFC 9580 · OpenPGP" },
 
   // ── HKP keyserver protocol ──
   "hkp.get": {
