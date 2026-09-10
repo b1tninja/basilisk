@@ -15,8 +15,8 @@
   "triggers": {
     "When_message_in_queue": {
       "recurrence": {
-        "frequency": "Second",
-        "interval": 30
+        "frequency": "Minute",
+        "interval": ${approval_poll_interval_minutes}
       },
       "type": "ApiConnection",
       "inputs": {

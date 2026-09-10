@@ -1,25 +1,27 @@
 locals {
   approval_workflow_definition = jsondecode(
     templatefile("${path.module}/files/approval-workflow.json.tpl", {
-      mail_provider = var.mail_provider
+      mail_provider                  = var.mail_provider
+      approval_poll_interval_minutes = var.approval_poll_interval_minutes
     })
   )
 }
 
-# Gated on the feature it implements. The Service Bus trigger in the workflow
-# definition is a Consumption-tier polling trigger -- it wakes on an interval
-# and checks the queue whether or not a message is there, and the connector has
-# no push variant to switch to -- so a deployed-but-idle workflow bills a fixed
-# amount per month for polling a queue nothing is meant to read. With
-# require_manager_approval false the function app publishes no approval requests
-# and sets BASILISK_REQUIRE_MANAGER_APPROVAL=0, so the polling was the whole
-# cost of the feature and none of its behaviour. Not deploying it is the fix.
+# Gated on its own switch rather than on require_manager_approval.
 #
-# The module creates no API connection of its own: `$connections` is passed
-# empty and the mail connector is wired up out of band, so there is nothing
-# else here to gate.
+# The first version of this gate used that variable, which was wrong: one
+# workflow serves two events, and only `claim.submitted` is the approval step.
+# `key.pending` is the ordinary verification mail that `basilisk/hkp/add.py`
+# enqueues on every accepted upload no matter what that setting says, so gating
+# here on it silenced verification for a reason that had nothing to do with it.
+#
+# Deploying this is still not the same as making it work. The module passes
+# `$connections = {}` and creates no `Microsoft.Web/connections`, so the
+# trigger binds a connection id that resolves to nothing. Two connections have
+# to exist first, and the mail one needs an interactive consent Terraform
+# cannot give. That is why the default is false rather than true with a caveat.
 resource "azapi_resource" "approval_logic_app" {
-  count     = var.require_manager_approval ? 1 : 0
+  count     = var.enable_approval_workflow ? 1 : 0
   type      = "Microsoft.Logic/workflows@2019-05-01"
   name      = "${var.name_prefix}-approval-la"
   parent_id = azurerm_resource_group.basilisk.id

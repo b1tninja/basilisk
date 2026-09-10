@@ -51,8 +51,13 @@ output "custom_domain" {
 }
 
 output "logic_app_name" {
-  description = "Approval Logic App name, or null when require_manager_approval is false and it is not deployed."
-  value       = var.require_manager_approval ? azapi_resource.approval_logic_app[0].name : null
+  description = "Approval Logic App name, or null when enable_approval_workflow is false and it is not deployed."
+  # Read off the resource rather than re-deriving the condition from a variable.
+  # This said `var.require_manager_approval ? ...[0].name`, which stopped being
+  # the condition that governs the resource and became a way to index an empty
+  # tuple: approval required, workflow not deployed, plan fails. one() answers
+  # null for an empty list and cannot disagree with the count beside it.
+  value = one(azapi_resource.approval_logic_app[*].name)
 }
 
 output "service_bus_namespace" {

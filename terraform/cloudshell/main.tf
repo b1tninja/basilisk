@@ -11,6 +11,8 @@ module "basilisk" {
   entra_tenant_id                          = local.entra_tenant_id
   mail_provider                            = var.mail_provider
   require_manager_approval                 = var.require_manager_approval
+  enable_approval_workflow                 = var.enable_approval_workflow
+  approval_poll_interval_minutes           = var.approval_poll_interval_minutes
   upstream_enabled                         = var.upstream_enabled
   upstream_allowlist                       = var.upstream_allowlist
   upstream_default                         = var.upstream_default

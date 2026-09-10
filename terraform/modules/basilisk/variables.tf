@@ -115,6 +115,61 @@ variable "servicebus_sku" {
   }
 }
 
+variable "enable_approval_workflow" {
+  type        = bool
+  description = <<-EOT
+    Deploy the Logic App that reads the `key-events` queue and sends mail.
+
+    Its own switch, and deliberately not `require_manager_approval`. One
+    workflow serves two events: `key.pending` is the ordinary "verify your
+    OpenPGP key" mail sent on every accepted upload, and `claim.submitted` is
+    the manager-approval step. Only the second belongs to
+    `require_manager_approval`, and `basilisk/hkp/add.py` calls
+    `enqueue_key_pending` regardless of it -- so gating the whole workflow on
+    that variable silences verification mail for a setting that has nothing to
+    say about it.
+
+    **Default false**, because deploying it is not the same as making it work.
+    The module passes `$connections = {}` and creates no
+    `Microsoft.Web/connections`, so a deployed workflow's trigger binds a
+    connection id that resolves to nothing and it cannot read the queue at all.
+    Two connections have to exist first -- one for Service Bus and one for the
+    mail provider -- and the mail one needs an interactive OAuth consent from
+    the mailbox owner, which Terraform cannot perform. Until both exist this
+    resource is a polling bill with no behaviour attached.
+
+    It does **not** depend on a custom domain. The mail body is the
+    `claim_url` carried in the queue message, which the app builds from
+    `BASILISK_BASE_URL`; on the dev profile that is the Function App's own
+    hostname, which is reachable and correct if unlovely.
+  EOT
+  default     = false
+}
+
+variable "approval_poll_interval_minutes" {
+  type        = number
+  description = <<-EOT
+    Minutes between checks of the `key-events` queue.
+
+    The Consumption-tier Service Bus connector trigger is a poll -- it wakes on
+    this interval and asks whether a message is there, and there is no push
+    variant to switch to -- and every wake is a billable connector action
+    whether or not anything is waiting. This interval is therefore the entire
+    running cost of the workflow, independent of how many keys are uploaded.
+
+    It was 30 seconds, which is 86,400 wakes a month and billed $11.07 while
+    delivering nothing. Five minutes is 8,640, about a tenth, and is a
+    perfectly reasonable latency for an email asking someone to confirm an
+    address.
+  EOT
+  default     = 5
+
+  validation {
+    condition     = var.approval_poll_interval_minutes >= 1 && var.approval_poll_interval_minutes <= 60
+    error_message = "approval_poll_interval_minutes must be between 1 and 60."
+  }
+}
+
 variable "front_door_health_probe_interval_seconds" {
   type        = number
   description = <<-EOT

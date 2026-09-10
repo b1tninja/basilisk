@@ -218,3 +218,20 @@ variable "front_door_health_probe_interval_seconds" {
     error_message = "front_door_health_probe_interval_seconds must be 0 (no probe) or between 1 and 255."
   }
 }
+
+variable "enable_approval_workflow" {
+  type        = bool
+  description = "Deploy the Logic App that reads key-events and sends verification mail. Its own switch, not require_manager_approval: one workflow serves both the ordinary key.pending verification mail and the manager-approval step, and only the second belongs to that setting. Defaults false because deploying it does not make it work -- it needs a Service Bus connection and a mail connection that Terraform does not create, and the mail one needs an interactive consent. It does not need a custom domain."
+  default     = false
+}
+
+variable "approval_poll_interval_minutes" {
+  type        = number
+  description = "Minutes between checks of the key-events queue. The Consumption Service Bus trigger polls and bills per wake whether or not a message is waiting, so this is the workflow's entire running cost. It was 30 seconds, which billed $11.07 a month for nothing; 5 minutes is about a tenth and is fine latency for a confirm-your-address email."
+  default     = 5
+
+  validation {
+    condition     = var.approval_poll_interval_minutes >= 1 && var.approval_poll_interval_minutes <= 60
+    error_message = "approval_poll_interval_minutes must be between 1 and 60."
+  }
+}
