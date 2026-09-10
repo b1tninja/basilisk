@@ -61,3 +61,11 @@ web/.ds-styles.css
 # tree web/package.json's `types` points at, and the only reason the synced
 # .d.ts files carry real props.
 web/.ds-types/
+
+# Local Terraform overlays. production.tfvars.example tells operators to copy
+# it to production.tfvars and put subscription-specific or secret values there;
+# nothing was stopping that file being committed. The committed deployment
+# profiles live under terraform/cloudshell/profiles/ and are deliberately NOT
+# matched here -- the patterns are rooted for exactly that reason.
+/terraform/cloudshell/production.tfvars
+/terraform/cloudshell/terraform.tfvars

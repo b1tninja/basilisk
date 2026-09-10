@@ -233,12 +233,18 @@ variable "enable_front_door" {
     and the storage account's static website are then reached directly on their
     own hostnames.
 
-    Turning this off also gives up the WAF rate limits, the edge cache, the
-    security-header rewrites and the retired-page redirects, all of which are
-    properties of the edge and have no origin-side equivalent here. It also
-    forbids custom_domain, which is attached to the Front Door profile.
+    Turning it on buys the WAF rate limits on /pks/add, /pks/v2 and sendtoken,
+    the edge cache, and the ability to serve a custom domain -- custom_domain is
+    a child of the profile and cannot be set without one.
 
-    Default true preserves the behaviour of existing deployments.
+    The edge is not the only thing applying security headers or serving the
+    retired-page redirects: basilisk/serve.py sets the same six headers in its
+    after_request and holds the same redirect table, so those survive either
+    way. The rate limits do not. Nothing origin-side enforces them.
+
+    **Default false: this is opt-in.** A deployment pays the base fee only by
+    asking for it. terraform/cloudshell/profiles/production.tfvars is the
+    production profile that asks.
   EOT
-  default     = true
+  default     = false
 }

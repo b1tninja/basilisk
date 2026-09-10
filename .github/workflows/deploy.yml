@@ -3,6 +3,16 @@ name: deploy
 on:
   workflow_dispatch:
     inputs:
+      deployment_profile:
+        description: >-
+          dev = no Front Door (default). production = Front Door + WAF +
+          keys.b1tninja.com, and a flat ~$35/month base fee charged whether or
+          not it serves a request.
+        type: choice
+        options:
+          - dev
+          - production
+        default: dev
       name_prefix:
         description: Resource name prefix (must match initial Terraform deploy)
         type: string
@@ -113,6 +123,7 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || fromJSON(secrets.AZURE_CREDENTIALS).tenantId }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID || fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
           ARM_CLIENT_SECRET: ${{ vars.USE_AZURE_OIDC == 'true' && '' || fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
+          DEPLOY_PROFILE: ${{ inputs.deployment_profile }}
           NAME_PREFIX: ${{ inputs.name_prefix }}
           LOCATION: ${{ inputs.location }}
           MAIL_PROVIDER: ${{ inputs.mail_provider }}
@@ -148,6 +159,7 @@ jobs:
               echo "|------|-------|"
               echo "| Resource group | \`$RG\` |"
               echo "| Function app | \`$FN\` |"
+              echo "| Profile | ${{ inputs.deployment_profile }} |"
               echo "| Public URL | $PUBLIC_URL |"
               if [[ -n "$CUSTOM" && "$CUSTOM" != "null" ]]; then
                 echo "| Custom domain | \`$CUSTOM\` |"

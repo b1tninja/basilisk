@@ -1,7 +1,31 @@
-# Copy to production.tfvars (do not commit secrets) and pass:
-#   terraform apply -var-file=production.tfvars
-name_prefix             = "basilisk-dev"
-custom_domain           = "keys.b1tninja.com"
-route53_zone_name       = "b1tninja.com"
-route53_zone_id         = "Z026512234X4JPOD7PZH1"
-oauth_authorized_domain = "b1tninja.com"
+# A LOCAL OVERLAY, not the production profile.
+#
+# The production profile is committed at profiles/production.tfvars, and the
+# deploy script applies it when DEPLOY_PROFILE=production (the deploy workflow's
+# `deployment_profile` input). That file holds the edge decision, the hostname
+# and the budget -- none of which are secret, all of which belong in git.
+#
+# This file is for the things that do not: values specific to one operator's
+# subscription, or that you do not want committed. Copy it to
+# `production.tfvars` (untracked) and the deploy script picks it up AFTER the
+# profile, so anything here wins.
+#
+#   DEPLOY_PROFILE=production bash scripts/deploy-terraform-cloudshell.sh
+#
+# Setting custom_domain here without enable_front_door = true -- or without the
+# production profile that sets it -- fails the plan. That is deliberate: the
+# domain is a child of the Front Door profile, and a silently dropped hostname
+# is worse than a loud error.
+
+name_prefix = "basilisk-dev"
+
+# Uncomment only if you are overriding the profile rather than using it.
+# enable_front_door       = true
+# custom_domain           = "keys.b1tninja.com"
+# route53_zone_name       = "b1tninja.com"
+# route53_zone_id         = "Z026512234X4JPOD7PZH1"
+# oauth_authorized_domain = "b1tninja.com"
+
+# Who hears about the monthly spend budget. Owner is always notified; these are
+# additional. The budget is alerts only and cannot stop spending.
+# budget_contact_emails = ["you@example.com"]

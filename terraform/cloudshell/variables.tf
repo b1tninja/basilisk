@@ -105,8 +105,8 @@ variable "aws_region" {
 
 variable "enable_front_door" {
   type        = bool
-  description = "Deploy Azure Front Door and its WAF. Standard bills a flat monthly base fee that does not depend on traffic — it was $35.00 of a $61.11 month against $0.02 of actual data transfer. Disabling it also disables custom_domain, because the domain is attached to the profile."
-  default     = true
+  description = "Deploy Azure Front Door and its WAF. Standard bills a flat monthly base fee that does not depend on traffic — it was $35.00 of a $61.11 month against $0.02 of actual data transfer, so it is opt-in rather than opt-out. Enabling it is what makes custom_domain possible; the domain is a child of the profile. Use profiles/production.tfvars rather than setting this by hand."
+  default     = false
 }
 
 variable "function_instance_memory_mb" {

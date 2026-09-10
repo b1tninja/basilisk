@@ -9,6 +9,20 @@ NAME_PREFIX="${NAME_PREFIX:-basilisk-dev}"
 LOCATION="${LOCATION:-}"
 MAIL_PROVIDER="${MAIL_PROVIDER:-office365}"
 AUTO_APPROVE="${AUTO_APPROVE:-false}"
+
+# Which deployment this is. `dev` is the default everywhere: it takes the
+# auto-loaded baseline in domains.auto.tfvars and nothing else, which means no
+# Front Door and no custom domain. `production` adds profiles/production.tfvars
+# on top, and that file is the only thing in the repo that turns the edge on.
+DEPLOY_PROFILE="${DEPLOY_PROFILE:-dev}"
+case "$DEPLOY_PROFILE" in
+  dev) PROFILE_VAR_FILE="" ;;
+  production) PROFILE_VAR_FILE="profiles/production.tfvars" ;;
+  *)
+    echo "Unknown DEPLOY_PROFILE '$DEPLOY_PROFILE' (expected 'dev' or 'production')" >&2
+    exit 2
+    ;;
+esac
 SUBSCRIPTION_ID="${SUBSCRIPTION_ID:-}"
 
 resolve_deploy_location() {
@@ -81,9 +95,15 @@ bash "${REPO_ROOT}/scripts/terraform-init.sh"
 # wins when set; otherwise read the tfvars, where the decision is recorded.
 FRONT_DOOR_ENABLED="${TF_VAR_enable_front_door:-}"
 if [[ -z "$FRONT_DOOR_ENABLED" ]]; then
-  FRONT_DOOR_ENABLED=$(cat ./*.auto.tfvars ./terraform.tfvars ./production.tfvars 2>/dev/null | sed -n 's/^[[:space:]]*enable_front_door[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p' | tail -1)
+  # Same order Terraform resolves them in, so the last match wins here too:
+  # auto-loaded baseline, then the profile, then any local overlay.
+  FRONT_DOOR_ENABLED=$(cat ./*.auto.tfvars ${PROFILE_VAR_FILE:+"$PROFILE_VAR_FILE"} ./terraform.tfvars ./production.tfvars 2>/dev/null | sed -n 's/^[[:space:]]*enable_front_door[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p' | tail -1)
 fi
-FRONT_DOOR_ENABLED="${FRONT_DOOR_ENABLED:-true}"
+# Defaults to false to match the variable it is predicting. A probe that
+# guessed `true` against an opt-in default would try to import Front Door
+# resources into count = 0 addresses, which is a hard error.
+FRONT_DOOR_ENABLED="${FRONT_DOOR_ENABLED:-false}"
+echo "Profile:      $DEPLOY_PROFILE"
 echo "Front Door:   $FRONT_DOOR_ENABLED"
 
 RG_NAME="${NAME_PREFIX}-rg"
@@ -219,7 +239,15 @@ adopt_missing_terraform_resources() {
 adopt_missing_terraform_resources
 
 PLAN_ARGS=(-input=false -out=tfplan)
-# domains.auto.tfvars is auto-loaded; also accept explicit tfvars overlays.
+# domains.auto.tfvars is auto-loaded; the profile goes on top of it, and local
+# overlays go on top of the profile. Order is precedence: last -var-file wins.
+if [[ -n "$PROFILE_VAR_FILE" ]]; then
+  if [[ ! -f "$PROFILE_VAR_FILE" ]]; then
+    echo "DEPLOY_PROFILE=$DEPLOY_PROFILE but $PROFILE_VAR_FILE is missing" >&2
+    exit 2
+  fi
+  PLAN_ARGS+=(-var-file="$PROFILE_VAR_FILE")
+fi
 if [[ -f terraform.tfvars ]]; then
   PLAN_ARGS+=(-var-file=terraform.tfvars)
 fi
@@ -260,7 +288,7 @@ echo "  Public URL:         $PUBLIC_URL"
 if [[ -n "$FD_URL" ]]; then
   echo "  Front Door URL:     $FD_URL"
 else
-  echo "  Front Door:         disabled (flat monthly base fee; see domains.auto.tfvars)"
+  echo "  Front Door:         not deployed (dev profile; the base fee is opt-in)"
 fi
 if [[ -n "$STORAGE" ]]; then
   STATIC_URL="$(terraform output -raw static_website_url 2>/dev/null || true)"
