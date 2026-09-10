@@ -140,7 +140,7 @@ resource "azurerm_cdn_frontdoor_origin_group" "function" {
     path                = "/health"
     request_type        = "GET"
     protocol            = "Https"
-    interval_in_seconds = 120
+    interval_in_seconds = var.front_door_health_probe_interval_seconds
   }
 }
 

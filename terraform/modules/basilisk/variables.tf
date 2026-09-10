@@ -115,6 +115,39 @@ variable "servicebus_sku" {
   }
 }
 
+variable "front_door_health_probe_interval_seconds" {
+  type        = number
+  description = <<-EOT
+    How often Front Door probes the Function App origin at /health.
+
+    Every probe is a Function invocation. That costs little per request, but on
+    Flex Consumption the app bills instance-seconds and scales to zero when
+    idle, so a probe arriving on a fixed interval resets the idle timer and
+    stops it ever getting there. The invocation count is the visible cost and
+    the one that is not.
+
+    Probes are also sent from every edge PoP rather than once globally, so the
+    rate the origin actually sees is this interval divided among however many
+    PoPs are probing -- a much shorter effective interval than the number here
+    suggests.
+
+    Both origin groups in this module hold exactly one origin, which is the
+    part that makes this worth turning down: a health probe exists so traffic
+    can be shifted to a healthy origin, and there is no second origin to shift
+    to. Marking the only origin unhealthy leaves Front Door with no origin at
+    all, so the probe cannot do the job it is for.
+
+    Azure accepts 1-255. Default 120 is what this module deployed before the
+    value was reachable at all.
+  EOT
+  default     = 120
+
+  validation {
+    condition     = var.front_door_health_probe_interval_seconds >= 1 && var.front_door_health_probe_interval_seconds <= 255
+    error_message = "front_door_health_probe_interval_seconds must be between 1 and 255."
+  }
+}
+
 variable "function_maximum_instance_count" {
   type        = number
   description = "Hard ceiling on scaled-out Function instances. This is the cost stop: without it the platform default (100) applies and a traffic spike or abuse burst scales out unbounded."

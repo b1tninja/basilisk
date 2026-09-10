@@ -207,3 +207,14 @@ variable "budget_amount" {
   description = "Monthly cost ceiling in the billing currency. Alerts only — a budget cannot stop spending. Set it near the expected run rate: a ceiling well above what the deployment costs is a ceiling that never fires, which is how a $61 month went unremarked under a $100 budget."
   default     = 100
 }
+
+variable "front_door_health_probe_interval_seconds" {
+  type        = number
+  description = "How often Front Door probes the Function App at /health. Each probe is an invocation, and on Flex Consumption a probe on a fixed interval keeps the app from ever scaling to zero. Both origin groups hold one origin, so the probe cannot fail over to anything; turning it down costs no resilience there is. Azure accepts 1-255."
+  default     = 120
+
+  validation {
+    condition     = var.front_door_health_probe_interval_seconds >= 1 && var.front_door_health_probe_interval_seconds <= 255
+    error_message = "front_door_health_probe_interval_seconds must be between 1 and 255."
+  }
+}
