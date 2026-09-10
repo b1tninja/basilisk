@@ -118,33 +118,31 @@ variable "servicebus_sku" {
 variable "front_door_health_probe_interval_seconds" {
   type        = number
   description = <<-EOT
-    How often Front Door probes the Function App origin at /health.
+    Seconds between Front Door health probes, or 0 to send none.
 
-    Every probe is a Function invocation. That costs little per request, but on
-    Flex Consumption the app bills instance-seconds and scales to zero when
-    idle, so a probe arriving on a fixed interval resets the idle timer and
-    stops it ever getting there. The invocation count is the visible cost and
-    the one that is not.
+    **Default 0: no probe.** Both origin groups in this module hold exactly one
+    origin. A health probe exists so traffic can be moved to a healthy origin,
+    and there is no second origin to move it to -- marking the only one
+    unhealthy leaves Front Door with nothing to serve from. With probes off
+    Front Door treats the origin as healthy and routes to it, which for a
+    single-origin group is the same behaviour and none of the cost.
 
-    Probes are also sent from every edge PoP rather than once globally, so the
-    rate the origin actually sees is this interval divided among however many
-    PoPs are probing -- a much shorter effective interval than the number here
-    suggests.
+    The cost is not the request. The Function App origin's probe path is
+    /health, so every probe is a Function invocation, and Flex Consumption bills
+    instance-seconds and scales to zero when the app goes idle -- a probe on a
+    fixed interval resets the idle timer and stops it ever getting there. The
+    app was kept awake to answer a two-byte string. Probes are also sent from
+    every edge PoP rather than once globally, so the rate an origin sees is a
+    multiple of the interval configured here.
 
-    Both origin groups in this module hold exactly one origin, which is the
-    part that makes this worth turning down: a health probe exists so traffic
-    can be shifted to a healthy origin, and there is no second origin to shift
-    to. Marking the only origin unhealthy leaves Front Door with no origin at
-    all, so the probe cannot do the job it is for.
-
-    Azure accepts 1-255. Default 120 is what this module deployed before the
-    value was reachable at all.
+    Set a non-zero value only when an origin group has somewhere to fail over
+    to. Azure accepts 1-255.
   EOT
-  default     = 120
+  default     = 0
 
   validation {
-    condition     = var.front_door_health_probe_interval_seconds >= 1 && var.front_door_health_probe_interval_seconds <= 255
-    error_message = "front_door_health_probe_interval_seconds must be between 1 and 255."
+    condition     = var.front_door_health_probe_interval_seconds == 0 || (var.front_door_health_probe_interval_seconds >= 1 && var.front_door_health_probe_interval_seconds <= 255)
+    error_message = "front_door_health_probe_interval_seconds must be 0 (no probe) or between 1 and 255."
   }
 }
 

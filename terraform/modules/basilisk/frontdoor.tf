@@ -136,11 +136,18 @@ resource "azurerm_cdn_frontdoor_origin_group" "function" {
     successful_samples_required = 3
   }
 
-  health_probe {
-    path                = "/health"
-    request_type        = "GET"
-    protocol            = "Https"
-    interval_in_seconds = var.front_door_health_probe_interval_seconds
+  # Absent entirely when the interval is 0, which is the default. A group with
+  # one origin has nowhere to fail over to, so the probe cannot do the job it
+  # exists for -- and this one's path is /health on the Function App, so each
+  # probe is an invocation that keeps a scale-to-zero app from reaching zero.
+  dynamic "health_probe" {
+    for_each = var.front_door_health_probe_interval_seconds > 0 ? [1] : []
+    content {
+      path                = "/health"
+      request_type        = "GET"
+      protocol            = "Https"
+      interval_in_seconds = var.front_door_health_probe_interval_seconds
+    }
   }
 }
 
@@ -168,11 +175,23 @@ resource "azurerm_cdn_frontdoor_origin_group" "static" {
     successful_samples_required = 3
   }
 
-  health_probe {
-    path                = "/index.html"
-    request_type        = "GET"
-    protocol            = "Https"
-    interval_in_seconds = 240
+  # Same switch, same reasoning: one origin, nothing to fail over to. This one
+  # probes blob storage rather than the Function App, so it bills read
+  # operations instead of instance-seconds -- smaller, and just as useless.
+  #
+  # This group's interval was 240 while the Function App's was 120, and they
+  # share one variable now. That is a real loss of separate tuning, taken
+  # deliberately: with both defaulting to no probe at all, the only reason to
+  # set an interval is that a group gained a second origin, and whoever does
+  # that should be choosing the number then rather than inheriting one.
+  dynamic "health_probe" {
+    for_each = var.front_door_health_probe_interval_seconds > 0 ? [1] : []
+    content {
+      path                = "/index.html"
+      request_type        = "GET"
+      protocol            = "Https"
+      interval_in_seconds = var.front_door_health_probe_interval_seconds
+    }
   }
 }
 

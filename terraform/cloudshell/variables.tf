@@ -210,11 +210,11 @@ variable "budget_amount" {
 
 variable "front_door_health_probe_interval_seconds" {
   type        = number
-  description = "How often Front Door probes the Function App at /health. Each probe is an invocation, and on Flex Consumption a probe on a fixed interval keeps the app from ever scaling to zero. Both origin groups hold one origin, so the probe cannot fail over to anything; turning it down costs no resilience there is. Azure accepts 1-255."
-  default     = 120
+  description = "Seconds between Front Door health probes, or 0 to send none. Defaults to 0: both origin groups hold one origin, so a probe has nowhere to fail over to, while the Function App's probe path is /health and every probe is an invocation that stops a scale-to-zero app reaching zero. Set non-zero only when a group has a second origin. Azure accepts 1-255."
+  default     = 0
 
   validation {
-    condition     = var.front_door_health_probe_interval_seconds >= 1 && var.front_door_health_probe_interval_seconds <= 255
-    error_message = "front_door_health_probe_interval_seconds must be between 1 and 255."
+    condition     = var.front_door_health_probe_interval_seconds == 0 || (var.front_door_health_probe_interval_seconds >= 1 && var.front_door_health_probe_interval_seconds <= 255)
+    error_message = "front_door_health_probe_interval_seconds must be 0 (no probe) or between 1 and 255."
   }
 }

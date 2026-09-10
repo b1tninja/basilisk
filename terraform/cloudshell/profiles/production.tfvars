@@ -48,12 +48,9 @@ function_maximum_instance_count = 20
 # every month and teach everyone to ignore it.
 budget_amount = 60
 
-# The maximum Azure accepts, because this origin group holds one origin and a
-# health probe cannot fail over to an origin that does not exist. What it can
-# do is invoke the Function every interval, from every edge PoP, which on Flex
-# Consumption keeps the app from ever reaching idle and scaling to zero. That
-# is the likeliest reading of $10.99 of execution time against $0.01 of
-# executions on a service with no users -- unproven, because there is no
-# Application Insights in the resource group to prove it with, which is its own
-# problem. Dev does not set this: dev has no edge to probe from.
-front_door_health_probe_interval_seconds = 255
+# No health probe, on either origin group. Not a cost compromise -- a group
+# with one origin has nowhere to fail over to, so the probe cannot do the job
+# it is for in production any more than in dev, and Front Door routes to an
+# unprobed origin exactly as it routes to a healthy one. If a second origin is
+# ever added, this is the line that has to come back.
+front_door_health_probe_interval_seconds = 0
