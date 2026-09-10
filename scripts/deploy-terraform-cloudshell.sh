@@ -10,6 +10,12 @@ LOCATION="${LOCATION:-}"
 MAIL_PROVIDER="${MAIL_PROVIDER:-office365}"
 AUTO_APPROVE="${AUTO_APPROVE:-false}"
 
+# Produce the plan and stop, changing nothing. There is no interactive approval
+# step to fall back on -- `terraform apply` against a saved plan file never
+# prompts and `-input=false` guarantees it cannot -- so without this the only
+# way to see a plan is to have already applied it.
+PLAN_ONLY="${PLAN_ONLY:-false}"
+
 # Which deployment this is. `dev` is the default everywhere: it takes the
 # auto-loaded baseline in domains.auto.tfvars and nothing else, which means no
 # Front Door and no custom domain. `production` adds profiles/production.tfvars
@@ -256,6 +262,13 @@ if [[ -f production.tfvars ]]; then
 fi
 
 terraform plan "${PLAN_ARGS[@]}"
+
+if [[ "$PLAN_ONLY" == "true" ]]; then
+  echo ""
+  echo "PLAN_ONLY=true — stopping here. Nothing was created, changed or destroyed."
+  echo "Re-run with PLAN_ONLY=false to apply this plan."
+  exit 0
+fi
 
 if [[ "$AUTO_APPROVE" == "true" ]]; then
   terraform apply -input=false -auto-approve tfplan

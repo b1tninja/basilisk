@@ -44,14 +44,33 @@ resolve_deploy_targets() {
   fi
 }
 
+PLAN_ONLY="${PLAN_ONLY:-false}"
+
 if [[ "$SKIP_TERRAFORM" != "true" ]]; then
+  # DEPLOY_PROFILE and PLAN_ONLY passed explicitly rather than left to inherit.
+  # They would inherit -- the workflow sets them in the step environment -- but
+  # every other input the inner script reads is named here, and a variable that
+  # works only because nobody broke the environment is the kind that stops
+  # working quietly.
   AUTO_APPROVE="$AUTO_APPROVE" \
     NAME_PREFIX="$NAME_PREFIX" \
     LOCATION="$LOCATION" \
     MAIL_PROVIDER="$MAIL_PROVIDER" \
+    DEPLOY_PROFILE="${DEPLOY_PROFILE:-dev}" \
+    PLAN_ONLY="$PLAN_ONLY" \
     bash "${REPO_ROOT}/scripts/deploy-terraform-cloudshell.sh"
 else
   echo "Skipping Terraform (SKIP_TERRAFORM=true)"
+fi
+
+# A plan-only run has changed nothing, so publishing code on top of it would
+# ship against infrastructure the plan only described. Stop before that -- and
+# before resolve_deploy_targets, which exits non-zero when it cannot work out
+# where to deploy. A plan-only run does not need that answer and should not
+# fail for want of it.
+if [[ "$PLAN_ONLY" == "true" ]]; then
+  echo "PLAN_ONLY=true — infrastructure plan printed above; skipping function publish and smoke test."
+  exit 0
 fi
 
 resolve_deploy_targets

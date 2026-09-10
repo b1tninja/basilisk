@@ -28,6 +28,13 @@ on:
           - office365
           - gmail
         default: office365
+      plan_only:
+        description: >-
+          Print the Terraform plan and stop. Nothing is created, changed or
+          destroyed, and no function code is published. Use this before any run
+          you expect to destroy resources.
+        type: boolean
+        default: false
       skip_terraform:
         description: Skip infrastructure; publish function code only
         type: boolean
@@ -124,6 +131,7 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID || fromJSON(secrets.AZURE_CREDENTIALS).subscriptionId }}
           ARM_CLIENT_SECRET: ${{ vars.USE_AZURE_OIDC == 'true' && '' || fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
           DEPLOY_PROFILE: ${{ inputs.deployment_profile }}
+          PLAN_ONLY: ${{ inputs.plan_only }}
           NAME_PREFIX: ${{ inputs.name_prefix }}
           LOCATION: ${{ inputs.location }}
           MAIL_PROVIDER: ${{ inputs.mail_provider }}
