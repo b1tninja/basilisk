@@ -37,12 +37,20 @@ approximately nobody. What Basilisk does is narrow the gap and make tampering
   subverting one host insufficient — but nothing here configures a second one,
   and the panel says so rather than implying the comparison ran. Making it real
   needs four things this repository does not have: a value for
-  `VITE_INTEGRITY_PIN_MIRRORS` at build time, an origin outside the Front Door
-  profile that publishes the same pin document, an upload step in
+  `VITE_INTEGRITY_PIN_MIRRORS` at build time, a second origin under separate
+  operational control that publishes the same pin document, an upload step in
   `scripts/deploy-static.sh` that puts it there, and that origin added to the
-  `connect-src` in `terraform/modules/basilisk/frontdoor.tf` — because Front
-  Door overwrites the CSP header, and a mirror allowed only by the page's own
-  `<meta>` is a mirror the browser will refuse to fetch.
+  `connect-src` of whichever component writes the CSP **response header** — a
+  mirror allowed only by the page's own `<meta>` is a mirror the browser will
+  refuse to fetch, because a browser enforces the intersection of the two.
+  Which component that is depends on the deployment profile: on the production
+  profile the `SecurityHeaders` rule set in
+  `terraform/modules/basilisk/frontdoor.tf` overwrites whatever the origin
+  sent, so the mirror has to be named there; on the dev profile there is no
+  edge and the header is built by `Settings.csp_connect_src()` and applied in
+  `basilisk/serve.py`'s `after_request`. Adding a mirror means editing
+  whichever of those two writes the header for the deployment you are actually
+  running — and, if you want it to hold on both, editing both.
 - **A strict CSP with no escape hatches** (below), so injected code has nowhere
   to run even if it reaches the page.
 
@@ -97,6 +105,85 @@ above is the one in the page source that ships. That divergence is why the
 production policy also rides along as `Content-Security-Policy-Report-Only`,
 and why `lib/boot-diagnostics.js` reports violations as "would break in
 production". Do not read a clean console in dev as a clean bill of health.
+
+---
+
+## The edge, and what depends on it
+
+**A deployment of this stack is one of two shapes, and one protection on this
+page exists in only one of them.** Azure Front Door is opt-in:
+`enable_front_door` defaults to `false`, the dev baseline in
+`terraform/cloudshell/domains.auto.tfvars` leaves it there, and only
+`terraform/cloudshell/profiles/production.tfvars` — applied when someone asks
+for `DEPLOY_PROFILE=production` — turns it on. The reason is cost: Front Door
+Standard's base fee is a flat monthly subscription that does not fall with
+traffic, and it was more than half the bill for a service moving two
+hundredths of a dollar in data. That reasoning belongs in
+`docs/DEPLOYMENT.md`. What belongs here is the consequence, which is that
+**the sentence "the WAF rate-limits uploads" is true on the production profile
+and false on the dev one**, and a reader has to know which one they are
+looking at before anything below means what it says.
+
+**The WAF is a production-profile control, and nothing takes over its job
+without it.** The firewall policy holds three rate-limit rules in Prevention
+mode, all per source IP per minute: `POST /pks/add` at 10, v2 `POST`/`PUT` at
+5, and `/pks/v2/sendtoken` at 3. Those are edge rules, and the policy is a
+child of the Front Door profile — on the dev profile it is not deployed at
+all, `waf_policy_id` is `null`, and no origin-side rule replaces it. This is
+the *only* protection on this page that the profile decides; see the end of
+this section for two that look like they should be and are not. What remains
+without it is `basilisk/security/rate_limit.py`, which is a *different*
+control and a weaker one in two specific ways worth naming rather than
+glossing:
+
+- It enforces a **minimum gap** between requests, not a budget per window,
+  and it is **in-process memory**. Flex Consumption runs up to
+  `function_maximum_instance_count` (20) instances that share nothing and
+  recycle when idle, so the effective ceiling is the configured gap divided
+  across however many workers the platform happens to have warm. A limiter
+  the platform can multiply by twenty is not the limiter its constant says
+  it is.
+- `client_ip()` reads `X-Azure-ClientIP` in preference to everything else,
+  and that header is one Azure sets **at the edge**. With no edge in front,
+  nothing in this repository sets it and nothing strips it, so its value is
+  whatever the caller put there. That is the same defect the comment in that
+  file records for `X-Client-IP` — a caller who picks their own bucket is a
+  caller with no bucket. On the dev profile, treat the per-IP limiters as
+  unenforced against an adversary who has read this paragraph.
+
+Neither profile has a managed rule set or bot protection: those require Front
+Door **Premium**, and this is Standard. Neither has country blocking either,
+despite it being an obvious thing to assume of a WAF — no geo-match rule has
+ever existed in `terraform/modules/basilisk/frontdoor.tf`.
+
+**The origin lock fails open without an edge, deliberately.**
+`basilisk/security/edge.py` refuses any request that does not carry a matching
+`X-Azure-FDID` — but only when `BASILISK_AFD_ID` is set, and Terraform does
+not set it at all when there is no Front Door profile to take a GUID from. It
+cannot be otherwise: with no edge, every request is a direct origin hit, and a
+lock that matched nothing would 403 the entire service. So on the dev profile
+the Function App answers on `<name-prefix>-fn.azurewebsites.net` to anyone who
+asks, which is also its public URL. The protection is not weakened; the thing
+it protects against is the normal case there, and the lock is the production
+profile's, not a general one.
+
+**Two things that look profile-dependent are not.** The security headers hold
+on both. Front Door's `SecurityHeaders` rule set writes CSP, HSTS,
+`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and
+`Permissions-Policy` onto portal pages served from blob storage, which cannot
+add a response header of its own — and on the dev profile Flask serves those
+pages from inside the function package and sets the same six in
+`basilisk/serve.py`'s `after_request`, so the policy a browser computes is the
+same either way. The retired-page redirects likewise exist in both the
+`frontdoor.tf` rules and `_RETIRED_PAGES` in `basilisk/portal/static.py`. It
+would be easy to list these as edge protections and call them lost, and that
+would overstate the difference between the profiles as badly as omitting the
+WAF understates it.
+
+What the dev profile genuinely does lose besides the WAF is the CDN: every
+portal page is an origin fetch against a Function App that scales from zero,
+so the first request after an idle period pays a cold start. That is a
+latency fact, not a security one.
 
 ---
 
@@ -176,6 +263,15 @@ production". Do not read a clean console in dev as a clean bill of health.
 
 1. Read the CSP in the page source; compare it against the block above.
 2. Check `/integrity/module-roots.json` against the SRI hashes in the HTML.
+   This path has to answer on whichever component serves the portal — the
+   storage account behind Front Door on the production profile, Flask out of
+   the function package on the dev profile — because it is the one file on the
+   site whose job is to be an independent statement about the others. If it
+   does not answer, every visitor's power-on self-test reports an unreachable
+   pin rather than a match, which is a refusal and not a pass. That is why
+   `scripts/smoke-test.sh` compares the served pin against the built one byte
+   for byte and fails the deploy when they differ or when it is missing
+   entirely, rather than leaving it to a reader to notice.
 3. Run the test suite — it is the same one CI runs, and the claims on this
    page are pinned by `threat-model.test.js`.
 4. Run recipes headlessly with the CLI (`docs/CLI.md`), where there is no

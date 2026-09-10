@@ -16,6 +16,16 @@ param(
     [ValidateSet("office365", "gmail")]
     [string]$MailProvider = "office365",
     [string]$SubscriptionId = "",
+    # Which deployment this is. Matches DEPLOY_PROFILE in the bash twin: 'dev'
+    # takes the auto-loaded baseline and nothing else, so no Front Door and no
+    # custom domain; 'production' adds profiles/production.tfvars, which is the
+    # only file in the repo that turns the edge on and accepts its base fee.
+    #
+    # This parameter did not exist while the bash script had one. The result was
+    # not an error -- it was a PowerShell deploy silently producing the dev shape
+    # no matter what was asked for, which is the worse of the two failures.
+    [ValidateSet("dev", "production")]
+    [string]$DeploymentProfile = "dev",
     [switch]$AutoApprove
 )
 
@@ -79,13 +89,25 @@ try {
     $env:NAME_PREFIX = $NamePrefix
     bash (Join-Path $RepoRoot "scripts/terraform-init.sh")
 
+    # Order is precedence: the auto-loaded baseline, then the profile, then any
+    # local overlay. Terraform applies -var-file arguments left to right and the
+    # last one wins, so this must stay in step with the bash script.
     $planArgs = @("plan", "-input=false", "-out=tfplan")
+    if ($DeploymentProfile -eq "production") {
+        $profileVarFile = "profiles/production.tfvars"
+        if (-not (Test-Path $profileVarFile)) {
+            Write-Error "DeploymentProfile is production but $profileVarFile is missing"
+            exit 2
+        }
+        $planArgs += @("-var-file=$profileVarFile")
+    }
     if (Test-Path "terraform.tfvars") {
         $planArgs += @("-var-file=terraform.tfvars")
     }
     if (Test-Path "production.tfvars") {
         $planArgs += @("-var-file=production.tfvars")
     }
+    Write-Host "Profile:      $DeploymentProfile"
     terraform @planArgs
 
     if ($AutoApprove) {

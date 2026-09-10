@@ -42,7 +42,7 @@ gpg --keyserver http://localhost:8080 --recv-keys YOURKEYID
 ## Architecture
 
 - **Upload:** Policy validation first; WORM blob write only after pass; Table `approval_state=pending`; `key.pending` → Service Bus
-- **Approve:** Claim (Entra) → `key.approved` on `key-approved` queue → `approve_fn` updates Table; Logic App sends verification email on `key.pending`
+- **Approve:** Claim (Entra) → `key.approved` on `key-approved` queue → `approve_fn` updates Table. A Logic App is *designed* to send the verification email on `key.pending`, but it needs API connections Terraform does not create and has never run on the reference deployment — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#logic-app-approval) before assuming those mails go out
 - **Lookup:** Table gate → blob read → SHA-256 verify → filter-at-read for email
 
 ## Portal cryptography
@@ -56,7 +56,7 @@ Basilisk rejects invalid uploads **before** any blob or Table write:
 - Armored v4 public keys only on `/pks/add` (64 KiB max by default)
 - At least one email UID required; disposable domains blocklist configurable
 - `options=nm` rejected; secret keys rejected; revoked keys rejected
-- Rate limits per IP (in-app + Front Door WAF in production)
+- Rate limits per IP, in-app. The Front Door WAF adds per-minute limits at the edge, but only on the production deployment profile — `enable_front_door` defaults to false, so a default deployment has the in-app limiter and nothing else; see [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) for what that achieves on its own and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the profiles
 - Optional proof-of-work on HKP v2 upload paths (`BASILISK_REQUIRE_PROOF=1`); **`gpg --send-keys` is exempt**
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for tunables and Azure WAF parameters.
