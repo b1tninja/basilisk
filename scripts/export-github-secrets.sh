@@ -50,6 +50,31 @@ else
 fi
 
 echo ""
+
+# BASILISK_FRONT_DOOR_URL is the smoke-test target that deploy-github-actions.sh
+# falls back to when there are no Terraform outputs -- a `skip_terraform` run.
+# Nothing refreshed it: it was set by hand once and then quietly outlived the
+# hostname it named. Removing Front Door made that concrete, because the URL it
+# held is a domain that no longer resolves, and the only symptom would have been
+# a smoke test failing against a destroyed name.
+#
+# The name is historical and stays for the secret already in the repository; the
+# value is public_url, which is the Front Door endpoint, the custom domain or
+# the Function App hostname depending on the profile.
+if [[ -n "$PUBLIC_URL" ]]; then
+  if command -v gh >/dev/null 2>&1; then
+    printf '%s' "$PUBLIC_URL" | gh secret set BASILISK_FRONT_DOOR_URL
+    echo "BASILISK_FRONT_DOOR_URL updated in GitHub to $PUBLIC_URL"
+  else
+    echo "Install GitHub CLI (gh) and run:"
+    echo "  printf '%s' '$PUBLIC_URL' | gh secret set BASILISK_FRONT_DOOR_URL"
+  fi
+else
+  echo "public_url output unavailable; BASILISK_FRONT_DOOR_URL left as it is." >&2
+  echo "A stale value here points the skip_terraform smoke test at the wrong host." >&2
+fi
+
+echo ""
 echo "Also set AZURE_CREDENTIALS (OIDC federated credentials preferred — see docs/CI.md)."
 echo "Optional AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY for Route53 custom domain."
 echo "Done."

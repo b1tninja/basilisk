@@ -29,7 +29,11 @@ resolve_deploy_targets() {
   if [[ -z "$FD_URL" ]]; then
     FD_HOST="$(az functionapp show -g "$RG" -n "$FN" --query "defaultHostName" -o tsv 2>/dev/null || true)"
     if [[ -n "$FD_HOST" ]]; then
-      echo "Warning: using function hostname for smoke test; set BASILISK_FRONT_DOOR_URL for Front Door." >&2
+      # Reached only on a skip_terraform run, where there are no outputs to read.
+      # The function hostname is the right answer under the dev profile and the
+      # wrong one under production, where the edge is what serves the public URL.
+      echo "Warning: no Terraform outputs; smoke-testing the function hostname directly." >&2
+      echo "Run scripts/export-github-secrets.sh to refresh BASILISK_FRONT_DOOR_URL." >&2
       FD_URL="https://${FD_HOST}"
     fi
   fi
