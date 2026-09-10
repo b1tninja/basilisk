@@ -338,3 +338,368 @@ def test_a_retired_redirect_says_the_same_thing_in_all_three_places():
     )
     assert dev_server == _RETIRED_PAGES
     assert front_door == _RETIRED_PAGES
+# ── The whole built portal is served, now that only Flask serves it ──────────
+#
+# Front Door used to route `/*` to the storage account's `$web` container and
+# only `/api/*`, `/pks/*`, `/claim/*`, `/.auth/*` and `/health` to the Function
+# App, so most of `web/dist` reached readers without passing through any Python
+# at all. The profile is gone, `scripts/package-function.sh` ships `web/dist`
+# inside the function zip, and `register_static_portal` is the only thing
+# serving the portal — which turned every file it had no route for into a 404
+# on the live site.
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_DIST = _REPO_ROOT / "web" / "dist"
+
+
+def _dist_or_skip():
+    """The built portal, or a skip. Tests that read served bytes need one."""
+    if not (_DIST / "index.html").is_file():
+        pytest.skip("web/dist not built: run `npm ci && npm run build` in web/")
+    return _DIST
+
+
+def _rollup_inputs(repo_root):
+    """The HTML filenames named as Rollup inputs in `web/vite.config.js`.
+
+    Read as text rather than executed: the config is a JavaScript module that
+    imports Vite plugins, and standing up node to ask it a question is a much
+    larger dependency than a brace scan over one object literal.
+    """
+    text = (repo_root / "web" / "vite.config.js").read_text(encoding="utf-8")
+    start = text.index("input: {") + len("input: {")
+    depth = 1
+    i = start
+    while depth:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    block = text[start : i - 1]
+    inputs = re.findall(r'resolve\(__dirname,\s*"([^"]+\.html)"\)', block)
+    assert inputs, "no Rollup inputs parsed out of vite.config.js"
+    return inputs
+
+
+@pytest.mark.unit
+def test_every_rollup_input_has_a_route():
+    """A page the build produces that no route serves is a 404 on the live site.
+
+    This is the guard standing in for deriving ``_STATIC_PAGES`` from the build
+    config, and it exists because the drift it watches for has already
+    happened. ``toolkitWidgets`` was added to ``vite.config.js``,
+    ``toolkit-widgets.html`` was built and shipped, and ``_STATIC_PAGES`` was
+    never given a matching entry. Under Front Door that cost nothing — the
+    document sat in ``$web`` and answered for itself. With Flask serving the
+    portal it is a 404, and because ``scripts/smoke-test.sh`` walks every
+    Rollup input, it is a failed deploy rather than a quiet gap.
+
+    Deriving the dict instead was declined for the reasons written above
+    ``_STATIC_PAGES``: the source of truth is JavaScript, and the ``/search``
+    alias onto ``index.html`` is not recoverable from it. So the two lists stay
+    two lists and this is what makes them move together. It needs no build to
+    say so — it compares a config file against a Python dict, which is exactly
+    the comparison nobody had made.
+    """
+    from basilisk.portal.static import _STATIC_PAGES
+
+    inputs = _rollup_inputs(_REPO_ROOT)
+    # index.html is not a `/<page>` name: it is `/`, plus the `/search` alias.
+    pages = {Path(name).stem: name for name in inputs if name != "index.html"}
+
+    unrouted = {
+        page: filename
+        for page, filename in pages.items()
+        if _STATIC_PAGES.get(page) != filename
+    }
+    assert not unrouted, (
+        f"Rollup builds {sorted(unrouted)} and _STATIC_PAGES does not serve "
+        "them; add an entry in basilisk/portal/static.py"
+    )
+
+    # And the other direction: an entry naming a document no build produces is
+    # a route that fails on the file read rather than 404ing honestly.
+    assert set(_STATIC_PAGES) == set(pages) | {"search"}
+    assert _STATIC_PAGES["search"] == "index.html"
+
+
+@pytest.mark.integration
+def test_toolkit_widgets_serves_its_own_document():
+    """`/toolkit-widgets` answers, and answers with the widgets page.
+
+    Asserting a 200 alone would pass if the route were wired to any document at
+    all, and the neighbouring `toolkit.html` is exactly the wrong answer a
+    status code cannot see. So this pins the mount point the widgets bundle
+    attaches to, `toolkit-widgets-root`, which `/toolkit` does not have.
+    """
+    from basilisk.serve import create_app
+
+    dist = _dist_or_skip()
+    response = create_app().test_client().get("/toolkit-widgets")
+    assert response.status_code == 200
+    assert "text/html" in response.headers.get("Content-Type", "")
+    body = response.get_data(as_text=True)
+    assert 'id="toolkit-widgets-root"' in body
+    assert "<title>Toolkit widgets" in body
+    assert 'id="toolkit-widgets-root"' not in (
+        create_app().test_client().get("/toolkit").get_data(as_text=True)
+    )
+
+    staged = (dist / "toolkit-widgets.html").read_text(encoding="utf-8")
+    # The served bytes may differ from the staged ones by the connect-src merge
+    # `_send_html` applies, and by nothing else. The SRI set is what
+    # `scripts/smoke-test.sh` compares after a deploy; compare it here, before.
+    assert re.findall(r'integrity="[^"]*"', body) == re.findall(
+        r'integrity="[^"]*"', staged
+    )
+
+
+@pytest.mark.integration
+def test_the_merkle_pin_document_is_reachable():
+    """`/integrity/module-roots.json` is served, verbatim, as JSON.
+
+    Two segments, so the single-segment `/<page>` route could never have
+    matched it: from the moment Front Door stopped sending `/*` to the blob
+    container, the one file on the site whose job is to be an independent
+    statement about the others was not on the site. `docs/THREAT-MODEL.md`
+    tells a reader to fetch this path by hand; every visitor's power-on
+    self-test compares its live module root against it and degrades to
+    "unreachable" without it; and `scripts/smoke-test.sh` fails a deploy on a
+    non-2xx here.
+
+    Byte equality with the staged file, for the reason smoke-test.sh gives for
+    the same comparison: `builtAt` included, a difference this tolerated would
+    be a difference nobody notices.
+    """
+    import json
+
+    from basilisk.serve import create_app
+
+    dist = _dist_or_skip()
+    staged = dist / "integrity" / "module-roots.json"
+    assert staged.is_file(), "the build produced no Merkle pin document"
+
+    response = create_app().test_client().get("/integrity/module-roots.json")
+    assert response.status_code == 200
+    assert "application/json" in response.headers.get("Content-Type", "")
+    assert response.get_data() == staged.read_bytes()
+    # Parsed, not merely fetched: an HTML error page served with a JSON
+    # content-type would satisfy every assertion above.
+    assert isinstance(json.loads(response.get_data(as_text=True)), dict)
+
+
+@pytest.mark.integration
+def test_the_content_hashed_pin_is_reachable_too():
+    """The pin document's hashed sibling is under the same route.
+
+    `/integrity/<path:filename>` serves the directory rather than one filename,
+    so the per-deploy `module-roots-<hash>.json` that `deploy-static.sh`
+    uploads beside the stable name is reachable with no second route to keep.
+    """
+    from basilisk.serve import create_app
+
+    dist = _dist_or_skip()
+    hashed = sorted((dist / "integrity").glob("module-roots-*.json"))
+    if not hashed:
+        pytest.skip("this build staged no content-hashed pin")
+    client = create_app().test_client()
+    for pin in hashed:
+        response = client.get(f"/integrity/{pin.name}")
+        assert response.status_code == 200, pin.name
+        assert response.get_data() == pin.read_bytes(), pin.name
+
+
+@pytest.mark.integration
+def test_the_root_images_the_pages_reference_are_served():
+    """Every file Vite copies out of `web/public` answers at its root path.
+
+    The HTML references these absolutely — `/favicon.png`, `/logo.png` and the
+    rest — so under Flask-only serving each one was a broken image and a 404 in
+    every visitor's console. One route serves them rather than six, because a
+    six-route list is the same hand-maintained table that lost
+    `/toolkit-widgets`; this walks `web/public` so a seventh file added there
+    is covered without anyone remembering to come back here.
+    """
+    from basilisk.serve import create_app
+
+    _dist_or_skip()
+    public = _REPO_ROOT / "web" / "public"
+    staged = [p for p in sorted(public.iterdir()) if p.is_file()]
+    assert staged, "web/public is empty; this test would be asserting nothing"
+
+    client = create_app().test_client()
+    for asset in staged:
+        response = client.get(f"/{asset.name}")
+        assert response.status_code == 200, asset.name
+        assert response.get_data() == asset.read_bytes(), asset.name
+        assert response.headers.get("Cache-Control"), asset.name
+
+
+@pytest.mark.integration
+def test_a_root_file_never_shadows_a_page_or_a_redirect():
+    """The three answers `/<page>` can give, in a fixed order.
+
+    A route serving whatever exists at the top of `dist` is one file away from
+    changing what a URL means — drop an extensionless `toolkit` or `quorum`
+    into `web/public` and the page, or the 301, stops being what the path
+    resolves to. The order is decided inside the view rather than by route
+    registration so that it is stated once and testable; this is the test.
+    """
+    from basilisk.serve import create_app
+
+    _dist_or_skip()
+    client = create_app().test_client()
+
+    # Real files, with the two names that would collide, put where the
+    # root-file route looks and taken away again. Asserting the order without
+    # them would assert nothing: `dist` contains no `toolkit` or `quorum` at
+    # the top level today, so every ordering passes on an empty collision.
+    planted = [_DIST / "toolkit", _DIST / "quorum", _DIST / "shadow-probe"]
+    # `send_from_directory` streams from an open handle, and on Windows an open
+    # handle is an undeletable file. The app closes it when the request context
+    # tears down; the test client hands the response back still open, so every
+    # response is closed before the cleanup runs — including the ones a failing
+    # assertion skipped past, or the `unlink` below raises a PermissionError
+    # that replaces the assertion someone needs to read.
+    opened = []
+
+    def fetch(path):
+        response = client.get(path)
+        opened.append(response)
+        return response
+
+    try:
+        for path in planted:
+            path.write_bytes(b"planted by test_a_root_file_never_shadows")
+
+        page = fetch("/toolkit")
+        assert page.status_code == 200
+        assert "text/html" in page.headers.get("Content-Type", "")
+        assert "<title>Toolkit" in page.get_data(as_text=True)
+        assert b"planted by" not in page.get_data()
+
+        retired = fetch("/quorum")
+        assert retired.status_code == 301, (
+            "a file at the top of dist took the path a retired page redirects "
+            "from; the root-file route must be tried last"
+        )
+        assert retired.headers["Location"] == "/toolkit"
+
+        # And the same route does serve a root file whose name collides with
+        # nothing — so the two assertions above are about precedence, not about
+        # the mechanism being switched off.
+        probe = fetch("/shadow-probe")
+        assert probe.status_code == 200
+        assert probe.get_data() == b"planted by test_a_root_file_never_shadows"
+    finally:
+        for response in opened:
+            response.close()
+        for path in planted:
+            path.unlink(missing_ok=True)
+
+    assert client.get("/definitely-not-a-page").status_code == 404
+    assert client.get("/shadow-probe").status_code == 404
+
+
+@pytest.mark.integration
+def test_a_portal_page_cannot_be_fetched_around_the_connect_src_merge():
+    """`.html` is refused at the root, so a page keeps exactly one URL.
+
+    `_send_html` rewrites `connect-src` into the document before serving it.
+    Serving `dist/toolkit.html` byte-for-byte through the root-file route would
+    hand out the same page at a second URL with the merge skipped — a page
+    whose meta names a narrower policy than the header on its own response,
+    which is precisely the intersection failure `portal/static.py` documents.
+    """
+    from basilisk.serve import create_app
+
+    _dist_or_skip()
+    client = create_app().test_client()
+    for path in ("/index.html", "/toolkit.html", "/toolkit-widgets.html"):
+        assert client.get(path).status_code == 404, path
+
+
+@pytest.mark.integration
+def test_the_root_file_route_cannot_reach_outside_dist():
+    """No path traversal: the route serves `dist`, and only `dist`.
+
+    `send_from_directory` is what enforces this — it resolves against the
+    directory and refuses anything that leaves it — so the point of this test
+    is that no hand-rolled join ever replaces it. One level up from `dist` is
+    `web/`, and two is a repository root holding `pytest.ini`,
+    `pyproject.toml` and, on a developer's machine, `.env`.
+    """
+    from basilisk.serve import create_app
+
+    _dist_or_skip()
+    client = create_app().test_client()
+    for path in (
+        "/../pytest.ini",
+        "/%2e%2e/pytest.ini",
+        "/..%2fpytest.ini",
+        "/....//pytest.ini",
+        "/%2e%2e%2fpyproject.toml",
+        "/../../.env",
+        "/../vite.config.js",
+    ):
+        response = client.get(path)
+        assert response.status_code != 200, f"{path} -> 200"
+        assert b"[pytest]" not in response.get_data(), path
+
+
+@pytest.mark.integration
+def test_the_security_headers_reach_the_paths_that_had_none():
+    """Flask's `after_request` is now the only thing adding these.
+
+    Blob storage cannot add a response header and the Front Door rule set that
+    used to add them went away with the profile, so the portal carries these
+    headers only because its responses come out of `serve.py`. That makes every
+    path added here a path where their absence would be a regression rather
+    than a continuation — the two non-HTML ones included.
+    """
+    from basilisk.serve import create_app
+
+    _dist_or_skip()
+    client = create_app().test_client()
+    for path in (
+        "/toolkit-widgets",
+        "/integrity/module-roots.json",
+        "/favicon.png",
+        "/logo.png",
+    ):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert response.headers.get("Content-Security-Policy"), path
+        assert response.headers["X-Content-Type-Options"] == "nosniff", path
+        assert response.headers["X-Frame-Options"] == "DENY", path
+        assert response.headers["Strict-Transport-Security"], path
+
+
+@pytest.mark.integration
+def test_every_built_page_smoke_test_asks_for_is_served():
+    """The paths `scripts/smoke-test.sh` walks, against the app, before a deploy.
+
+    Section 4 of that script iterates `web/dist/*.html` and fetches `/` for
+    `index` and `/<name>` for the rest; section 5 iterates the Rollup inputs
+    and does the same. A built page with no route fails the deploy there, on a
+    live Function App, minutes after an upload. This asks the same question in
+    the test suite, where the answer is cheap.
+    """
+    from basilisk.serve import create_app
+
+    dist = _dist_or_skip()
+    client = create_app().test_client()
+    built = sorted(dist.glob("*.html"))
+    assert len(built) >= 8, f"expected the full portal in dist, found {built}"
+    for html in built:
+        path = "/" if html.stem == "index" else f"/{html.stem}"
+        response = client.get(path)
+        assert response.status_code == 200, f"{path} ({html.name})"
+        assert "text/html" in response.headers.get("Content-Type", ""), path
+        # The SRI set is what smoke-test.sh compares served-against-staged.
+        assert re.findall(
+            r'integrity="[^"]*"', response.get_data(as_text=True)
+        ) == re.findall(
+            r'integrity="[^"]*"', html.read_text(encoding="utf-8")
+        ), path

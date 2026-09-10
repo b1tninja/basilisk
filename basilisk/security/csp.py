@@ -9,16 +9,21 @@ after the build and before a browser reads it.
 
 **This module is flask-free on purpose.** It used to live inside
 ``basilisk.portal.static``, which imports Flask, so the only thing that could
-call it was a running web server. That was the whole defect: in the deployment
-that matters the portal HTML is *not* served by Flask at all — Front Door routes
-``/*`` to the storage account's ``$web`` container and only ``/api/*``,
-``/pks/*``, ``/claim/*``, ``/.auth/*`` and ``/health`` reach the Function App.
-So the merge never ran on the documents that needed it, the header carried
-``wss://…`` and the meta did not, the intersection was empty for that source,
-and shared sessions could not open a socket on the deployed site.
+call it was a running web server. That was the whole defect, in the shape it
+had then: Front Door routed ``/*`` to the storage account's ``$web`` container
+and only ``/api/*``, ``/pks/*``, ``/claim/*``, ``/.auth/*`` and ``/health``
+reached the Function App, so the portal HTML was never served by Flask, the
+merge never ran on the documents that needed it, the header carried ``wss://…``
+and the meta did not, the intersection was empty for that source, and shared
+sessions could not open a socket on the deployed site.
 
-Living here, it can be applied by the packaging step — to the artifact that is
-actually uploaded — and by the Flask path, from one piece of code.
+Front Door has since been removed and ``web/dist`` ships inside the function
+zip, so on the deployed site Flask's ``_send_html`` is now the caller and the
+merge does run there. The separation stays anyway, because it is what lets
+``scripts/package-static.sh`` apply the same rewrite to a storage-account
+artifact with no web server in the picture — one implementation reachable from
+both, rather than a second one growing wherever the first could not be
+imported.
 """
 
 from __future__ import annotations
