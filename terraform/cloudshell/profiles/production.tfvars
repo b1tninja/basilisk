@@ -35,6 +35,14 @@ oauth_authorized_domain = "b1tninja.com"
 # difference in instance-seconds once there is real traffic.
 function_instance_memory_mb = 2048
 
+# Stated rather than inherited, the same way enable_front_door above is. The
+# dev baseline drops this to 4 because a runaway there should stop early;
+# production takes the module default back, because real traffic needs the
+# headroom and the ceiling bills nothing until instances are actually used --
+# nothing is always-ready here either. With the 2048 MB above, 20 is a 40 GB
+# worst case, and it is the WAF rate limits that make reaching it unlikely.
+function_maximum_instance_count = 20
+
 # Alerts only -- a budget cannot stop spending. Sized for the edge: the base
 # fee alone is ~$35, so the dev ceiling of 15 would alert on the first day of
 # every month and teach everyone to ignore it.

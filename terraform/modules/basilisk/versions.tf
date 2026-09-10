@@ -3,8 +3,14 @@ terraform {
 
   required_providers {
     azurerm = {
-      source  = "hashicorp/azurerm"
-      version = ">= 4.16.0"
+      source = "hashicorp/azurerm"
+      # Upper bound because 5.x is a breaking rename, not a drift risk: a clean
+      # `terraform init` with no lock file resolves 5.4.0 today, and the module
+      # does not validate under it -- `behavior_on_match` became
+      # `behaviour_on_match` and the Front Door rule blocks changed shape. The
+      # committed .terraform.lock.hcl pins 4.81.0, so CI never saw this; anyone
+      # who deletes the lock or runs `init -upgrade` did.
+      version = "~> 4.16"
     }
     azapi = {
       source  = "Azure/azapi"

@@ -28,6 +28,24 @@ oauth_authorized_domain = "b1tninja.com"
 # default was paying four times over. Revert to 2048 if the app OOMs.
 function_instance_memory_mb = 512
 
+# The blast radius, not a standing charge. No instance is always-ready, so the
+# app scales to zero and a ceiling nobody reaches costs nothing idle — what it
+# buys is a bound on how far a spike or an abuse burst gets before it stops. At
+# the 512 MB set above, 4 caps concurrent instance memory at 2 GB where the
+# module default of 20 would allow 10 GB, and dev is meant to be ultra low
+# cost. Production keeps the 20; it says so outright in
+# profiles/production.tfvars rather than leaning on the default.
+function_maximum_instance_count = 4
+
+# log_analytics_daily_quota_gb is deliberately not set here. It is reachable
+# now — it was not before — but the module default of 1 GB/day is already the
+# right number for dev. The cap exists for FrontDoorAccessLog, which writes one
+# record per request, and dev has no edge: the largest ingestion source is not
+# deployed at all, so a day's ingestion sits far below the cap. A quota only
+# saves money on the day it binds, and this one would not, so lowering it would
+# buy nothing while risking the Function App's own logs cutting out mid-debug.
+# Production is where the 1 GB does real work.
+
 # The alert thresholds are 80% and 100% of this. The old ceiling was the module
 # default of 100, which a $61.11 month passed under without a word — and the
 # variable was not plumbed through the root module, so there was no way to

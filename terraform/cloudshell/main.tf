@@ -12,6 +12,8 @@ module "basilisk" {
   mail_provider               = var.mail_provider
   require_manager_approval    = var.require_manager_approval
   upstream_enabled            = var.upstream_enabled
+  upstream_allowlist          = var.upstream_allowlist
+  upstream_default            = var.upstream_default
   tags                        = var.tags
   existing_token_secret       = var.existing_token_secret
   google_client_id            = var.google_client_id
@@ -26,4 +28,18 @@ module "basilisk" {
   route53_zone_id             = var.route53_zone_id
   budget_amount               = var.budget_amount
   budget_contact_emails       = var.budget_contact_emails
+
+  enable_worm_immutability = var.enable_worm_immutability
+  worm_retention_days      = var.worm_retention_days
+
+  upload_rate_limit_per_minute    = var.upload_rate_limit_per_minute
+  v2_upload_rate_limit_per_minute = var.v2_upload_rate_limit_per_minute
+  sendtoken_rate_limit_per_minute = var.sendtoken_rate_limit_per_minute
+
+  web_pubsub_sku = var.web_pubsub_sku
+  web_pubsub_hub = var.web_pubsub_hub
+  servicebus_sku = var.servicebus_sku
+
+  function_maximum_instance_count = var.function_maximum_instance_count
+  log_analytics_daily_quota_gb    = var.log_analytics_daily_quota_gb
 }
