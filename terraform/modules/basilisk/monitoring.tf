@@ -13,9 +13,14 @@ resource "azurerm_log_analytics_workspace" "basilisk" {
   tags                = var.tags
 }
 
+# Gated with the profile it points at: a diagnostic setting is a child of its
+# target resource, so with no Front Door there is nothing to attach it to. The
+# workspace above stays -- the Function App still logs to it -- but the largest
+# ingestion source, one record per edge request, goes away with the edge.
 resource "azurerm_monitor_diagnostic_setting" "frontdoor" {
+  count                      = local.front_door_enabled ? 1 : 0
   name                       = "${var.name_prefix}-fd-diag"
-  target_resource_id         = azurerm_cdn_frontdoor_profile.basilisk.id
+  target_resource_id         = azurerm_cdn_frontdoor_profile.basilisk[0].id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.basilisk.id
 
   enabled_log {

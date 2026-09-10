@@ -116,7 +116,12 @@ jobs:
           NAME_PREFIX: ${{ inputs.name_prefix }}
           LOCATION: ${{ inputs.location }}
           MAIL_PROVIDER: ${{ inputs.mail_provider }}
-          # Default false — set repository/environment variable TF_AUTO_APPROVE=true to skip plan prompt.
+          # There is no plan prompt to skip. Both branches in
+          # scripts/deploy-terraform-cloudshell.sh run `terraform apply` against a
+          # saved plan file, and applying a saved plan never prompts -- `-input=false`
+          # guarantees it cannot. This variable only chooses whether `-auto-approve`
+          # is passed as well, which changes nothing here. Review the plan in the job
+          # log before dispatching a run that destroys resources.
           AUTO_APPROVE: ${{ vars.TF_AUTO_APPROVE || 'false' }}
           SKIP_TERRAFORM: ${{ inputs.skip_terraform }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -132,7 +137,7 @@ jobs:
         if: always()
         run: |
           if cd terraform/cloudshell && terraform output -raw resource_group_name >/dev/null 2>&1; then
-            FD_URL="$(cd terraform/cloudshell && terraform output -raw public_url 2>/dev/null || terraform output -raw front_door_url 2>/dev/null || true)"
+            PUBLIC_URL="$(cd terraform/cloudshell && terraform output -raw public_url 2>/dev/null || terraform output -raw front_door_url 2>/dev/null || true)"
             CUSTOM="$(cd terraform/cloudshell && terraform output -raw custom_domain 2>/dev/null || true)"
             RG="$(cd terraform/cloudshell && terraform output -raw resource_group_name 2>/dev/null || true)"
             FN="$(cd terraform/cloudshell && terraform output -raw function_app_name 2>/dev/null || true)"
@@ -143,7 +148,7 @@ jobs:
               echo "|------|-------|"
               echo "| Resource group | \`$RG\` |"
               echo "| Function app | \`$FN\` |"
-              echo "| Front Door | $FD_URL |"
+              echo "| Public URL | $PUBLIC_URL |"
               if [[ -n "$CUSTOM" && "$CUSTOM" != "null" ]]; then
                 echo "| Custom domain | \`$CUSTOM\` |"
               fi

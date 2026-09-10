@@ -17,6 +17,11 @@
 # 'wasm-unsafe-eval' is OpenPGP.js Argon2 WASM only, not JS eval; integrity of
 # that WASM is SRI on the embedding chunk (see serve.py).
 locals {
+  # Every resource in this file is gated on this. Front Door Standard's base fee
+  # is charged monthly regardless of traffic, so a low-traffic deployment can
+  # turn the whole edge off; see var.enable_front_door for what that gives up.
+  front_door_enabled = var.enable_front_door
+
   content_security_policy = join(" ", [
     "default-src 'none';",
     "script-src 'self' 'wasm-unsafe-eval';",
@@ -36,6 +41,7 @@ locals {
 # Upgrade path: change both sku_name values below to Premium_AzureFrontDoor and
 # attach managed_rule { type = "Microsoft_DefaultRuleSet" version = "2.1" }.
 resource "azurerm_cdn_frontdoor_profile" "basilisk" {
+  count               = local.front_door_enabled ? 1 : 0
   name                = "${var.name_prefix}-fd"
   resource_group_name = azurerm_resource_group.basilisk.name
   sku_name            = "Standard_AzureFrontDoor"
@@ -43,6 +49,7 @@ resource "azurerm_cdn_frontdoor_profile" "basilisk" {
 }
 
 resource "azurerm_cdn_frontdoor_firewall_policy" "basilisk" {
+  count               = local.front_door_enabled ? 1 : 0
   name                = "${replace(var.name_prefix, "-", "")}waf"
   resource_group_name = azurerm_resource_group.basilisk.name
   sku_name            = "Standard_AzureFrontDoor"
@@ -113,14 +120,16 @@ resource "azurerm_cdn_frontdoor_firewall_policy" "basilisk" {
 }
 
 resource "azurerm_cdn_frontdoor_endpoint" "basilisk" {
+  count                    = local.front_door_enabled ? 1 : 0
   name                     = "${var.name_prefix}-endpoint"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk[0].id
   tags                     = var.tags
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "function" {
+  count                    = local.front_door_enabled ? 1 : 0
   name                     = "basilisk-origins"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk[0].id
 
   load_balancing {
     sample_size                 = 4
@@ -136,8 +145,9 @@ resource "azurerm_cdn_frontdoor_origin_group" "function" {
 }
 
 resource "azurerm_cdn_frontdoor_origin" "function" {
+  count                          = local.front_door_enabled ? 1 : 0
   name                           = "function-origin"
-  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.function.id
+  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.function[0].id
   enabled                        = true
   host_name                      = azurerm_function_app_flex_consumption.basilisk.default_hostname
   http_port                      = 80
@@ -149,8 +159,9 @@ resource "azurerm_cdn_frontdoor_origin" "function" {
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "static" {
+  count                    = local.front_door_enabled ? 1 : 0
   name                     = "basilisk-static-origins"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk[0].id
 
   load_balancing {
     sample_size                 = 4
@@ -166,8 +177,9 @@ resource "azurerm_cdn_frontdoor_origin_group" "static" {
 }
 
 resource "azurerm_cdn_frontdoor_origin" "static" {
+  count                          = local.front_door_enabled ? 1 : 0
   name                           = "static-origin"
-  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.static.id
+  cdn_frontdoor_origin_group_id  = azurerm_cdn_frontdoor_origin_group.static[0].id
   enabled                        = true
   host_name                      = azurerm_storage_account.basilisk.primary_web_host
   http_port                      = 80
@@ -179,18 +191,21 @@ resource "azurerm_cdn_frontdoor_origin" "static" {
 }
 
 resource "azurerm_cdn_frontdoor_rule_set" "static_cache" {
+  count                    = local.front_door_enabled ? 1 : 0
   name                     = "StaticCache"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk[0].id
 }
 
 resource "azurerm_cdn_frontdoor_rule_set" "security" {
+  count                    = local.front_door_enabled ? 1 : 0
   name                     = "SecurityHeaders"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk[0].id
 }
 
 resource "azurerm_cdn_frontdoor_rule" "security_headers" {
+  count                     = local.front_door_enabled ? 1 : 0
   name                      = "AddSecurityHeaders1"
-  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.security.id
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.security[0].id
   order                     = 1
   behavior_on_match         = "Continue"
 
@@ -227,8 +242,9 @@ resource "azurerm_cdn_frontdoor_rule" "security_headers" {
 }
 
 resource "azurerm_cdn_frontdoor_rule" "security_headers_extra" {
+  count                     = local.front_door_enabled ? 1 : 0
   name                      = "AddSecurityHeaders2"
-  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.security.id
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.security[0].id
   order                     = 2
   behavior_on_match         = "Continue"
 
@@ -347,7 +363,9 @@ locals {
 # meaningful query, but dropping one would silently discard a UTM tag or a
 # `?q=` that a reader pasted, and the toolkit ignores what it does not read.
 resource "azurerm_cdn_frontdoor_rule" "retired_page" {
-  for_each = local.retired_pages
+  # for_each, not count: the gate empties the map, so the instance keys stay
+  # the page names either way.
+  for_each = local.front_door_enabled ? local.retired_pages : {}
 
   # Azure refuses two rules holding one order *within a rule set*, and it
   # refuses them per request rather than at the end of the apply. These take
@@ -368,7 +386,7 @@ resource "azurerm_cdn_frontdoor_rule" "retired_page" {
   ]
 
   name                      = each.value.name
-  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache[0].id
   order                     = each.value.order
   behavior_on_match         = "Stop"
 
@@ -391,8 +409,9 @@ resource "azurerm_cdn_frontdoor_rule" "retired_page" {
 }
 
 resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
+  count                     = local.front_door_enabled ? 1 : 0
   name                      = "CacheStaticAssets"
-  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache[0].id
   # Orders 1-4 are the retired-page redirects above; these two run after them.
   order             = 5
   behavior_on_match = "Continue"
@@ -406,7 +425,7 @@ resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
 
   actions {
     route_configuration_override_action {
-      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static[0].id
       forwarding_protocol           = "HttpsOnly"
       cache_behavior                = "OverrideAlways"
       cache_duration                = "7.00:00:00"
@@ -417,8 +436,9 @@ resource "azurerm_cdn_frontdoor_rule" "static_assets_cache" {
 }
 
 resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
+  count                     = local.front_door_enabled ? 1 : 0
   name                      = "CacheStaticHtml"
-  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache.id
+  cdn_frontdoor_rule_set_id = azurerm_cdn_frontdoor_rule_set.static_cache[0].id
   order                     = 6
   behavior_on_match         = "Continue"
 
@@ -437,7 +457,7 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
 
   actions {
     route_configuration_override_action {
-      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+      cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static[0].id
       forwarding_protocol           = "HttpsOnly"
       # Portal HTML is static ($web blob), not the Function App — long CDN TTL
       # cuts origin fetches/egress. Integrity against mix-and-match comes from:
@@ -476,10 +496,11 @@ resource "azurerm_cdn_frontdoor_rule" "static_html_cache" {
 }
 
 resource "azurerm_cdn_frontdoor_route" "api" {
+  count                           = local.front_door_enabled ? 1 : 0
   name                            = "api-route"
-  cdn_frontdoor_endpoint_id       = azurerm_cdn_frontdoor_endpoint.basilisk.id
-  cdn_frontdoor_origin_group_id   = azurerm_cdn_frontdoor_origin_group.function.id
-  cdn_frontdoor_rule_set_ids      = [azurerm_cdn_frontdoor_rule_set.security.id]
+  cdn_frontdoor_endpoint_id       = azurerm_cdn_frontdoor_endpoint.basilisk[0].id
+  cdn_frontdoor_origin_group_id   = azurerm_cdn_frontdoor_origin_group.function[0].id
+  cdn_frontdoor_rule_set_ids      = [azurerm_cdn_frontdoor_rule_set.security[0].id]
   supported_protocols             = ["Http", "Https"]
   patterns_to_match               = ["/pks/*", "/api/*", "/claim/*", "/.auth/*", "/health"]
   forwarding_protocol             = "HttpsOnly"
@@ -496,12 +517,13 @@ resource "azurerm_cdn_frontdoor_route" "api" {
 }
 
 resource "azurerm_cdn_frontdoor_route" "static" {
+  count                         = local.front_door_enabled ? 1 : 0
   name                          = "static-route"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.basilisk.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static.id
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.basilisk[0].id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.static[0].id
   cdn_frontdoor_rule_set_ids = [
-    azurerm_cdn_frontdoor_rule_set.security.id,
-    azurerm_cdn_frontdoor_rule_set.static_cache.id,
+    azurerm_cdn_frontdoor_rule_set.security[0].id,
+    azurerm_cdn_frontdoor_rule_set.static_cache[0].id,
   ]
   supported_protocols             = ["Http", "Https"]
   patterns_to_match               = ["/", "/*"]
@@ -523,18 +545,19 @@ resource "azurerm_cdn_frontdoor_route" "static" {
 }
 
 resource "azurerm_cdn_frontdoor_security_policy" "basilisk" {
+  count                    = local.front_door_enabled ? 1 : 0
   name                     = "basilisk-waf"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk.id
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.basilisk[0].id
 
   security_policies {
     firewall {
-      cdn_frontdoor_firewall_policy_id = azurerm_cdn_frontdoor_firewall_policy.basilisk.id
+      cdn_frontdoor_firewall_policy_id = azurerm_cdn_frontdoor_firewall_policy.basilisk[0].id
 
       association {
         patterns_to_match = ["/*"]
 
         domain {
-          cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.basilisk.id
+          cdn_frontdoor_domain_id = azurerm_cdn_frontdoor_endpoint.basilisk[0].id
         }
 
         dynamic "domain" {

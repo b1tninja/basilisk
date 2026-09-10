@@ -11,6 +11,14 @@ if [[ -f "$OUT" ]]; then
   rm -f "$OUT"
 fi
 
+# web/dist ships INSIDE the package. It was excluded while Front Door routed
+# everything outside /pks, /api, /claim, /.auth and /health to the blob $web
+# container, so the portal never came from here. Without Front Door nothing
+# merges those two origins under one hostname: a portal on the storage
+# endpoint would be a different origin from the API it calls and from the
+# Easy Auth cookie it needs. Flask serves it instead, which also restores the
+# security headers on it -- blob storage cannot add a response header, and
+# the Front Door rule that used to add them goes away with the profile.
 zip -r "$OUT" . \
   -x './.git/*' \
   -x './.github/*' \
@@ -24,7 +32,6 @@ zip -r "$OUT" . \
   -x './marketplace/*' \
   -x './web/static/*' \
   -x './web/node_modules/*' \
-  -x './web/dist/*' \
   -x './dist/*' \
   -x './data/*' \
   -x './*.md' \

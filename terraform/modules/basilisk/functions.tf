@@ -77,11 +77,14 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
 
     login {
       token_store_enabled = false
-      allowed_external_redirect_urls = distinct(compact([
-        local.public_url,
-        "https://${azurerm_cdn_frontdoor_endpoint.basilisk.host_name}",
-        "https://${var.name_prefix}-fn.azurewebsites.net",
-      ]))
+      # Not local.public_url, though the values are the same: with Front Door
+      # off that local resolves to this app's own default_hostname, and a
+      # resource may not reference itself. Same three URLs, built from inputs.
+      allowed_external_redirect_urls = distinct(compact(concat(
+        [local.custom_domain_enabled ? "https://${var.custom_domain}" : ""],
+        local.front_door_enabled ? ["https://${azurerm_cdn_frontdoor_endpoint.basilisk[0].host_name}"] : [],
+        ["https://${var.name_prefix}-fn.azurewebsites.net"],
+      )))
     }
   }
 
@@ -100,12 +103,23 @@ resource "azurerm_function_app_flex_consumption" "basilisk" {
       BASILISK_UPSTREAM_ALLOWLIST       = var.upstream_allowlist
       BASILISK_UPSTREAM_DEFAULT         = var.upstream_default
       # Key Vault reference — secret value is not stored in app settings plaintext.
-      BASILISK_TOKEN_SECRET   = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.token_secret.versionless_id})"
-      BASILISK_AUTH_PROVIDERS = local.auth_providers
-      # Reject requests that bypass Front Door (must match profile GUID).
-      BASILISK_AFD_ID           = azurerm_cdn_frontdoor_profile.basilisk.resource_guid
+      BASILISK_TOKEN_SECRET     = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.token_secret.versionless_id})"
+      BASILISK_AUTH_PROVIDERS   = local.auth_providers
       BASILISK_PENDING_TTL_DAYS = "30"
     },
+    # Reject requests that bypass Front Door (must match the profile GUID).
+    #
+    # Merged in rather than set to null or "": this setting is a kill switch for
+    # the app's own front door, and with no Front Door in front of it every
+    # request is a bypass. basilisk/security/edge.py reads it with
+    # os.environ.get(...).strip() and returns True when the result is falsy, so
+    # an empty string does fail open -- but that leaves the app one accidental
+    # non-empty value away from 403ing every request, and app settings are
+    # visible and editable in the portal. Absent is the state that cannot be
+    # half-set.
+    local.front_door_enabled ? {
+      BASILISK_AFD_ID = azurerm_cdn_frontdoor_profile.basilisk[0].resource_guid
+    } : {},
     var.enable_google_auth && var.google_client_secret != "" ? {
       GOOGLE_PROVIDER_AUTHENTICATION_SECRET = "@Microsoft.KeyVault(SecretUri=${azurerm_key_vault_secret.google_client_secret[0].versionless_id})"
     } : {}

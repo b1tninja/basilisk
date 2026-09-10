@@ -102,3 +102,21 @@ variable "aws_region" {
   description = "AWS region for the Route53 provider (Route53 is global; us-east-1 is typical)."
   default     = "us-east-1"
 }
+
+variable "enable_front_door" {
+  type        = bool
+  description = "Deploy Azure Front Door and its WAF. Standard bills a flat monthly base fee that does not depend on traffic — it was $35.00 of a $61.11 month against $0.02 of actual data transfer. Disabling it also disables custom_domain, because the domain is attached to the profile."
+  default     = true
+}
+
+variable "function_instance_memory_mb" {
+  type        = number
+  description = "Memory per Function instance. Flex Consumption bills instance-seconds multiplied by this, so it scales the whole compute line: $10.99 of execution time last month against $0.01 of executions. Allowed values are 512, 2048 and 4096."
+  default     = 2048
+}
+
+variable "budget_amount" {
+  type        = number
+  description = "Monthly cost ceiling in the billing currency. Alerts only — a budget cannot stop spending. Set it near the expected run rate: a ceiling well above what the deployment costs is a ceiling that never fires, which is how a $61 month went unremarked under a $100 budget."
+  default     = 100
+}

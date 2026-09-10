@@ -22,12 +22,22 @@ output "function_app_hostname" {
   value = azurerm_function_app_flex_consumption.basilisk.default_hostname
 }
 
+# Every front_door_* output is null when enable_front_door is false. Null, not
+# "" -- a consumer that interpolates one gets the literal "null" and notices,
+# where an empty string builds a plausible-looking "https://" and does not.
+#
+# The consumer that matters is scripts/deploy-static.sh, which purges the edge
+# cache after every static deploy and exits 1 if the purge fails. It probes
+# `terraform output -raw front_door_profile_name` inside an `if`, and -raw
+# exits non-zero on a null value, so with Front Door off the probe fails,
+# FD_PROFILE stays empty, and the script takes its existing "Skipping Front
+# Door cache purge" branch. There is no cache to purge in that configuration.
 output "front_door_hostname" {
-  value = azurerm_cdn_frontdoor_endpoint.basilisk.host_name
+  value = local.front_door_enabled ? azurerm_cdn_frontdoor_endpoint.basilisk[0].host_name : null
 }
 
 output "front_door_url" {
-  value = "https://${azurerm_cdn_frontdoor_endpoint.basilisk.host_name}"
+  value = local.front_door_enabled ? "https://${azurerm_cdn_frontdoor_endpoint.basilisk[0].host_name}" : null
 }
 
 output "public_url" {
@@ -41,7 +51,8 @@ output "custom_domain" {
 }
 
 output "logic_app_name" {
-  value = azapi_resource.approval_logic_app.name
+  description = "Approval Logic App name, or null when require_manager_approval is false and it is not deployed."
+  value       = var.require_manager_approval ? azapi_resource.approval_logic_app[0].name : null
 }
 
 output "service_bus_namespace" {
@@ -64,18 +75,18 @@ output "kv_uaa_grant_command" {
 }
 
 output "front_door_id" {
-  description = "Front Door profile resource GUID (X-Azure-FDID)."
-  value       = azurerm_cdn_frontdoor_profile.basilisk.resource_guid
+  description = "Front Door profile resource GUID (X-Azure-FDID). Null when Front Door is disabled, in which case the Function App has no BASILISK_AFD_ID and accepts direct requests."
+  value       = local.front_door_enabled ? azurerm_cdn_frontdoor_profile.basilisk[0].resource_guid : null
 }
 
 output "front_door_profile_name" {
-  description = "AFD profile name — used by az afd endpoint purge after static deploys."
-  value       = azurerm_cdn_frontdoor_profile.basilisk.name
+  description = "AFD profile name — used by az afd endpoint purge after static deploys. Null when Front Door is disabled; there is no edge cache to purge."
+  value       = local.front_door_enabled ? azurerm_cdn_frontdoor_profile.basilisk[0].name : null
 }
 
 output "front_door_endpoint_name" {
-  description = "AFD endpoint name — used by az afd endpoint purge after static deploys."
-  value       = azurerm_cdn_frontdoor_endpoint.basilisk.name
+  description = "AFD endpoint name — used by az afd endpoint purge after static deploys. Null when Front Door is disabled; there is no edge cache to purge."
+  value       = local.front_door_enabled ? azurerm_cdn_frontdoor_endpoint.basilisk[0].name : null
 }
 
 output "signaling_wss_origin" {
@@ -100,7 +111,8 @@ output "static_website_url" {
 }
 
 output "waf_policy_id" {
-  value = azurerm_cdn_frontdoor_firewall_policy.basilisk.id
+  description = "Front Door WAF policy ID. Null when Front Door is disabled — the rate limits are edge rules and have no origin-side equivalent."
+  value       = local.front_door_enabled ? azurerm_cdn_frontdoor_firewall_policy.basilisk[0].id : null
 }
 
 locals {
@@ -124,8 +136,8 @@ output "oauth_setup" {
   value = {
     function_app_hostname    = azurerm_function_app_flex_consumption.basilisk.default_hostname
     function_app_url         = local.function_app_url
-    front_door_hostname      = azurerm_cdn_frontdoor_endpoint.basilisk.host_name
-    front_door_url           = "https://${azurerm_cdn_frontdoor_endpoint.basilisk.host_name}"
+    front_door_hostname      = local.front_door_enabled ? azurerm_cdn_frontdoor_endpoint.basilisk[0].host_name : null
+    front_door_url           = local.front_door_enabled ? "https://${azurerm_cdn_frontdoor_endpoint.basilisk[0].host_name}" : null
     public_url               = local.public_url
     google_redirect_uri      = local.google_oauth_redirect_uri
     google_redirect_uris     = distinct([local.google_oauth_redirect_uri, local.google_oauth_redirect_uri_fn])

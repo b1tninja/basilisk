@@ -75,6 +75,17 @@ export TF_VAR_mail_provider="$MAIL_PROVIDER"
 cd "$TF_DIR"
 bash "${REPO_ROOT}/scripts/terraform-init.sh"
 
+# Is Front Door part of this deployment? Every adoption below imports into a
+# `count`-gated address, and `terraform import` against a count=0 address is a
+# hard error -- so the script has to know before it starts importing. TF_VAR
+# wins when set; otherwise read the tfvars, where the decision is recorded.
+FRONT_DOOR_ENABLED="${TF_VAR_enable_front_door:-}"
+if [[ -z "$FRONT_DOOR_ENABLED" ]]; then
+  FRONT_DOOR_ENABLED=$(cat ./*.auto.tfvars ./terraform.tfvars ./production.tfvars 2>/dev/null | sed -n 's/^[[:space:]]*enable_front_door[[:space:]]*=[[:space:]]*\(true\|false\).*/\1/p' | tail -1)
+fi
+FRONT_DOOR_ENABLED="${FRONT_DOOR_ENABLED:-true}"
+echo "Front Door:   $FRONT_DOOR_ENABLED"
+
 RG_NAME="${NAME_PREFIX}-rg"
 HAS_RG_STATE=false
 if terraform state show -no-color "module.basilisk.azurerm_resource_group.basilisk" >/dev/null 2>&1; then
@@ -129,24 +140,26 @@ adopt_missing_terraform_resources() {
   adopt_if_azure_exists \
     "${mod}.azurerm_storage_container_immutability_policy.certs[0]" \
     "${sa_id}/blobServices/default/containers/certs/immutabilityPolicies/default"
-  adopt_if_azure_exists \
-    "${mod}.azurerm_cdn_frontdoor_rule_set.static_cache" \
-    "${fd_id}/ruleSets/StaticCache"
-  adopt_if_azure_exists \
-    "${mod}.azurerm_cdn_frontdoor_rule.static_assets_cache" \
-    "${fd_id}/ruleSets/StaticCache/rules/CacheStaticAssets"
-  adopt_if_azure_exists \
-    "${mod}.azurerm_cdn_frontdoor_rule.static_html_cache" \
-    "${fd_id}/ruleSets/StaticCache/rules/CacheStaticHtml"
-  adopt_if_azure_exists \
-    "${mod}.azurerm_cdn_frontdoor_rule_set.security" \
-    "${fd_id}/ruleSets/SecurityHeaders"
-  adopt_if_azure_exists \
-    "${mod}.azurerm_cdn_frontdoor_rule.security_headers" \
-    "${fd_id}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders1"
-  adopt_if_azure_exists \
-    "${mod}.azurerm_cdn_frontdoor_rule.security_headers_extra" \
-    "${fd_id}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders2"
+  if [[ "$FRONT_DOOR_ENABLED" == "true" ]]; then
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_rule_set.static_cache[0]" \
+      "${fd_id}/ruleSets/StaticCache"
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_rule.static_assets_cache[0]" \
+      "${fd_id}/ruleSets/StaticCache/rules/CacheStaticAssets"
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_rule.static_html_cache[0]" \
+      "${fd_id}/ruleSets/StaticCache/rules/CacheStaticHtml"
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_rule_set.security[0]" \
+      "${fd_id}/ruleSets/SecurityHeaders"
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_rule.security_headers[0]" \
+      "${fd_id}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders1"
+    adopt_if_azure_exists \
+      "${mod}.azurerm_cdn_frontdoor_rule.security_headers_extra[0]" \
+      "${fd_id}/ruleSets/SecurityHeaders/rules/AddSecurityHeaders2"
+  fi
 
   adopt_route53_record() {
     local addr="$1"
@@ -171,10 +184,13 @@ adopt_missing_terraform_resources() {
   }
 
   local route53_zone_id="${TF_VAR_route53_zone_id:-Z026512234X4JPOD7PZH1}"
-  local custom_domain="${TF_VAR_custom_domain:-keys.b1tninja.com}"
+  local custom_domain=""
+  if [[ "$FRONT_DOOR_ENABLED" == "true" ]]; then
+    custom_domain="${TF_VAR_custom_domain:-keys.b1tninja.com}"
+  fi
   local custom_hostname="${custom_domain%%.*}"
 
-  if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${route53_zone_id}" ]]; then
+  if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${route53_zone_id}" && -n "${custom_domain}" ]]; then
     adopt_route53_record \
       "${mod}.aws_route53_record.afd_validation[0]" \
       "$route53_zone_id" \
@@ -222,7 +238,7 @@ fi
 RG="$(terraform output -raw resource_group_name)"
 FN="$(terraform output -raw function_app_name)"
 PUBLIC_URL="$(terraform output -raw public_url 2>/dev/null || terraform output -raw front_door_url)"
-FD_URL="$(terraform output -raw front_door_url)"
+FD_URL="$(terraform output -raw front_door_url 2>/dev/null || true)"
 STORAGE="$(terraform output -raw storage_account_name 2>/dev/null || true)"
 
 az functionapp config appsettings set \
@@ -241,7 +257,11 @@ echo "Terraform deployment complete."
 echo "  Resource group:     $RG"
 echo "  Function app:       $FN"
 echo "  Public URL:         $PUBLIC_URL"
-echo "  Front Door URL:     $FD_URL"
+if [[ -n "$FD_URL" ]]; then
+  echo "  Front Door URL:     $FD_URL"
+else
+  echo "  Front Door:         disabled (flat monthly base fee; see domains.auto.tfvars)"
+fi
 if [[ -n "$STORAGE" ]]; then
   STATIC_URL="$(terraform output -raw static_website_url 2>/dev/null || true)"
   echo "  Static website URL: ${STATIC_URL:-https://${STORAGE}.z.web.core.windows.net}"
@@ -250,7 +270,7 @@ echo ""
 echo "Next steps:"
 echo "  1. Authorize Logic App mail connector ($MAIL_PROVIDER) in Azure Portal"
 echo "  2. Publish function code (if not already): bash scripts/deploy-github-actions.sh with SKIP_TERRAFORM=true"
-echo "  3. Smoke test: curl $FD_URL/health && curl $FD_URL/"
+echo "  3. Smoke test: curl $PUBLIC_URL/health && curl $PUBLIC_URL/"
 echo "  4. Export GitHub secrets: bash scripts/export-github-secrets.sh"
 if command -v jq >/dev/null 2>&1; then
   OAUTH="$(terraform output -json oauth_setup 2>/dev/null || true)"

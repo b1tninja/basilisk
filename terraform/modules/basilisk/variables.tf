@@ -220,3 +220,25 @@ variable "route53_zone_id" {
   description = "Route53 hosted zone ID (e.g. Z0123456789ABC). Preferred — avoids zone lookup IAM permissions."
   default     = ""
 }
+
+variable "enable_front_door" {
+  type        = bool
+  description = <<-EOT
+    Deploy Azure Front Door in front of the Function App and the static site.
+
+    Front Door Standard bills a flat monthly base fee (~$35) that is charged
+    whether or not the endpoint serves a single request -- it is a subscription,
+    not a usage charge, and no amount of low traffic makes it cheaper. Set false
+    on deployments whose traffic does not justify the base fee: the Function App
+    and the storage account's static website are then reached directly on their
+    own hostnames.
+
+    Turning this off also gives up the WAF rate limits, the edge cache, the
+    security-header rewrites and the retired-page redirects, all of which are
+    properties of the edge and have no origin-side equivalent here. It also
+    forbids custom_domain, which is attached to the Front Door profile.
+
+    Default true preserves the behaviour of existing deployments.
+  EOT
+  default     = true
+}
