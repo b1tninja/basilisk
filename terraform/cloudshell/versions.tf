@@ -10,7 +10,7 @@ terraform {
       # `behaviour_on_match` and the Front Door rule blocks changed shape. The
       # committed .terraform.lock.hcl pins 4.81.0, so CI never saw this; anyone
       # who deletes the lock or runs `init -upgrade` did.
-      version = "~> 4.16"
+      version = "~> 5.10"
     }
     azapi = {
       source  = "Azure/azapi"
