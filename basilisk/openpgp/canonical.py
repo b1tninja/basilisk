@@ -55,20 +55,46 @@ def structure_uids(uids: list[str] | None) -> list[dict[str, str | None]]:
 
 
 def filter_armored_by_uids(armored: bytes, approved_emails: list[str]) -> bytes:
-    """Best-effort filter: keep only user IDs matching approved email addresses."""
-    if not approved_emails:
-        return armored
-    allowed = {e.lower() for e in approved_emails}
-    text = armored.decode("utf-8", errors="replace")
-    lines = text.splitlines()
-    out: list[str] = []
-    for line in lines:
-        if "@" in line:
-            keep = any(email in line.lower() for email in allowed)
-            if not keep and not line.startswith("-----"):
+    """Return the certificate with only the approved email user IDs left in it.
+
+    User IDs live in packets, not in armor lines. Scanning the ASCII for ``@``
+    never touches them: the address is inside base64. Packets whose email is
+    not in ``approved_emails`` are removed, along with the certifications that
+    follow them. An empty allow-list publishes the key with no user IDs.
+    """
+    from basilisk.openpgp.errors import IngestError
+    from basilisk.openpgp.packets import armor_public_key, dearmor, iter_packets
+
+    allowed = {e.lower() for e in approved_emails if e}
+    was_armored = b"-----BEGIN PGP" in armored
+    try:
+        binary = dearmor(armored)
+        packets = iter_packets(binary)
+    except ValueError as exc:
+        raise IngestError(f"Malformed OpenPGP packet stream: {exc}", 422) from exc
+
+    out = bytearray()
+    skipping = False
+    for tag, _hdr, body, start, end in packets:
+        raw = binary[start:end]
+        if tag in (13, 17):
+            email = None
+            if tag == 13:
+                email = parse_uid_parts(body.decode("utf-8", errors="replace"))["email"]
+            skipping = not (email and email.lower() in allowed)
+            if skipping:
                 continue
-        out.append(line)
-    return "\n".join(out).encode("utf-8")
+            out.extend(raw)
+            continue
+        if skipping and tag == 2:
+            continue
+        skipping = False
+        out.extend(raw)
+    if not out:
+        raise IngestError("No publishable certificate", 422)
+    if was_armored:
+        return armor_public_key(bytes(out))
+    return bytes(out)
 
 
 def emails_from_uids(uids: list[str]) -> list[str]:

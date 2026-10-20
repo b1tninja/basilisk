@@ -101,7 +101,10 @@ def lookup_get(
         data, headers = _read_blob(record, blobs, settings, if_none_match)
         if headers.get("X-Not-Modified"):
             return HttpResponse(304, "", headers, "application/pgp-keys")
-        filtered = filter_armored_by_uids(data, emails_from_uids(record.approved_uids))
+        try:
+            filtered = _published_armor(record, data)
+        except IngestError:
+            return http_cors(404, "Not found")
         return HttpResponse(200, filtered, headers, "application/pgp-keys")
 
     if kind == "name":
@@ -134,8 +137,10 @@ def lookup_get(
     if headers.get("X-Not-Modified"):
         return HttpResponse(304, "", headers, "application/pgp-keys")
 
-    if record.approval_state != "approved":
-        data = strip_uids_for_pending(data)
+    try:
+        data = _published_armor(record, data)
+    except IngestError:
+        return http_cors(404, "Not found")
 
     if settings.cache_mode == "redirect" and settings.fd_base_url:
         url = f"{settings.fd_base_url.rstrip('/')}/{record.blob_uri}"
@@ -145,6 +150,18 @@ def lookup_get(
         )
 
     return HttpResponse(200, data, headers, "application/pgp-keys")
+
+
+def _published_armor(record: CertRecord, data: bytes) -> bytes:
+    """Armor a caller is allowed to see.
+
+    Pending certificates lose every user ID. Approved ones keep only the user
+    IDs that were actually verified — a fingerprint lookup used to return the
+    stored blob whole, which published every other address on the key.
+    """
+    if record.approval_state != "approved":
+        return strip_uids_for_pending(data)
+    return filter_armored_by_uids(data, emails_from_uids(record.approved_uids))
 
 
 def _index_expiration(iso: str | None) -> datetime | None:

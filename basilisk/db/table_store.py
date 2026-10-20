@@ -164,6 +164,10 @@ class AzureTableCertStore(CertStore):
         fpr = fingerprint.upper()
         now = _utcnow()
         prior = self.get_by_fingerprint(fpr)
+        # A rejected, approved, or expired row is not a pending upload. Rewriting
+        # it here used to clear approval and resurrect a key an operator had refused.
+        if prior is not None and prior.approval_state != "pending":
+            return
         created_at = (prior.created_at if prior and prior.created_at else now)
         self._certs.upsert_entity(
             {
@@ -352,11 +356,16 @@ class AzureTableCertStore(CertStore):
         *,
         expiration: str | None = None,
         revoked: bool = False,
+        approval_state: str | None = None,
     ) -> None:
         fpr = fingerprint.upper()
         entity = self._certs.get_entity(partition_key=fpr, row_key=fpr)
-        if entity.get("approval_state") != "approved":
+        if entity.get("approval_state") not in ("approved", "expired"):
             return
+        if approval_state not in (None, "approved", "expired"):
+            raise ValueError("refresh_approved cannot leave the approved/expired states")
+        if approval_state:
+            entity["approval_state"] = approval_state
         prior_sha = entity.get("sha256")
         prior_kid = str(entity.get("key_id") or "")
         now = _utcnow()

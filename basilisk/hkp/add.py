@@ -21,6 +21,21 @@ def get_blob_store(settings: Settings | None = None) -> LocalBlobStore:
     return _factory_blob(settings)  # type: ignore[return-value]
 
 
+def _merge_existing(existing_armored: bytes, uploaded_armored: bytes) -> bytes:
+    """Union of two certificates with the same primary key.
+
+    Replacing the stored certificate with the upload would let a later copy
+    drop a user ID, a subkey, or a revocation. Sequoia's merge keeps every
+    packet that was already there and adds only what the upload contributes.
+    """
+    from pysequoia import ArmorKind, Cert, armor
+
+    base = Cert.from_bytes(existing_armored)
+    uploaded = Cert.from_bytes(uploaded_armored)
+    merged = base.merge(uploaded)
+    return armor(bytes(merged), ArmorKind.PublicKey).encode("utf-8")
+
+
 def ingest_keytext(
     store: CertStore,
     blobs: LocalBlobStore,
@@ -31,26 +46,61 @@ def ingest_keytext(
     enqueue_events: bool = True,
 ) -> tuple[str, str, bool]:
     """Parse, validate policy, optionally write blob. Returns (fpr, key_id, is_duplicate)."""
+    from basilisk.db.blob_store import BlobConflict
+    from basilisk.openpgp.keyinfo import is_expired
+
     settings = settings or get_settings()
     parsed = parse_armored_keytext(keytext, path=path)
     digest = sha256_hex(parsed.armored)
 
     existing = store.get_by_fingerprint(parsed.fingerprint)
+    if existing and existing.approval_state == "rejected":
+        raise IngestError("Rejected keys cannot be submitted again", 422)
     if existing and existing.sha256 == digest:
         return parsed.fingerprint, parsed.key_id, True
 
-    blob_uri = blobs.write_cert(parsed.fingerprint, digest, parsed.armored)
+    revoked = parsed.is_revoked
+    if existing:
+        stored = blobs.read(existing.blob_uri)
+        if sha256_hex(stored) != existing.sha256:
+            raise IngestError("Stored certificate failed its integrity check", 409)
+        merged_armored = _merge_existing(stored, parsed.armored)
+        # The merged certificate may now carry a revocation. That is allowed
+        # on update and still refused for a key this server has never seen.
+        parsed = parse_armored_keytext(
+            merged_armored.decode("utf-8"),
+            path=path,
+            allow_revoked=True,
+        )
+        digest = sha256_hex(parsed.armored)
+        if digest == existing.sha256:
+            return parsed.fingerprint, parsed.key_id, True
+        # A revocation, once recorded, stays recorded.
+        revoked = bool(existing.revoked or parsed.is_revoked)
+
+    try:
+        blob_uri = blobs.write_cert(parsed.fingerprint, digest, parsed.armored)
+    except BlobConflict as exc:
+        raise IngestError(
+            "Certificate blob already exists with different content", 409
+        ) from exc
     expiration = parsed.expiration.isoformat() if parsed.expiration else None
 
     # Non-destructive refresh: keep approved UIDs when the primary fingerprint matches.
-    if existing and existing.approval_state == "approved":
+    if existing and existing.approval_state in ("approved", "expired"):
+        new_state = existing.approval_state
+        if is_expired(parsed.expiration):
+            new_state = "expired"
+        elif existing.approval_state == "expired":
+            new_state = "approved"
         store.refresh_approved(
             parsed.fingerprint,
             blob_uri,
             digest,
             parsed.key_id,
             expiration=expiration,
-            revoked=parsed.is_revoked,
+            revoked=revoked,
+            approval_state=new_state,
         )
         return parsed.fingerprint, parsed.key_id, False
 
@@ -61,7 +111,7 @@ def ingest_keytext(
         parsed.key_id,
         parsed.uids,
         expiration=expiration,
-        revoked=parsed.is_revoked,
+        revoked=revoked,
     )
     if enqueue_events:
         claim_url = f"{settings.base_url}/claim/{parsed.fingerprint}"

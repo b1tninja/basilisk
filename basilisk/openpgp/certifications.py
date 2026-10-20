@@ -199,10 +199,28 @@ def merge_attested_certifications(
     except Exception as exc:
         raise IngestError(f"Could not merge certificates: {exc}", 422) from exc
 
-    cleaned = strip_third_party_from_armored(merged_armored, fpr, allowlist=allow)
+    from basilisk.openpgp.verify import primary_key_body
+
+    signer_keys: dict[str, bytes] = {}
+    for issuer in allow:
+        if len(issuer) < 40:
+            continue
+        rec = store.get_by_fingerprint(issuer)
+        if not rec or not rec.blob_uri:
+            continue
+        try:
+            signer_keys[normalize_fingerprint(rec.fingerprint)] = primary_key_body(
+                blobs.read(rec.blob_uri)
+            )
+        except (OSError, ValueError):
+            continue
+    cleaned = strip_third_party_from_armored(
+        merged_armored, fpr, allowlist=allow, signer_keys=signer_keys
+    )
     if cleaned == merged_armored:
-        # strip may no-op on failure; force binary path
-        cleaned_bin = strip_third_party_sigs(dearmor(merged_armored), fpr, allowlist=allow)
+        cleaned_bin = strip_third_party_sigs(
+            dearmor(merged_armored), fpr, allowlist=allow, signer_keys=signer_keys
+        )
         cleaned = armor_public_key(cleaned_bin)
 
     # Cap third-party certifications.

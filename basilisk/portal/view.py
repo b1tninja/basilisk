@@ -3,7 +3,7 @@ from __future__ import annotations
 from basilisk.config import Settings
 from basilisk.db.blob_store import LocalBlobStore
 from basilisk.db.store import CertRecord, CertStore
-from basilisk.openpgp.canonical import parse_uid_parts
+from basilisk.openpgp.canonical import emails_from_uids, filter_armored_by_uids, parse_uid_parts
 from basilisk.openpgp.ingest import strip_uids_for_pending
 
 
@@ -38,4 +38,4 @@ def read_key_armored(
     data = blobs.read(record.blob_uri)
     if record.approval_state != "approved":
         return strip_uids_for_pending(data)
-    return data
+    return filter_armored_by_uids(data, emails_from_uids(record.approved_uids))

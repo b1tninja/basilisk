@@ -10,6 +10,7 @@ Responses use the §7.2 submission response object.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 
 from basilisk.config import get_settings
@@ -95,13 +96,17 @@ def _invalid_response(body: bytes, exc: IngestError) -> tuple[dict | str, int]:
     return response, exc.status
 
 
+_EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+
+
 def sendtoken_response(email: str) -> tuple[str, int]:
     """§5.2.2 — mail a time-limited Bearer token; respond with an empty document.
 
     The token is never echoed in the HTTP response: possession of the mailbox
-    is the whole proof.
+    is the whole proof. The address is one addr-spec: anything with whitespace
+    or a second line is refused before it can reach a mail header.
     """
-    if not email or "@" not in email:
+    if not email or not _EMAIL.fullmatch(email):
         return "Invalid email", 422
     settings = get_settings()
     token = issue_token(email)
@@ -163,25 +168,31 @@ def canonical_put(identity: str, token: str, body: bytes) -> tuple[dict | str, i
     """
     if not verify_token(token, identity):
         return "Unauthorized", 401
+    # Check the identity against the certificate before anything is written.
+    # Ingest of an existing fingerprint merges into the stored certificate, so
+    # doing that first would apply the upload even when this token does not
+    # own a user ID on it.
+    from basilisk.hkp_v2.lookup import uid_matches_identity
+
+    try:
+        preview = parse_armored_keytext(normalize_submission(body), path="v2")
+    except IngestError as exc:
+        return _invalid_response(body, exc)
+    matched = [u for u in preview.uids if uid_matches_identity(u, identity)]
+    if not matched:
+        invalid = empty_submission_response()
+        invalid["invalid"].append(
+            cert_ref(
+                dearmor(preview.armored),
+                preview.fingerprint,
+                f"No User ID matches the token identity ({identity.lower()})",
+            )
+        )
+        return invalid, 422
     store = get_store()
     blobs = get_blob_store()
     try:
-        response, fpr, binary = _submit(body, store, blobs, enqueue_events=False)
-        keytext = armor_public_key(binary).decode("utf-8")
-        parsed = parse_armored_keytext(keytext, path="v2")
-        from basilisk.hkp_v2.lookup import uid_matches_identity
-
-        matched = [u for u in parsed.uids if uid_matches_identity(u, identity)]
-        if not matched:
-            invalid = empty_submission_response()
-            invalid["invalid"].append(
-                cert_ref(
-                    binary,
-                    fpr,
-                    f"No User ID matches the token identity ({identity.lower()})",
-                )
-            )
-            return invalid, 422
+        response, fpr, _binary = _submit(body, store, blobs, enqueue_events=False)
         approve_cert(store, fpr, matched)
         return response, 200
     except IngestError as exc:

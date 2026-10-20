@@ -142,6 +142,12 @@ def create_app() -> Flask:
         blobs = get_blob_store()
         ip = client_ip(dict(request.headers), request.remote_addr)
         try:
+            options = (request.args.get("options") or "").lower()
+            if "nm" in {part.strip() for part in options.split(",") if part.strip()}:
+                raise IngestError(
+                    "options=nm is not supported; remove name/email from UIDs before upload",
+                    422,
+                )
             keytext = parse_add_form(request.get_data(), request.content_type)
             # Parse first so we can rate-limit by fingerprint as well as IP.
             from basilisk.openpgp.ingest import parse_armored_keytext

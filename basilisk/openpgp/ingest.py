@@ -100,6 +100,7 @@ def parse_armored_keytext(
     *,
     path: IngestPath = "v1",
     config: PolicyConfig | None = None,
+    allow_revoked: bool = False,
 ) -> ParsedCert:
     if not keytext or not keytext.strip():
         raise IngestError("Empty keytext", 422)
@@ -144,7 +145,7 @@ def parse_armored_keytext(
         expiration=cert.expiration,
         is_revoked=bool(cert.is_revoked),
     )
-    validate_cert_policy(parsed, path, config=config)
+    validate_cert_policy(parsed, path, config=config, allow_revoked=allow_revoked)
     return parsed
 
 
