@@ -65,3 +65,14 @@ updates:
     directory: /terraform/cloudshell
     schedule:
       interval: monthly
+    ignore:
+      # azurerm 5.x is a migration, not a bump. It renames `behavior_on_match`
+      # to `behaviour_on_match` and changes the Front Door rule block shapes,
+      # so terraform/modules/basilisk/frontdoor.tf does not validate under it;
+      # versions.tf pins `~> 4.16` for that reason and any 5.x PR is therefore
+      # unmergeable by construction. #35 sat red from 2026-10-01 and #44 was
+      # opened within minutes of it being closed. Doing the migration means
+      # editing those resources and lifting the pin in the same change.
+      - dependency-name: hashicorp/azurerm
+        update-types:
+          - version-update:semver-major
