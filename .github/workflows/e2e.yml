@@ -3,6 +3,25 @@ name: e2e
 on:
   push:
     branches: [main]
+  # Also on pull requests that could change what gets built, because until now
+  # nothing on a pull request built the bundle or drove it in a browser. The
+  # npm group bump to vite 8 passed every gate -- build, typecheck, 4,681 unit
+  # tests, both audits -- and then took e2e red on main, because vite 8 stopped
+  # honouring the `manualChunks` name for OpenPGP and three browser tests look
+  # the shipped chunk up by file name. A regression that only the merge can
+  # reveal is one the review cannot act on.
+  #
+  # Path-filtered rather than unconditional: this job builds containers and
+  # drives Chromium, so running it on a docs or Terraform change would be a
+  # few minutes spent to learn nothing.
+  pull_request:
+    paths:
+      - "web/**"
+      - "docker/**"
+      - "docker-compose.e2e.yml"
+      - "basilisk/**"
+      - "requirements*.txt"
+      - ".github/workflows/e2e.yml"
   workflow_dispatch:
 
 permissions:
