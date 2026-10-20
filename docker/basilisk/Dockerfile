@@ -1,7 +1,7 @@
 # Pin to multi-arch index digest. Update via:
 #   docker pull python:3.13-slim && docker inspect python:3.13-slim --format='{{index .RepoDigests 0}}'
 # or run scripts/update-docker-pins.sh
-FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5e925c2d0e1a91
+FROM python:3.15-slim@sha256:2da676046630d7bf14c6764ae1143dc7fa0377a53f94bf5a642f0b214aca5bce
 
 WORKDIR /app
 COPY requirements.txt requirements-dev.txt ./
