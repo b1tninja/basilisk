@@ -41,6 +41,19 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      # Digest refreshes yes, Python version bumps no. This image has to run the
+      # same interpreter the Function App does, and that is pinned at 3.13 by
+      # `runtime_version` in terraform/modules/basilisk/functions.tf and by
+      # `python-version` in ci.yml. A bump here would make the only place the
+      # container is actually built -- the e2e job -- test a different Python
+      # than production runs, and e2e builds on push to main rather than on a
+      # pull request, so nothing would have failed until after the merge.
+      # Raise all three together or none.
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
   - package-ecosystem: docker
     directory: /docker/gpg-tester
     schedule:
