@@ -20,8 +20,6 @@ from datetime import datetime, timedelta, timezone
 
 from basilisk.openpgp.packets import (
     _iter_subpackets,
-    _issuer_is_self,
-    _signature_issuer,
     _signature_subpacket_areas,
     iter_packets,
 )
@@ -172,14 +170,16 @@ def _parse_key_packet(body: bytes) -> KeyInfo | None:
 
 
 def _subpacket_values(body: bytes) -> dict[int, bytes]:
-    """Flatten a signature's hashed+unhashed subpackets; hashed area wins."""
+    """Hashed subpacket type → body.
+
+    Unhashed subpackets are attacker-appendable and are not a source of
+    creation time, expiration, or any other fact the index reports.
+    """
     areas = _signature_subpacket_areas(body)
     if not areas:
         return {}
-    hashed, unhashed = areas
+    hashed, _unhashed = areas
     out: dict[int, bytes] = {}
-    for stype, sbody in _iter_subpackets(unhashed):
-        out.setdefault(stype, sbody)
     for stype, sbody in _iter_subpackets(hashed):
         out[stype] = sbody
     return out
@@ -204,31 +204,39 @@ def parse_cert_info(binary: bytes) -> CertInfo | None:
     if not packets or packets[0][0] != _TAG_PUBLIC_KEY:
         return None
 
-    primary = _parse_key_packet(packets[0][2])
+    primary_body = packets[0][2]
+    primary = _parse_key_packet(primary_body)
     if primary is None:
         return None
     info = CertInfo(primary=primary)
-    primary_fpr = primary.fingerprint or ""
 
     # "current" is whatever component the following signature packets bind to.
     current_uid: UserIDInfo | None = None
+    current_uid_body: bytes | None = None
     current_subkey: KeyInfo | None = None
+    current_subkey_body: bytes | None = None
 
     for tag, _hdr_len, body, _start, _end in packets[1:]:
         if tag == _TAG_PUBLIC_KEY:
             break  # start of the next certificate in the bundle
         if tag == _TAG_USER_ID:
             current_uid = UserIDInfo(uid=body.decode("utf-8", errors="replace"))
+            current_uid_body = body
             current_subkey = None
+            current_subkey_body = None
             info.user_ids.append(current_uid)
             continue
         if tag == _TAG_USER_ATTRIBUTE:
             current_uid = None
+            current_uid_body = None
             current_subkey = None
+            current_subkey_body = None
             continue
         if tag == _TAG_PUBLIC_SUBKEY:
             current_uid = None
+            current_uid_body = None
             current_subkey = _parse_key_packet(body)
+            current_subkey_body = body
             if current_subkey is not None:
                 info.subkeys.append(current_subkey)
             continue
@@ -238,7 +246,16 @@ def parse_cert_info(binary: bytes) -> CertInfo | None:
         sig_type = body[1]
         subs = _subpacket_values(body)
         sig_created = _ts(_u32(subs.get(_SUB_SIG_CREATION)) or 0)
-        is_self = _issuer_is_self(_signature_issuer(body), primary_fpr) if primary_fpr else False
+        # A signature that does not verify is not a self-signature, whatever
+        # issuer subpacket it carries.
+        from basilisk.openpgp.verify import is_verified_self_signature
+
+        is_self = is_verified_self_signature(
+            body,
+            primary_body,
+            current_uid_body,
+            current_subkey_body,
+        )
 
         if sig_type == _SIG_KEY_REVOCATION and is_self:
             primary.is_revoked = True

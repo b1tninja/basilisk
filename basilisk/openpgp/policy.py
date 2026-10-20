@@ -117,7 +117,13 @@ def validate_fingerprint_version(fpr: str, path: IngestPath) -> None:
         raise IngestError("OpenPGP v3 keys are not supported", 422)
 
 
-def validate_cert_policy(parsed: ParsedCert, path: IngestPath, *, config: PolicyConfig | None = None) -> None:
+def validate_cert_policy(
+    parsed: ParsedCert,
+    path: IngestPath,
+    *,
+    config: PolicyConfig | None = None,
+    allow_revoked: bool = False,
+) -> None:
     config = config or PolicyConfig.from_settings()
     cert = parsed.raw_cert
     keytext = parsed.armored.decode("utf-8", errors="replace")
@@ -134,7 +140,10 @@ def validate_cert_policy(parsed: ParsedCert, path: IngestPath, *, config: Policy
 
     validate_fingerprint_version(parsed.fingerprint, path)
 
-    if config.reject_revoked and cert.is_revoked:
+    # A brand-new revoked certificate is not published. A revocation merged onto
+    # a certificate this server already holds is how a holder withdraws it, so
+    # that path passes ``allow_revoked``.
+    if config.reject_revoked and cert.is_revoked and not allow_revoked:
         raise IngestError("Revoked keys cannot be uploaded", 422)
 
     uids = parsed.uids

@@ -154,6 +154,11 @@ class SqliteCertStore(CertStore):
         now = _utcnow()
         fpr = fingerprint.upper()
         prior = self.get_by_fingerprint(fpr)
+        # A rejected, approved, or expired row is not a pending upload. The
+        # conflict clause below also refuses to demote one; returning here
+        # keeps the email index from being rewritten anyway.
+        if prior is not None and prior.approval_state != "pending":
+            return
         self._conn.execute(
             """
             INSERT INTO certs (fingerprint, approval_state, blob_uri, sha256, key_id,
@@ -170,6 +175,7 @@ class SqliteCertStore(CertStore):
                 revoked=excluded.revoked,
                 key_expiration=excluded.key_expiration,
                 updated_at=excluded.updated_at
+            WHERE certs.approval_state='pending'
             """,
             (
                 fpr,
@@ -355,17 +361,21 @@ class SqliteCertStore(CertStore):
         *,
         expiration: str | None = None,
         revoked: bool = False,
+        approval_state: str | None = None,
     ) -> None:
         fpr = fingerprint.upper()
         now = _utcnow()
         prior = self.get_by_fingerprint(fpr)
+        if approval_state not in (None, "approved", "expired"):
+            raise ValueError("refresh_approved cannot leave the approved/expired states")
         self._conn.execute(
             """
             UPDATE certs SET blob_uri=?, sha256=?, key_id=?, revoked=?, key_expiration=?,
+                             approval_state=COALESCE(?, approval_state),
                              updated_at=?
-            WHERE fingerprint=? AND approval_state='approved'
+            WHERE fingerprint=? AND approval_state IN ('approved', 'expired')
             """,
-            (blob_uri, sha256, key_id, 1 if revoked else 0, expiration, now, fpr),
+            (blob_uri, sha256, key_id, 1 if revoked else 0, expiration, approval_state, now, fpr),
         )
         self._replace_identifiers(fpr, key_id)
         if prior is None:

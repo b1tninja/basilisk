@@ -77,35 +77,47 @@ def test_principal_accepted_with_edge_marker(monkeypatch):
 
 
 @pytest.mark.unit
-def test_client_ip_uses_last_xff_hop():
-    assert client_ip({"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}, None) == "5.6.7.8"
+def test_client_ip_ignores_forwarded_headers_without_front_door(monkeypatch):
+    """X-Forwarded-For and X-Azure-ClientIP are caller-controlled until an edge is configured.
+
+    Production sets BASILISK_AFD_ID and Front Door overwrites those headers.
+    A deployment that has not set the id used to treat them as the client
+    address, so each forged value was its own rate-limit bucket.
+    """
+    monkeypatch.delenv("BASILISK_AFD_ID", raising=False)
+    headers = {
+        "X-Forwarded-For": "1.2.3.4, 5.6.7.8",
+        "X-Azure-ClientIP": "203.0.113.9",
+        "X-Client-IP": "9.9.9.9",
+    }
+    assert client_ip(headers, "198.51.100.10") == "198.51.100.10"
+    assert client_ip(headers, None) == "unknown"
 
 
 @pytest.mark.unit
-def test_a_client_cannot_choose_its_own_rate_limit_bucket():
-    """The hardened last-hop rule above is only hardening if nothing outranks it.
+def test_client_ip_trusts_azure_headers_only_behind_the_configured_edge(monkeypatch):
+    """X-Client-IP is never an Azure header and never selects a bucket.
 
-    `X-Client-IP` used to be checked first. It is not an Azure header — nothing
-    in terraform/, infra/ or .github/ sets or strips it, and Front Door has no
-    request-header rules — so it arrived from the caller, took precedence over
-    the trusted hop, and let anyone pick their own bucket for every per-IP
-    limiter there is. `require_front_door` does not help, because a request
-    *through* Front Door still carries whatever the client set.
+    Behind the configured Front Door id, X-Azure-ClientIP is the address Azure
+    set at the edge. A request that does not present that id keeps the socket
+    address, even when it copies the same headers.
     """
-    trusted = {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}
-    assert client_ip(trusted, None) == "5.6.7.8"
-
-    # The same request, with the caller naming itself. The trusted hop wins.
-    for forged in ("X-Client-IP", "x-client-ip"):
-        assert client_ip({**trusted, forged: "9.9.9.9"}, None) == "5.6.7.8", forged
-
-    # A caller cannot mint fresh buckets by varying it, either.
-    seen = {client_ip({**trusted, "X-Client-IP": f"10.0.0.{n}"}, None) for n in range(20)}
-    assert seen == {"5.6.7.8"}
-
-    # What Azure itself sets is still believed — that is set at the edge, past
-    # the caller's reach, and is the reason the platform branch exists at all.
+    monkeypatch.setenv("BASILISK_AFD_ID", "profile-guid")
+    trusted = {
+        "X-Azure-FDID": "profile-guid",
+        "X-Forwarded-For": "1.2.3.4, 5.6.7.8",
+        "X-Client-IP": "9.9.9.9",
+    }
+    assert client_ip(trusted, "198.51.100.10") == "5.6.7.8"
     assert client_ip({**trusted, "X-Azure-ClientIP": "203.0.113.9"}, None) == "203.0.113.9"
+
+    for forged in ("X-Client-IP", "x-client-ip"):
+        seen = client_ip({**trusted, forged: "9.9.9.9"}, "198.51.100.10")
+        assert seen == "5.6.7.8", forged
+
+    without_edge = {k: v for k, v in trusted.items() if k != "X-Azure-FDID"}
+    without_edge["X-Azure-ClientIP"] = "203.0.113.9"
+    assert client_ip(without_edge, "198.51.100.10") == "198.51.100.10"
 
 
 @pytest.mark.unit

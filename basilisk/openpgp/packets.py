@@ -202,7 +202,12 @@ def _signature_subpacket_areas(body: bytes) -> tuple[bytes, bytes] | None:
 
 
 def _signature_issuer(body: bytes) -> str | None:
-    """Return issuer fingerprint or key ID (hex uppercase), or None."""
+    """Issuer fingerprint or key ID from the hashed area, else an unhashed key ID.
+
+    A hashed issuer is never overwritten by an unhashed one. Unhashed subpackets
+    can be appended without breaking the signature, so they must not be able to
+    rename who a signature claims to be from when the hashed area already says.
+    """
     if not body:
         return None
     version = body[0]
@@ -218,13 +223,17 @@ def _signature_issuer(body: bytes) -> str | None:
 
     fingerprint: str | None = None
     key_id: str | None = None
-    for stype, sbody in _iter_subpackets(hashed) + _iter_subpackets(unhashed):
-        if stype == 33 and len(sbody) >= 21:
-            # Issuer Fingerprint: 1 byte key version + fingerprint
+    for stype, sbody in _iter_subpackets(hashed):
+        if stype == 33 and len(sbody) >= 21 and fingerprint is None:
             fingerprint = sbody[1:].hex().upper()
-        elif stype == 16 and len(sbody) >= 8:
+        elif stype == 16 and len(sbody) >= 8 and key_id is None:
             key_id = sbody[:8].hex().upper()
-    return fingerprint or key_id
+    if fingerprint or key_id:
+        return fingerprint or key_id
+    for stype, sbody in _iter_subpackets(unhashed):
+        if stype == 16 and len(sbody) >= 8:
+            return sbody[:8].hex().upper()
+    return None
 
 
 # RFC 9580 §5.2.3.25 — Key Server Preferences, bit 7 = No-modify
@@ -260,55 +269,24 @@ def parse_notation_subpacket(body: bytes) -> dict[str, str | bool] | None:
 
 
 def list_self_notations(binary: bytes, primary_fingerprint: str) -> list[dict[str, str | bool]]:
-    """Collect Notation Data from self-certifications on the primary key."""
-    out: list[dict[str, str | bool]] = []
-    for tag, _hdr_len, body, _start, _end in iter_packets(binary):
-        if tag != 2 or not body:
-            continue
-        version = body[0]
-        if version not in (4, 5, 6) or len(body) < 2:
-            continue
-        sig_type = body[1]
-        if sig_type not in (0x10, 0x11, 0x12, 0x13, 0x1F):
-            continue
-        issuer = _signature_issuer(body)
-        if not _issuer_is_self(issuer, primary_fingerprint):
-            continue
-        areas = _signature_subpacket_areas(body)
-        if not areas:
-            continue
-        hashed, unhashed = areas
-        for stype, sbody in _iter_subpackets(hashed) + _iter_subpackets(unhashed):
-            if stype != _NOTATION_DATA:
-                continue
-            parsed = parse_notation_subpacket(sbody)
-            if parsed:
-                out.append(parsed)
-    return out
+    """Notation Data from verified self-certifications.
+
+    Only the hashed area counts. An unhashed notation can be appended to a
+    valid signature by anyone who has the certificate.
+    """
+    from basilisk.openpgp.verify import verified_self_notations
+
+    return verified_self_notations(binary, primary_fingerprint)
 
 
 def has_keyserver_no_modify(binary: bytes, primary_fingerprint: str) -> bool:
-    """True if a primary self-signature sets Key Server Preferences no-modify (§5.2.3.25)."""
-    for tag, _hdr_len, body, _start, _end in iter_packets(binary):
-        if tag != 2 or not body:
-            continue
-        version = body[0]
-        if version not in (4, 5, 6) or len(body) < 2:
-            continue
-        sig_type = body[1]
-        if sig_type not in (0x10, 0x11, 0x12, 0x13, 0x1F):
-            continue
-        issuer = _signature_issuer(body)
-        if not _issuer_is_self(issuer, primary_fingerprint):
-            continue
-        areas = _signature_subpacket_areas(body)
-        if not areas:
-            continue
-        hashed, unhashed = areas
-        for stype, sbody in _iter_subpackets(hashed) + _iter_subpackets(unhashed):
-            if stype == _KEY_SERVER_PREFS and sbody and (sbody[0] & _KEY_SERVER_NO_MODIFY):
-                return True
-    return False
+    """True when a verified self-signature sets no-modify in the hashed area.
+
+    Key Server Preferences carried only in the unhashed area are ignored.
+    """
+    from basilisk.openpgp.verify import self_signature_has_no_modify
+
+    return self_signature_has_no_modify(binary, primary_fingerprint)
 
 
 def _issuer_is_self(issuer: str | None, primary_fingerprint: str) -> bool:
@@ -349,29 +327,27 @@ def strip_third_party_sigs(
     primary_fingerprint: str,
     *,
     allowlist: set[str] | frozenset[str] | None = None,
+    signer_keys: dict[str, bytes] | None = None,
 ) -> bytes:
-    """Keep self-signatures and optionally allowlisted third-party certifications.
+    """Keep signatures that verify, and drop the rest.
 
-    Drops third-party certifications used for certificate-flooding attacks unless
-    the issuer is in ``allowlist`` (approved keys on this server). Signatures with
-    no identifiable issuer are dropped (fail closed).
+    A signature is kept when it verifies under the primary key in this
+    certificate, or under a primary-key packet in ``signer_keys`` (fingerprint
+    → key packet body). Naming the primary key in an issuer subpacket is not
+    enough: that subpacket is chosen by whoever assembled the packet.
+
+    ``allowlist`` is the set of approved fingerprints. It does not by itself
+    retain a signature; pass the corresponding key material in ``signer_keys``.
+    Fingerprints listed there are intersected with ``allowlist`` when one is
+    given, so a caller cannot accidentally trust a key they did not name.
     """
-    allowed = {a.upper().replace(" ", "") for a in (allowlist or set()) if a}
-    out = bytearray()
-    for tag, _hdr_len, body, start, end in iter_packets(binary):
-        raw = binary[start:end]
-        if tag == 2:
-            issuer = _signature_issuer(body)
-            if _issuer_is_self(issuer, primary_fingerprint):
-                out.extend(raw)
-                continue
-            if _issuer_matches_allowlist(issuer, allowed):
-                # Prefer issuer fingerprint subpackets for allowlisted retention.
-                out.extend(raw)
-                continue
-            continue
-        out.extend(raw)
-    return bytes(out)
+    from basilisk.openpgp.verify import drop_unverified_signatures
+
+    keys = dict(signer_keys or {})
+    if allowlist is not None:
+        allowed = {a.upper().replace(" ", "") for a in allowlist if a}
+        keys = {fpr: body for fpr, body in keys.items() if fpr.upper() in allowed}
+    return drop_unverified_signatures(binary, primary_fingerprint, signer_keys=keys)
 
 
 # Tags: 2=Signature, 6=Public-Key, 13=User ID, 14=Public-Subkey, 17=User Attribute
@@ -407,15 +383,21 @@ def strip_uid_packets(binary: bytes) -> bytes:
 
 
 def strip_uids_from_armored(armored: bytes) -> bytes:
-    """Strip UIDs from an armored (or binary) public key and return armored bytes."""
+    """Strip UIDs from an armored (or binary) public key and return armored bytes.
+
+    Failure is an error. Returning the original bytes would publish the user IDs
+    this function exists to withhold.
+    """
+    from basilisk.openpgp.errors import IngestError
+
     try:
         binary = dearmor(armored)
         stripped = strip_uid_packets(binary)
-        if not stripped:
-            return armored
-        return armor_public_key(stripped)
-    except Exception:
-        return armored
+    except ValueError as exc:
+        raise IngestError(f"Malformed OpenPGP packet stream: {exc}", 422) from exc
+    if not stripped:
+        raise IngestError("Could not strip user IDs from certificate", 422)
+    return armor_public_key(stripped)
 
 
 def strip_third_party_from_armored(
@@ -423,18 +405,28 @@ def strip_third_party_from_armored(
     primary_fingerprint: str,
     *,
     allowlist: set[str] | frozenset[str] | None = None,
+    signer_keys: dict[str, bytes] | None = None,
 ) -> bytes:
-    """Strip third-party signatures from armored public key; return armored bytes."""
+    """Strip unverified signatures from an armored public key.
+
+    Failure is an error. Returning the original bytes would store the
+    certificate-flooding signatures this function exists to drop.
+    """
+    from basilisk.openpgp.errors import IngestError
+
     try:
         binary = dearmor(armored)
         cleaned = strip_third_party_sigs(
-            binary, primary_fingerprint, allowlist=allowlist
+            binary,
+            primary_fingerprint,
+            allowlist=allowlist,
+            signer_keys=signer_keys,
         )
-        if not cleaned:
-            return armored
-        return armor_public_key(cleaned)
-    except Exception:
-        return armored
+    except ValueError as exc:
+        raise IngestError(f"Malformed OpenPGP packet stream: {exc}", 422) from exc
+    if not cleaned:
+        raise IngestError("Could not parse certificate while stripping signatures", 422)
+    return armor_public_key(cleaned)
 
 
 def list_third_party_certifications(

@@ -18,7 +18,16 @@ def _serve_wkd(domain: str, hu: str) -> Response:
             return flask_cors(404, "Not found")
         if wkd_local_hash(local) != hu:
             return flask_cors(404, "Not found")
-        data = get_blob_store().read(record.blob_uri)
+        from basilisk.openpgp.canonical import emails_from_uids, filter_armored_by_uids
+        from basilisk.openpgp.errors import IngestError
+
+        try:
+            data = filter_armored_by_uids(
+                get_blob_store().read(record.blob_uri),
+                emails_from_uids(record.approved_uids),
+            )
+        except IngestError:
+            return flask_cors(404, "Not found")
         return flask_cors(
             200,
             data,

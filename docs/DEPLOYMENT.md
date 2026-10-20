@@ -644,13 +644,15 @@ When `BASILISK_REQUIRE_PROOF=1`:
 
 
 
-1. `GET /pks/v2/challenge` returns a nonce and timestamp
+1. `GET /pks/v2/challenge` returns a nonce, a timestamp, a difficulty, and a `hint`
 
-2. v2 clients send `X-Basilisk-Proof: nonce:timestamp:signature`
+2. When difficulty is 0, v2 clients send `X-Basilisk-Proof: nonce:timestamp:signature` (the `hint` itself)
 
-3. Legacy `POST /pks/add` (`gpg --send-keys`) never requires proof
+3. When difficulty is greater than 0, clients send `X-Basilisk-Proof: nonce:timestamp:counter:signature`. `counter` is chosen so SHA-256(`nonce:timestamp:counter`) has that many leading zero hex digits. The HMAC covers `nonce:timestamp` and does not include the counter or the secret in the hash being searched
 
-4. `POST /api/v1/notebook/negotiate` requires it too — signalling is gated the same way uploads are
+4. Legacy `POST /pks/add` (`gpg --send-keys`) never requires proof
+
+5. `POST /api/v1/notebook/negotiate` requires it too — signalling is gated the same way uploads are
 
 
 

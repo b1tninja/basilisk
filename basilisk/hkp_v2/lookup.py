@@ -122,10 +122,18 @@ def records_for_identity(
 
 
 def read_binary(record: CertRecord, blobs: LocalBlobStore) -> bytes:
-    """Stored blobs are ASCII-armored; v2 serves the raw packet stream (§9)."""
+    """Stored blobs are ASCII-armored; v2 serves the raw packet stream (§9).
+
+    The same publication rule as HKP v1: pending certificates have no user
+    IDs, and an approved certificate keeps only the verified ones.
+    """
+    from basilisk.openpgp.canonical import emails_from_uids, filter_armored_by_uids
+
     data = blobs.read(record.blob_uri)
     if record.approval_state != "approved":
         data = strip_uids_for_pending(data)
+    else:
+        data = filter_armored_by_uids(data, emails_from_uids(record.approved_uids))
     return dearmor(data)
 
 

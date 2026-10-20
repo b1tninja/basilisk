@@ -10,6 +10,13 @@ class RateLimitError(Exception):
         self.status = 429
 
 
+# One process, unbounded keys: a caller who can vary the bucket name (or just
+# a lot of real clients) grows these dicts without limit. Past this, the
+# oldest half is dropped. A dropped key starts a fresh window, which is a
+# small loosening, not a way to pin the process to RAM.
+_MAX_BUCKETS = 100_000
+
+
 class RateLimiter:
     """In-memory sliding-window limiter (Hagrid-style)."""
 
@@ -18,6 +25,16 @@ class RateLimiter:
         self._last: dict[str, float] = {}
         self._buckets: dict[str, tuple[float, float]] = {}
 
+    def _trim(self, table: dict) -> None:
+        if len(table) <= _MAX_BUCKETS:
+            return
+        ranked = sorted(
+            table.items(),
+            key=lambda item: item[1] if isinstance(item[1], float) else item[1][1],
+        )
+        for key, _value in ranked[: len(table) // 2]:
+            table.pop(key, None)
+
     def allow(self, key: str, interval_sec: float) -> bool:
         now = time.monotonic()
         with self._lock:
@@ -25,6 +42,7 @@ class RateLimiter:
             if last is not None and (now - last) < interval_sec:
                 return False
             self._last[key] = now
+            self._trim(self._last)
             return True
 
     def allow_burst(self, key: str, capacity: int, refill_sec: float) -> bool:
@@ -48,6 +66,7 @@ class RateLimiter:
                 self._buckets[key] = (tokens, now)
                 return False
             self._buckets[key] = (tokens - 1.0, now)
+            self._trim(self._buckets)
             return True
 
     def check_or_raise(self, key: str, interval_sec: float) -> None:
@@ -68,32 +87,26 @@ def get_limiter() -> RateLimiter:
 
 
 def client_ip(headers: dict[str, str], remote_addr: str | None = None) -> str:
-    """
-    Resolve client IP for rate limiting.
+    """Resolve the client IP used for rate limiting.
 
-    Prefer platform-provided addresses. When X-Forwarded-For is present (Front Door),
-    use the *last* hop — the one appended by the trusted reverse proxy — rather than
-    the first (client-controlled) entry.
+    ``X-Azure-ClientIP`` and ``X-Forwarded-For`` are trusted only when this
+    request already carries the configured Front Door id. Azure overwrites
+    those headers at the edge; a request that did not come through that edge
+    can set them to whatever it likes, and each new value was its own bucket.
+    Without a configured edge, the socket address is the only one we have.
     """
-    # `X-Azure-ClientIP` only: Azure sets it at the edge, so a client cannot
-    # forge one past Front Door. `X-Client-IP` used to be in this tuple and is
-    # not an Azure header at all — nothing in terraform/, infra/ or .github/
-    # sets or strips it, and Front Door has no request-header rules, so it
-    # forwarded whatever the caller sent. Being checked *before* the hardened
-    # branch below, it let any caller pick their own bucket and made every
-    # per-IP limiter — lookup, upload, sendtoken, negotiate, TURN — a header
-    # away from unlimited. Measured at 100/100 uploads through a 3600 s gap
-    # from one client. `require_front_door` does not help: a request *through*
-    # Front Door still carries whatever the client set.
-    for name in ("X-Azure-ClientIP", "x-azure-clientip"):
-        val = headers.get(name)
-        if val:
-            return val.split(",")[0].strip()
-    xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
-    if xff:
-        parts = [p.strip() for p in xff.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
+    from basilisk.security.edge import expected_afd_id, request_has_trusted_afd
+
+    if expected_afd_id() and request_has_trusted_afd(headers):
+        for name in ("X-Azure-ClientIP", "x-azure-clientip"):
+            val = headers.get(name)
+            if val:
+                return val.split(",")[0].strip()
+        xff = headers.get("X-Forwarded-For") or headers.get("x-forwarded-for")
+        if xff:
+            parts = [p.strip() for p in xff.split(",") if p.strip()]
+            if parts:
+                return parts[-1]
     return remote_addr or "unknown"
 
 

@@ -78,8 +78,13 @@ class CertStore(Protocol):
         *,
         expiration: str | None = None,
         revoked: bool = False,
+        approval_state: str | None = None,
     ) -> None:
-        """Update blob metadata for an already-approved cert without demoting approval."""
+        """Update blob metadata for an approved or expired cert without demoting it.
+
+        ``approval_state``, when given, may move the row between ``approved`` and
+        ``expired``. It is not a way back to ``pending``.
+        """
         ...
 
     def list_pending_older_than(self, cutoff_iso: str) -> list[CertRecord]:
