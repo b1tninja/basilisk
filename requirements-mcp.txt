@@ -1,0 +1,4 @@
+# Optional extra. The keyserver does not import this file's packages.
+#   pip install -r requirements-mcp.txt
+#   python -m basilisk.mcp
+fastmcp>=2.2
