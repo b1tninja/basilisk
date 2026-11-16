@@ -15,9 +15,9 @@ azure-data-tables==12.7.0 \
     --hash=sha256:24ed9b5690aa46c213182e32bb1b39a68dd9f526d84f447c287e3a401b437c10 \
     --hash=sha256:b14fc94a3223a2835ff5688e17d8e107b27c7cd7c4114138f2ac81373723705d
     # via -r requirements.in
-azure-functions==2.3.0 \
-    --hash=sha256:32136bae3285680edd2b2d1786c37d381a9ba4c23332dcd590e354190dbe6c9a \
-    --hash=sha256:9eb166cd83875dd88996c5f23a46f8edbbc78c0f9c41926bfdf960be54b6c889
+azure-functions==2.4.0 \
+    --hash=sha256:4b764002c787b860dbee0c8ec02f795bdd2ca0384f8b3860da8369403ee19b01 \
+    --hash=sha256:c1f69edce150af18bcbf4cd6eab224506335a7bfd225a5269a54df27c115aa12
     # via -r requirements.in
 azure-servicebus==7.15.0 \
     --hash=sha256:62c73f3d9efbaf0089a375adc5ef992ffe6d7d0b1218b8462265aa30ad352c3e \
